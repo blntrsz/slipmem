@@ -1,5 +1,5 @@
 import * as DomainCluster from "@alchemy.run/domain/EffectCluster";
-import { SlipMem } from "@slipmem/domain/slip-mem.model";
+import { SlipMem } from "@slipmem/domain/note/note.model";
 import * as Layer from "effect/Layer";
 import { Default } from "./cluster.ts";
 

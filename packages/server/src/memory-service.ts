@@ -1,12 +1,12 @@
 import * as Cluster from "@alchemy.run/effect-cluster";
 import * as Docker from "@alchemy.run/docker";
-import { MemoryApi } from "@slipmem/domain/memory-api.api";
+import { NoteApi } from "@slipmem/domain/note/note.api";
 import * as Effect from "effect/Effect";
 import { HttpServerRequest } from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import { fileURLToPath } from "node:url";
 import { Database } from "./cluster.ts";
-import { SlipMemLive } from "./slip-mem-live.ts";
+import { SlipMemLive } from "./note-live.ts";
 import { serveStatic } from "./static-files.ts";
 
 /** The built web app is mounted into the API container read-only. */
@@ -32,7 +32,7 @@ export default class MemoryService extends Docker.Service<MemoryService>()(
     };
   }).pipe(Effect.provide(Database)),
   Effect.gen(function* () {
-    const api = yield* MemoryApi;
+    const api = yield* NoteApi;
     return {
       fetch: Effect.gen(function* () {
         const request = yield* HttpServerRequest;

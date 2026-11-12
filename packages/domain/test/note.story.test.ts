@@ -6,9 +6,10 @@ import {
   FleetingNoteCaptured,
 } from "../src/note/capture-fleeting-note.command.ts";
 import { Note } from "../src/note/note.aggregate.ts";
+import { NoteId } from "../src/note/note.id.ts";
+import { NoteList, noteListKey } from "../src/note/note-list.view.ts";
 import { NoteContentLimit } from "../src/note/note.kind.ts";
 import { EmptyNote, NoteAlreadyExists, NoteTooLong } from "../src/note/note.rejection.ts";
-import { NoteSummary } from "../src/note/note-summary.view.ts";
 import {
   LiteratureNoteRecorded,
   RecordLiteratureNote,
@@ -17,21 +18,26 @@ import {
   PermanentNoteWritten,
   WritePermanentNote,
 } from "../src/note/write-permanent-note.command.ts";
-import { SlipMem } from "../src/slip-mem.model.ts";
+import { SlipMem } from "../src/note/note.model.ts";
 
 const story = Story.make(SlipMem, {});
 const note = Note.ref("note-1");
 
 describe("Note", () => {
-  it.effect("captures a fleeting note and projects its summary", () =>
+  it.effect("captures a fleeting note and lists it", () =>
     story(
       Story.when(note, new CaptureFleetingNote({ content: "  Ask Sam about spaced repetition.  " })),
       Story.then(note, new FleetingNoteCaptured({ content: "Ask Sam about spaced repetition." })),
-      Story.view(NoteSummary, note, {
-        kind: "fleeting",
-        title: null,
-        source: null,
-        content: "Ask Sam about spaced repetition.",
+      Story.view(NoteList, noteListKey, {
+        notes: [
+          {
+            id: NoteId.make("note-1"),
+            kind: "fleeting",
+            title: null,
+            source: null,
+            content: "Ask Sam about spaced repetition.",
+          },
+        ],
       }),
     ),
   );
@@ -52,11 +58,16 @@ describe("Note", () => {
           content: "Writing forces you to test whether you understand an idea.",
         }),
       ),
-      Story.view(NoteSummary, note, {
-        kind: "literature",
-        title: null,
-        source: "How to Take Smart Notes, ch. 2",
-        content: "Writing forces you to test whether you understand an idea.",
+      Story.view(NoteList, noteListKey, {
+        notes: [
+          {
+            id: NoteId.make("note-1"),
+            kind: "literature",
+            title: null,
+            source: "How to Take Smart Notes, ch. 2",
+            content: "Writing forces you to test whether you understand an idea.",
+          },
+        ],
       }),
     ),
   );
@@ -77,14 +88,54 @@ describe("Note", () => {
           content: "An idea is not understood until it can be restated in full sentences.",
         }),
       ),
-      Story.view(NoteSummary, note, {
-        kind: "permanent",
-        title: "Writing is thinking",
-        source: null,
-        content: "An idea is not understood until it can be restated in full sentences.",
+      Story.view(NoteList, noteListKey, {
+        notes: [
+          {
+            id: NoteId.make("note-1"),
+            kind: "permanent",
+            title: "Writing is thinking",
+            source: null,
+            content: "An idea is not understood until it can be restated in full sentences.",
+          },
+        ],
       }),
     ),
   );
+
+  it.effect("lists notes of every kind together in creation order", () => {
+    const second = Note.ref("note-2");
+    const third = Note.ref("note-3");
+    return story(
+      Story.given(note, new FleetingNoteCaptured({ content: "A quick thought." })),
+      Story.given(second, new LiteratureNoteRecorded({ source: "A book", content: "A passage." })),
+      Story.given(third, new PermanentNoteWritten({ title: "One idea", content: "In my words." })),
+      Story.view(NoteList, noteListKey, {
+        notes: [
+          {
+            id: NoteId.make("note-1"),
+            kind: "fleeting",
+            title: null,
+            source: null,
+            content: "A quick thought.",
+          },
+          {
+            id: NoteId.make("note-2"),
+            kind: "literature",
+            title: null,
+            source: "A book",
+            content: "A passage.",
+          },
+          {
+            id: NoteId.make("note-3"),
+            kind: "permanent",
+            title: "One idea",
+            source: null,
+            content: "In my words.",
+          },
+        ],
+      }),
+    );
+  });
 
   it.effect("rejects a note with empty content", () =>
     story(

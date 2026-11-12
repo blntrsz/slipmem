@@ -1,15 +1,15 @@
 # slipmem
 
-A minimal slip box: capture a prompt and its answer, then review it. The
-scaffold follows Alchemy's
-[project layout](https://alchemy.run/domain/project-layout/), with all
+A minimal slip box for notes. Capture a fleeting thought, a literature note,
+or a permanent idea, then read them back in one live list. The scaffold follows
+Alchemy's [project layout](https://alchemy.run/domain/project-layout/), with all
 filenames and folders in kebab-case.
 
 The whole stack runs on local Docker:
 
 ```text
 packages/
-  domain/   @slipmem/domain   the model: aggregate, command, view, Api and stories
+  domain/   @slipmem/domain   the note model, list view, Api and stories
   server/   @slipmem/server   hosts the model on Effect Cluster and serves the web build
   web/      @slipmem/web      the foldkit app
 alchemy.run.ts                one stack: Postgres, two cluster runners, and the API
@@ -19,19 +19,21 @@ alchemy.run.ts                one stack: Postgres, two cluster runners, and the 
 
 ```text
 packages/domain/
-  src/slip/slip.id.ts
-  src/slip/slip.aggregate.ts
-  src/slip/capture-slip.command.ts
-  src/slip/review-slip.command.ts
-  src/slip/slip-summary.view.ts
-  src/note/                      a second subdomain (model and Api, no UI yet)
-  src/slip-mem.model.ts
-  src/memory-api.api.ts
-  test/slip.story.test.ts
+  src/note/
+    note.id.ts
+    note.kind.ts
+    note.rejection.ts
+    note.aggregate.ts
+    capture-fleeting-note.command.ts
+    record-literature-note.command.ts
+    write-permanent-note.command.ts
+    note-list.view.ts             one collection view over every note
+    note.model.ts                 the SlipMem model
+    note.api.ts                   commands and reads the browser may use
   test/note.story.test.ts
 packages/server/src/
   cluster.ts                  Postgres + the two-runner SwarmPool
-  slip-mem-live.ts            the domain model hosted with @alchemy.run/domain/EffectCluster
+  note-live.ts                the note model hosted with @alchemy.run/domain/EffectCluster
   memory-service.ts           Docker service: /api, /health, and the web build
   static-files.ts             serves packages/web/dist from the container
 packages/web/src/
@@ -56,7 +58,27 @@ limit in characters (`NoteContentLimit` in
 | Literature | 5,000         | source        |
 
 Limits are enforced after trimming surrounding whitespace, and a note over its
-limit is rejected with `NoteTooLong`.
+limit is rejected with `NoteTooLong`. The web form shows the active kind's
+limit and blocks submission when the trimmed content would exceed it; the
+aggregate enforces the same rule for every client.
+
+## The notes list
+
+`NoteList` is a domain `View` that folds every note's events into one state:
+
+```ts
+{ notes: ListedNote[] }
+```
+
+A domain view is read one key at a time, so this list is a singleton keyed by
+the literal `"all"`. Each note event is routed to that key; the note's own
+aggregate id is kept on every entry. `NoteList` replaces the old per-note
+`NoteSummary` and `SlipSummary` projections. The web app seeds it with
+`NoteList.get("all")` and then follows it with a live watch.
+
+For a personal slip box the whole list in one view is workable and preserves
+event-sourced history. It is not a paged, searchable collection: a larger
+collection would need a projection-backed `Query` or a dedicated store.
 
 ## Prerequisites
 
@@ -84,10 +106,10 @@ bun run test        # domain stories, in memory
 bun run build       # production Foldkit/Vite build
 ```
 
-The domain stories exercise the model without Docker. The deployed path was
-also verified locally with `alchemy deploy`: capture and review both cross the
-API into the Effect Cluster runners, persist in Postgres, and the live
-`SlipSummary` view updates the browser.
+The domain stories exercise the aggregate, rejections, content limits, and the
+`NoteList` projection without Docker. To exercise the deployed path, run
+`bun run deploy`: captures cross the API into the Effect Cluster runners,
+persist in Postgres, and the live `NoteList` view updates the browser.
 
 ## Run it
 
@@ -126,7 +148,7 @@ bun run destroy
 - `SlipMemCluster` — a Postgres service the cluster coordinates through.
 - `Default` — a `ClusterDocker.SwarmPool` with two Effect Cluster runners, on
   the database's overlay network.
-- `SlipMemLive` — the domain model hosted by
+- `SlipMemLive` — the note model hosted by
   `@alchemy.run/domain/EffectCluster`. Aggregate and view state persist in the
   cluster's Postgres.
 - `MemoryService` — a Docker service on port 8080. It serves the Api at
@@ -139,8 +161,14 @@ Alchemy uses local state (`.alchemy/`) for this scaffold.
 
 This is a working scaffold, not a finished product:
 
-- One demo slip, id `demo`, is wired in the web app.
-- The `Note` subdomain is hosted and exposed by the Api, but has no UI yet.
+- Notes are create-only: there is no edit, delete, archive, or review flow.
+- There are no links, backlinks, or graph view. The list is flat.
+- The notes list is a singleton view; it is not paged or full-text searchable.
+- Storage is the Effect Cluster's Postgres. There is no SQLite or other
+  embedded database, despite that being considered earlier.
+- The `Note` aggregate and its stream ids are unchanged, so note history in an
+  existing deployment is replayed into `NoteList`. The removed demo `Slip`
+  aggregate is not migrated; any slips from an older deployment are ignored.
 - There is no authentication or authorization.
 - The web build is mounted into the API container rather than baked into its
   image. That keeps local deploys fast; a remote swarm should build an image
