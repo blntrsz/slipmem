@@ -1,0 +1,21 @@
+{
+  "name": "@slipmem/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@alchemy.run/docker": "2.0.0-beta.86",
+    "@alchemy.run/domain": "2.0.0-beta.86",
+    "@alchemy.run/effect-cluster": "2.0.0-beta.86",
+    "@effect/sql-pg": "4.1.4",
+    "@slipmem/domain": "workspace:*",
+    "alchemy": "2.0.0-beta.86",
+    "effect": "4.1.4"
+  }
+}

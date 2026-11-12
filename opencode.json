@@ -1,0 +1,8 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "references": {
+    "effect": "Effect-TS/effect",
+    "alchemy": "alchemy-run/alchemy",
+    "drizzle-orm": "drizzle-team/drizzle-orm"
+  }
+}

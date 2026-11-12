@@ -1,0 +1,41 @@
+{
+  "name": "slipmem",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "alchemy dev",
+    "dev:web": "bun run --filter '@slipmem/web' dev",
+    "deploy": "bun run build && alchemy deploy",
+    "destroy": "alchemy destroy",
+    "build": "bun run --filter '@slipmem/web' build",
+    "typecheck": "bun run --filter '@slipmem/*' typecheck && tsc -p tsconfig.stack.json",
+    "test": "bun run --filter '@slipmem/domain' test"
+  },
+  "dependencies": {
+    "@alchemy.run/docker": "2.0.0-beta.86",
+    "@alchemy.run/domain": "2.0.0-beta.86",
+    "@alchemy.run/effect-cluster": "2.0.0-beta.86",
+    "@effect/sql-pg": "4.1.4",
+    "@slipmem/domain": "workspace:*",
+    "@slipmem/server": "workspace:*",
+    "@slipmem/web": "workspace:*",
+    "alchemy": "2.0.0-beta.86",
+    "effect": "4.1.4"
+  },
+  "devDependencies": {
+    "@effect/platform-browser": "4.1.4",
+    "@effect/platform-bun": "4.1.4",
+    "@effect/platform-node": "4.1.4",
+    "@effect/vitest": "4.1.4",
+    "@foldkit/vite-plugin": "0.29.0",
+    "@types/bun": "1.4.4",
+    "@types/node": "26.6.6",
+    "foldkit": "0.170.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  }
+}
