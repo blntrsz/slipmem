@@ -65,8 +65,8 @@ const LoadNotes = Command.define("LoadNotes", {
   messages: [Message.ReceivedNotes, Message.FailedNotes],
   execute: Effect.gen(function* () {
     const client = yield* NoteApi.Client;
-    // The first read can land before the cluster wakes the view's entity, so
-    // retry briefly rather than treating null as "no notes".
+    // The persisted view may still be catching up from the directory on the
+    // first read, so retry briefly rather than treating null as "no notes".
     const state = yield* Effect.gen(function* () {
       for (let attempt = 0; attempt < 8; attempt++) {
         const state = yield* client.NoteList.get(noteListKey);

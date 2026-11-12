@@ -7,15 +7,15 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
+    "test": "bun test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@alchemy.run/docker": "2.0.0-beta.86",
     "@alchemy.run/domain": "2.0.0-beta.86",
-    "@alchemy.run/effect-cluster": "2.0.0-beta.86",
-    "@effect/sql-pg": "4.1.4",
     "@slipmem/domain": "workspace:*",
     "alchemy": "2.0.0-beta.86",
+    "drizzle-orm": "^0.45.4",
     "effect": "4.1.4"
   }
 }

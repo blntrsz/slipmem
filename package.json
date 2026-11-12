@@ -12,13 +12,12 @@
     "destroy": "alchemy destroy",
     "build": "bun run --filter '@slipmem/web' build",
     "typecheck": "bun run --filter '@slipmem/*' typecheck && tsc -p tsconfig.stack.json",
-    "test": "bun run --filter '@slipmem/domain' test"
+    "test": "bun run --filter '@slipmem/domain' test && bun run --filter '@slipmem/server' test",
+    "import:postgres": "bun run packages/server/src/db/import-cli.ts"
   },
   "dependencies": {
     "@alchemy.run/docker": "2.0.0-beta.86",
     "@alchemy.run/domain": "2.0.0-beta.86",
-    "@alchemy.run/effect-cluster": "2.0.0-beta.86",
-    "@effect/sql-pg": "4.1.4",
     "@slipmem/domain": "workspace:*",
     "@slipmem/server": "workspace:*",
     "@slipmem/web": "workspace:*",

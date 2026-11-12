@@ -1,20 +1,13 @@
-import * as DomainCluster from "@alchemy.run/domain/EffectCluster";
 import { SlipMem } from "@slipmem/domain/note/note.model";
 import * as Layer from "effect/Layer";
-import { Default } from "./cluster.ts";
+import { defaultFilename } from "./db/database.ts";
+import * as SqlitePlatform from "./sqlite-platform.ts";
 
 /**
- * Hosts the domain model on Effect Cluster. The pool's runners load this
- * module and the exported `SlipMemLive` layer; the API container gets the
- * same layer, where it binds the model through the pool's gateway.
+ * Hosts the domain model in this process over SQLite. The model's aggregate
+ * instances, view keys and durable queues are objects in one database file;
+ * there is no cluster, gateway or second process to coordinate with.
  */
 export const SlipMemLive = SlipMem.layer(Layer.empty).pipe(
-  Layer.provide(
-    DomainCluster.layerEntities({
-      name: "SlipMem",
-      main: import.meta.url,
-      handler: "SlipMemLive",
-      pool: Default,
-    }),
-  ),
+  Layer.provide(SqlitePlatform.layer({ filename: defaultFilename() })),
 );
