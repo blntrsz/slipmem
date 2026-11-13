@@ -12,8 +12,6 @@ export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
   id: ID,
   content: Schema.String.check(Schema.isMaxLength(1000)),
-  time: Schema.Struct({
-    created: Schema.Finite,
-    updated: Schema.Finite,
-  }),
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
 }).annotate({ identifier: "FleetingNote.Info" })

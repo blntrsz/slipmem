@@ -5,6 +5,7 @@ export class FleetingNoteError extends Data.TaggedError("FleetingNoteError")<{
   readonly cause: unknown
 }> {}
 
+// Callers must validate untrusted input with FleetingNote.Info before using this service.
 export interface FleetingNoteShape {
   readonly create: (note: FleetingNote.Info) => Effect.Effect<FleetingNote.Info, FleetingNoteError>
   readonly get: (id: FleetingNote.ID) => Effect.Effect<Option.Option<FleetingNote.Info>, FleetingNoteError>

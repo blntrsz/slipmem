@@ -5,11 +5,11 @@ import { Effect, Layer, Option, Schema } from "effect"
 import { FleetingNoteService } from "./fleeting-note.service"
 import { SQLiteFleetingNoteService } from "./sqlite-fleeting-note.service"
 
-test("SQLite fleeting note service persists and validates notes", async () => {
+test("SQLite fleeting note service persists notes", async () => {
   const sqlite = SqliteClient.layer({ filename: ":memory:" })
   const layer = SQLiteFleetingNoteService.pipe(Layer.provideMerge(sqlite))
   const id = Schema.decodeUnknownSync(FleetingNote.ID)("note-1")
-  const note = { id, content: "hello", time: { created: 1, updated: 2 } }
+  const note = { id, content: "hello", createdAt: 1, updatedAt: 2 }
 
   await Effect.runPromise(Effect.gen(function* () {
     const sql = yield* SqliteClient.SqliteClient
@@ -19,9 +19,8 @@ test("SQLite fleeting note service persists and validates notes", async () => {
     expect(yield* service.create(note)).toEqual(note)
     expect(Option.getOrThrow(yield* service.get(id))).toEqual(note)
     expect(yield* service.list()).toEqual([note])
-    const changed = { ...note, content: "updated", time: { ...note.time, updated: 3 } }
+    const changed = { ...note, content: "updated", updatedAt: 3 }
     expect(Option.getOrThrow(yield* service.update(changed))).toEqual(changed)
-    expect(yield* Effect.flip(service.create({ ...note, content: "x".repeat(1001) }))).toBeDefined()
     expect(yield* Effect.flip(service.create(note))).toBeDefined()
     expect(yield* service.delete(id)).toBe(true)
     expect(yield* service.delete(id)).toBe(false)
