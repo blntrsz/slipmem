@@ -10,24 +10,24 @@ export const SQLiteFleetingNoteService = Layer.effect(
     const db = yield* SQLiteDrizzle.makeWithDefaults()
 
     return FleetingNoteService.of({
-      create: (note) => Effect.gen(function* () {
-        const [row] = yield* db.insert(FleetingNoteTable).values(note).returning()
+      create: (input) => Effect.gen(function* () {
+        const [row] = yield* db.insert(FleetingNoteTable).values(input).returning()
         return row!
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
-      get: (id) => Effect.gen(function* () {
-        const rows = yield* db.select().from(FleetingNoteTable).where(eq(FleetingNoteTable.id, id))
+      get: (input) => Effect.gen(function* () {
+        const rows = yield* db.select().from(FleetingNoteTable).where(eq(FleetingNoteTable.id, input.id))
         return Option.fromNullishOr(rows[0])
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
-      list: () => Effect.gen(function* () {
+      list: (_input) => Effect.gen(function* () {
         return yield* db.select().from(FleetingNoteTable)
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
-      update: (note) => Effect.gen(function* () {
-        const rows = yield* db.update(FleetingNoteTable).set(note).where(eq(FleetingNoteTable.id, note.id)).returning()
-        if (!rows[0]) return yield* new FleetingNoteNotFound({ id: note.id })
+      update: (input) => Effect.gen(function* () {
+        const rows = yield* db.update(FleetingNoteTable).set(input).where(eq(FleetingNoteTable.id, input.id)).returning()
+        if (!rows[0]) return yield* new FleetingNoteNotFound({ id: input.id })
         return rows[0]
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
-      delete: (id) => Effect.gen(function* () {
-        const rows = yield* db.delete(FleetingNoteTable).where(eq(FleetingNoteTable.id, id)).returning({ id: FleetingNoteTable.id })
+      delete: (input) => Effect.gen(function* () {
+        const rows = yield* db.delete(FleetingNoteTable).where(eq(FleetingNoteTable.id, input.id)).returning({ id: FleetingNoteTable.id })
         return rows.length > 0
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
     })

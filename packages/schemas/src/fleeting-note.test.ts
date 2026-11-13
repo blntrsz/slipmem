@@ -22,3 +22,17 @@ test("requires finite creation and update timestamps", () => {
   expect(() => decode({ ...note, createdAt: NaN })).toThrow()
   expect(() => decode({ ...note, updatedAt: Infinity })).toThrow()
 })
+
+test("accepts a complete note as create and update input", () => {
+  expect(Schema.decodeUnknownSync(FleetingNote.CreateInput)(note)).toEqual(note)
+  expect(Schema.decodeUnknownSync(FleetingNote.UpdateInput)(note)).toEqual(note)
+})
+
+test("accepts an id for get and delete input", () => {
+  expect(Schema.decodeUnknownSync(FleetingNote.GetInput)({ id: note.id })).toEqual({ id: note.id })
+  expect(Schema.decodeUnknownSync(FleetingNote.DeleteInput)({ id: note.id })).toEqual({ id: note.id })
+})
+
+test("accepts an empty list input", () => {
+  expect(Schema.decodeUnknownSync(FleetingNote.ListInput)({})).toEqual({})
+})

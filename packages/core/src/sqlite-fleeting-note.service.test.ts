@@ -19,21 +19,21 @@ test("SQLite fleeting note service persists notes", async () => {
     const sql = yield* SqliteClient.SqliteClient
     yield* sql`CREATE TABLE fleeting_note (id TEXT PRIMARY KEY NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
     const service = yield* FleetingNoteService
-    expect(Option.isNone(yield* service.get(id))).toBe(true)
+    expect(Option.isNone(yield* service.get({ id }))).toBe(true)
     expect(yield* service.create(note)).toEqual(note)
-    expect(Option.getOrThrow(yield* service.get(id))).toEqual(note)
-    expect(yield* service.list()).toEqual([note])
+    expect(Option.getOrThrow(yield* service.get({ id }))).toEqual(note)
+    expect(yield* service.list({})).toEqual([note])
     const changed = { ...note, content: "updated", updatedAt: 3 }
     expect(yield* service.update(changed)).toEqual(changed)
     const duplicate = yield* Effect.exit(service.create(note))
     expect(Exit.isFailure(duplicate) && Cause.hasDies(duplicate.cause)).toBe(true)
     expect(defects(duplicate)).toEqual([expect.any(EffectDrizzleQueryError)])
-    expect(yield* service.delete(id)).toBe(true)
-    expect(yield* service.delete(id)).toBe(false)
+    expect(yield* service.delete({ id })).toBe(true)
+    expect(yield* service.delete({ id })).toBe(false)
     const missing = yield* Effect.flip(service.update(changed))
     expect(missing).toBeInstanceOf(FleetingNoteNotFound)
     expect(missing.id).toBe(id)
-    expect(yield* service.list()).toEqual([])
+    expect(yield* service.list({})).toEqual([])
   }).pipe(Effect.provide(layer)))
 })
 
@@ -47,10 +47,10 @@ test("SQLite fleeting note service dies on Drizzle SQL errors", async () => {
     const service = yield* FleetingNoteService
     const exits = [
       yield* Effect.exit(service.create(note)),
-      yield* Effect.exit(service.get(id)),
-      yield* Effect.exit(service.list()),
+      yield* Effect.exit(service.get({ id })),
+      yield* Effect.exit(service.list({})),
       yield* Effect.exit(service.update(note)),
-      yield* Effect.exit(service.delete(id)),
+      yield* Effect.exit(service.delete({ id })),
     ]
 
     for (const exit of exits) {
