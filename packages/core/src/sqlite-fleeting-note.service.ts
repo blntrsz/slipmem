@@ -22,8 +22,9 @@ export const SQLiteFleetingNoteService = Layer.effect(
         return yield* db.select().from(FleetingNoteTable)
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
       update: (input) => Effect.gen(function* () {
-        const rows = yield* db.update(FleetingNoteTable).set(input).where(eq(FleetingNoteTable.id, input.id)).returning()
-        if (!rows[0]) return yield* new FleetingNoteNotFound({ id: input.id })
+        const { id, ...changes } = input
+        const rows = yield* db.update(FleetingNoteTable).set(changes).where(eq(FleetingNoteTable.id, id)).returning()
+        if (!rows[0]) return yield* new FleetingNoteNotFound({ id })
         return rows[0]
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
       delete: (input) => Effect.gen(function* () {

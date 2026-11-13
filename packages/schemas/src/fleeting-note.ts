@@ -8,20 +8,25 @@ export const ID = Schema.String.pipe(
 )
 export type ID = typeof ID.Type
 
+const Title = Schema.String
+const Content = Schema.String.check(Schema.isMaxLength(1000))
+
 export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
   id: ID,
-  content: Schema.String.check(Schema.isMaxLength(1000)),
+  title: Title,
+  content: Content,
   createdAt: Schema.Finite,
   updatedAt: Schema.Finite,
 }).annotate({ identifier: "FleetingNote.Info" })
 
-// Create and update take a complete note so the service can persist it without
-// converting fields.
+// Create input only carries user-authored fields. The database generates the
+// id and timestamps, so callers cannot choose them.
 export interface CreateInput extends Schema.Schema.Type<typeof CreateInput> {}
-export const CreateInput = Info.pipe(
-  Schema.annotate({ identifier: "FleetingNote.CreateInput" }),
-)
+export const CreateInput = Schema.Struct({
+  title: Title,
+  content: Content,
+}).annotate({ identifier: "FleetingNote.CreateInput" })
 
 export interface GetInput extends Schema.Schema.Type<typeof GetInput> {}
 export const GetInput = Schema.Struct({
@@ -33,10 +38,14 @@ export const GetInput = Schema.Struct({
 export interface ListInput extends Schema.Schema.Type<typeof ListInput> {}
 export const ListInput = Schema.Struct({}).annotate({ identifier: "FleetingNote.ListInput" })
 
+// Update input still needs the id to locate the note, but timestamps are
+// managed by the database and are not accepted from callers.
 export interface UpdateInput extends Schema.Schema.Type<typeof UpdateInput> {}
-export const UpdateInput = Info.pipe(
-  Schema.annotate({ identifier: "FleetingNote.UpdateInput" }),
-)
+export const UpdateInput = Schema.Struct({
+  id: ID,
+  title: Title,
+  content: Content,
+}).annotate({ identifier: "FleetingNote.UpdateInput" })
 
 export interface DeleteInput extends Schema.Schema.Type<typeof DeleteInput> {}
 export const DeleteInput = Schema.Struct({
