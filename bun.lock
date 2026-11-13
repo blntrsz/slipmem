@@ -1,0 +1,42 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "slipmem",
+    },
+    "packages/core": {
+      "name": "@slipmem/core",
+      "version": "0.0.0",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+    },
+    "packages/mcp": {
+      "name": "@slipmem/mcp",
+      "version": "0.0.0",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+    },
+    "packages/schemas": {
+      "name": "@slipmem/schemas",
+      "version": "0.0.0",
+      "dependencies": {
+        "effect": "catalog:",
+      },
+    },
+  },
+  "catalog": {
+    "effect": "^4.1.4",
+  },
+  "packages": {
+    "@slipmem/core": ["@slipmem/core@workspace:packages/core"],
+
+    "@slipmem/mcp": ["@slipmem/mcp@workspace:packages/mcp"],
+
+    "@slipmem/schemas": ["@slipmem/schemas@workspace:packages/schemas"],
+
+    "effect": ["effect@4.1.4", "", {}, "sha512-Tgrv/9FN+TZYyOn8XSli+fVqAfwDrDAkiX5Uu9vztINb675VTQdhD0gWI5Kzvhlh9QqzjZvw72iugqw5pwoghQ=="],
+  }
+}
