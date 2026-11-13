@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { FleetingNote } from "@slipmem/schemas/fleeting-note"
-import { Effect, Layer, Option, Schema } from "effect"
-import { FleetingNoteService } from "./fleeting-note.service"
+import { Cause, Effect, Exit, Layer, Option, Schema } from "effect"
+import { FleetingNoteNotFound, FleetingNoteService } from "./fleeting-note.service"
 import { SQLiteFleetingNoteService } from "./sqlite-fleeting-note.service"
 
 test("SQLite fleeting note service persists notes", async () => {
@@ -20,11 +20,14 @@ test("SQLite fleeting note service persists notes", async () => {
     expect(Option.getOrThrow(yield* service.get(id))).toEqual(note)
     expect(yield* service.list()).toEqual([note])
     const changed = { ...note, content: "updated", updatedAt: 3 }
-    expect(Option.getOrThrow(yield* service.update(changed))).toEqual(changed)
-    expect(yield* Effect.flip(service.create(note))).toBeDefined()
+    expect(yield* service.update(changed)).toEqual(changed)
+    const duplicate = yield* Effect.exit(service.create(note))
+    expect(Exit.isFailure(duplicate) && Cause.hasDies(duplicate.cause)).toBe(true)
     expect(yield* service.delete(id)).toBe(true)
     expect(yield* service.delete(id)).toBe(false)
-    expect(Option.isNone(yield* service.update(changed))).toBe(true)
+    const missing = yield* Effect.flip(service.update(changed))
+    expect(missing).toBeInstanceOf(FleetingNoteNotFound)
+    expect(missing.id).toBe(id)
     expect(yield* service.list()).toEqual([])
   }).pipe(Effect.provide(layer)))
 })
