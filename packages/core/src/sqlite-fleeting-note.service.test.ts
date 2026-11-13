@@ -1,9 +1,13 @@
 import { expect, test } from "bun:test"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { FleetingNote } from "@slipmem/schemas/fleeting-note"
+import { EffectDrizzleQueryError } from "drizzle-orm/effect-core"
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect"
 import { FleetingNoteNotFound, FleetingNoteService } from "./fleeting-note.service"
 import { SQLiteFleetingNoteService } from "./sqlite-fleeting-note.service"
+
+const defects = (exit: Exit.Exit<unknown, unknown>) =>
+  Exit.isFailure(exit) ? exit.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect) : []
 
 test("SQLite fleeting note service persists notes", async () => {
   const sqlite = SqliteClient.layer({ filename: ":memory:" })
@@ -23,11 +27,34 @@ test("SQLite fleeting note service persists notes", async () => {
     expect(yield* service.update(changed)).toEqual(changed)
     const duplicate = yield* Effect.exit(service.create(note))
     expect(Exit.isFailure(duplicate) && Cause.hasDies(duplicate.cause)).toBe(true)
+    expect(defects(duplicate)).toEqual([expect.any(EffectDrizzleQueryError)])
     expect(yield* service.delete(id)).toBe(true)
     expect(yield* service.delete(id)).toBe(false)
     const missing = yield* Effect.flip(service.update(changed))
     expect(missing).toBeInstanceOf(FleetingNoteNotFound)
     expect(missing.id).toBe(id)
     expect(yield* service.list()).toEqual([])
+  }).pipe(Effect.provide(layer)))
+})
+
+test("SQLite fleeting note service dies on Drizzle SQL errors", async () => {
+  const sqlite = SqliteClient.layer({ filename: ":memory:" })
+  const layer = SQLiteFleetingNoteService.pipe(Layer.provideMerge(sqlite))
+  const id = Schema.decodeUnknownSync(FleetingNote.ID)("note-1")
+  const note = { id, content: "hello", createdAt: 1, updatedAt: 2 }
+
+  await Effect.runPromise(Effect.gen(function* () {
+    const service = yield* FleetingNoteService
+    const exits = [
+      yield* Effect.exit(service.create(note)),
+      yield* Effect.exit(service.get(id)),
+      yield* Effect.exit(service.list()),
+      yield* Effect.exit(service.update(note)),
+      yield* Effect.exit(service.delete(id)),
+    ]
+
+    for (const exit of exits) {
+      expect(defects(exit)).toEqual([expect.any(EffectDrizzleQueryError)])
+    }
   }).pipe(Effect.provide(layer)))
 })

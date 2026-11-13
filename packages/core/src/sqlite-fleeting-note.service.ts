@@ -13,23 +13,23 @@ export const SQLiteFleetingNoteService = Layer.effect(
       create: (note) => Effect.gen(function* () {
         const [row] = yield* db.insert(FleetingNoteTable).values(note).returning()
         return row!
-      }).pipe(Effect.orDie),
+      }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
       get: (id) => Effect.gen(function* () {
         const rows = yield* db.select().from(FleetingNoteTable).where(eq(FleetingNoteTable.id, id))
         return Option.fromNullishOr(rows[0])
-      }).pipe(Effect.orDie),
+      }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
       list: () => Effect.gen(function* () {
         return yield* db.select().from(FleetingNoteTable)
-      }).pipe(Effect.orDie),
+      }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
       update: (note) => Effect.gen(function* () {
-        const rows = yield* db.update(FleetingNoteTable).set(note).where(eq(FleetingNoteTable.id, note.id)).returning().pipe(Effect.orDie)
+        const rows = yield* db.update(FleetingNoteTable).set(note).where(eq(FleetingNoteTable.id, note.id)).returning()
         if (!rows[0]) return yield* new FleetingNoteNotFound({ id: note.id })
         return rows[0]
-      }),
+      }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
       delete: (id) => Effect.gen(function* () {
         const rows = yield* db.delete(FleetingNoteTable).where(eq(FleetingNoteTable.id, id)).returning({ id: FleetingNoteTable.id })
         return rows.length > 0
-      }).pipe(Effect.orDie),
+      }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
     })
   }),
 )
