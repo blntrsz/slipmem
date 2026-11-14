@@ -9,9 +9,25 @@ export const ID = Schema.String.pipe(
 export type ID = typeof ID.Type
 
 const Title = Schema.String
-const Content = Schema.String.check(Schema.isMaxLength(5000))
+const Content = Schema.String.check(
+  Schema.isMaxLength(5000, {
+    message: "Content must be 5000 characters or fewer.",
+  }),
+)
 // Literature notes must point back at the source they were taken from.
 const Reference = Schema.String
+
+const RequiredTitle = Title.check(
+  Schema.isPattern(/\S/, { message: "Title is required." }),
+)
+const RequiredContent = Content.check(
+  Schema.isPattern(/\S/, { message: "Content is required." }),
+)
+const RequiredReference = Reference.check(
+  Schema.isPattern(/\S/, {
+    message: "Reference is required for literature notes.",
+  }),
+)
 
 export interface Info extends Schema.Schema.Type<typeof Info> {}
 export const Info = Schema.Struct({
@@ -27,9 +43,9 @@ export const Info = Schema.Struct({
 // id and timestamps, so callers cannot choose them.
 export interface CreateInput extends Schema.Schema.Type<typeof CreateInput> {}
 export const CreateInput = Schema.Struct({
-  title: Title,
-  content: Content,
-  reference: Reference,
+  title: RequiredTitle,
+  content: RequiredContent,
+  reference: RequiredReference,
 }).annotate({ identifier: "LiteratureNote.CreateInput" })
 
 export interface GetInput extends Schema.Schema.Type<typeof GetInput> {}
@@ -47,9 +63,9 @@ export const ListInput = Schema.Struct({}).annotate({ identifier: "LiteratureNot
 export interface UpdateInput extends Schema.Schema.Type<typeof UpdateInput> {}
 export const UpdateInput = Schema.Struct({
   id: ID,
-  title: Title,
-  content: Content,
-  reference: Reference,
+  title: RequiredTitle,
+  content: RequiredContent,
+  reference: RequiredReference,
 }).annotate({ identifier: "LiteratureNote.UpdateInput" })
 
 export interface DeleteInput extends Schema.Schema.Type<typeof DeleteInput> {}

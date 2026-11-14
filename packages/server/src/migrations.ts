@@ -332,6 +332,53 @@ const initialMigrationApplied = (
   })
 
 /**
+ * Refuses to adopt a database whose modern Drizzle history does not contain the
+ * bundled initial migration.
+ *
+ * A legacy history table without a `name` column is handled by Drizzle's own
+ * upgrade, which matches every recorded row against a local migration. A
+ * modern table with unrelated rows cannot be matched that way, so applying the
+ * initial migration over it would append a second, inconsistent history.
+ */
+const assertMigrationHistoryAdoptable = (
+  sql: DatabaseClient,
+  initialMigrationName: string,
+): Effect.Effect<void, MigrationFailure> =>
+  Effect.gen(function* () {
+    const kind = yield* tableType(sql, migrationsTable)
+    if (kind === undefined) return
+
+    if (kind !== "table") {
+      return yield* failMigration(
+        `"${migrationsTable}" exists but is a ${kind}, not a table. Refusing to migrate over an unexpected object.`,
+      )
+    }
+
+    const columns = yield* migrationTableColumns(sql)
+    if (!columns.some((column) => column.name === "name")) {
+      // Version 0 history: Drizzle upgrades it and fails itself if a row does
+      // not match a local migration.
+      return
+    }
+
+    const rows = yield* sql<{ readonly name: string | null }>`
+      SELECT name FROM ${sql(migrationsTable)}
+    `
+
+    if (rows.length > 0 && !Array.from(rows).some((row) => row.name === initialMigrationName)) {
+      return yield* failMigration(
+        `The database has a ${migrationsTable} history that does not include the bundled initial migration "${initialMigrationName}". Refusing to apply the initial migration over unknown history. Restore the database that matches these migrations or start with a new file.`,
+      )
+    }
+  })
+
+const isLegacyMigrationHistoryDefect = (defect: unknown): boolean =>
+  defect instanceof Error &&
+  defect.message.startsWith(
+    "While upgrading your database migrations table",
+  )
+
+/**
  * Runs the generated Drizzle migrations against the database provided by
  * `SqliteClient`.
  *
@@ -383,15 +430,22 @@ export const runMigrations = (
           // Validate every table that already exists before letting the
           // generated CREATE TABLE statements touch the file.
           yield* assertExistingTables(sql)
+          yield* assertMigrationHistoryAdoptable(sql, initial.name)
         }
 
         const db = yield* SQLiteDrizzle.makeWithDefaults()
         yield* migrate(db, { migrationsFolder }).pipe(
-          // Drizzle's legacy-history upgrade throws a plain Error for an
-          // unrecognised migration table. Convert that defect into the same
-          // actionable failure callers get for the rest of the runner.
+          // Drizzle's legacy-history upgrade throws a plain Error for a
+          // migration row that does not match any local migration. Convert
+          // only that known defect; unexpected defects must keep propagating
+          // instead of being mislabelled as a safe migration failure.
           Effect.catchCauseIf(
-            (cause) => cause.reasons.some(Cause.isDieReason),
+            (cause) =>
+              cause.reasons.some(
+                (reason) =>
+                  Cause.isDieReason(reason) &&
+                  isLegacyMigrationHistoryDefect(reason.defect),
+              ),
             (cause) =>
               Effect.fail(
                 failMigration(

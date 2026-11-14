@@ -1,12 +1,14 @@
 import { Note } from "@slipmem/schemas/note"
-import { Data, Effect, Schema } from "effect"
-import { HttpClient, HttpClientRequest } from "effect/http"
+import { Data, Effect, Option, Schema } from "effect"
+import {
+  HttpClient,
+  HttpClientRequest,
+  HttpClientResponse,
+} from "effect/http"
 
-export const NoteDraft = Schema.Struct({
-  title: Schema.String,
-  content: Schema.String,
-  reference: Schema.String,
-})
+// The draft shape is shared with the server and the per-kind schemas. Keeping
+// one schema avoids the client accepting fields the API would reject.
+export const NoteDraft = Note.Draft
 export type NoteDraft = typeof NoteDraft.Type
 
 export class ApiError extends Data.TaggedError("ApiError")<{
@@ -16,14 +18,36 @@ export class ApiError extends Data.TaggedError("ApiError")<{
 const NotesResponse = Schema.Struct({ notes: Schema.Array(Note.Info) })
 const NoteResponse = Schema.Struct({ note: Schema.NullOr(Note.Info) })
 const DeleteResponse = Schema.Struct({ deleted: Schema.Boolean })
+const ErrorResponse = Schema.Struct({ error: Schema.String })
 
 const statusError = (status: number) =>
   new ApiError({ message: `Request failed with status ${status}` })
 
-const ensureOk = (response: { readonly status: number }) =>
-  response.status >= 200 && response.status < 300
-    ? Effect.void
-    : Effect.fail(statusError(response.status))
+/**
+ * Turns any failure from this module into a message suitable for the UI. The
+ * JSON API returns `{ error }` for rejected requests, so callers can show the
+ * server's validation message instead of a generic failure.
+ */
+export const apiErrorMessage = (error: unknown, fallback: string): string =>
+  error instanceof ApiError ? error.message : fallback
+
+const ensureOk = (response: HttpClientResponse.HttpClientResponse) =>
+  Effect.gen(function* () {
+    if (response.status >= 200 && response.status < 300) {
+      return
+    }
+
+    const body = yield* Effect.option(response.json)
+    const parsed = Option.flatMap(body, (value) =>
+      Schema.decodeUnknownOption(ErrorResponse)(value),
+    )
+    const message = Option.match(parsed, {
+      onNone: () => statusError(response.status).message,
+      onSome: ({ error }) => error,
+    })
+
+    return yield* Effect.fail(new ApiError({ message }))
+  })
 
 const send = (request: HttpClientRequest.HttpClientRequest) =>
   Effect.gen(function* () {

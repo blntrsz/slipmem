@@ -38,6 +38,16 @@ export const Info = Schema.Union([FleetingInfo, LiteratureInfo, PermanentInfo])
   .pipe(Schema.toTaggedUnion("type"))
 export type Info = typeof Info.Type
 
+// The wire shape shared by the web form and the JSON API. Per-kind schemas
+// still validate the actual create/update input: this draft only describes
+// fields a caller may send before the kind-specific rules are applied.
+export interface Draft extends Schema.Schema.Type<typeof Draft> {}
+export const Draft = Schema.Struct({
+  title: Schema.String,
+  content: Schema.String,
+  reference: Schema.optional(Schema.String),
+}).annotate({ identifier: "Note.Draft" })
+
 // Lists are currently unfiltered. Keep an explicit empty input so every
 // operation has a schema and filters can be added without changing signatures.
 export interface ListInput extends Schema.Schema.Type<typeof ListInput> {}

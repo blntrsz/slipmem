@@ -11,7 +11,7 @@ const manifestPath = resolve(process.cwd(), "dist/server/foldkit.build.json")
 const manifestFile = Bun.file(manifestPath)
 
 if (!(await manifestFile.exists())) {
-  console.error(`Missing ${manifestPath}. Run \"bun run build\" first.`)
+  console.error(`Missing ${manifestPath}. Run "bun run build" first.`)
   process.exit(1)
 }
 

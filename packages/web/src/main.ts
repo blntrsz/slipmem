@@ -1,12 +1,16 @@
+import { FleetingNote } from "@slipmem/schemas/fleeting-note"
+import { LiteratureNote } from "@slipmem/schemas/literature-note"
 import { Note } from "@slipmem/schemas/note"
-import { Array, Effect, Option, Schema, String } from "effect"
-import { Command, Http, Runtime, type Update } from "foldkit"
+import { PermanentNote } from "@slipmem/schemas/permanent-note"
+import { Array, Effect, Match, Option, Order, Result, Schema } from "effect"
+import { AsyncData, Command, Http, Runtime, type Update } from "foldkit"
 import { type Document, type Html, type HtmlBuilder } from "foldkit/html"
 import { defineMessageUnion } from "foldkit/message"
 import { defineTaggedUnion } from "foldkit/schema"
 import { modifyFields } from "foldkit/struct"
 
 import {
+  apiErrorMessage,
   createNote,
   deleteNote,
   listNotes,
@@ -16,45 +20,37 @@ import {
 
 // MODEL
 
-export const NotesState = defineTaggedUnion({
-  Idle: {},
-  Loading: {},
-  Loaded: { notes: Schema.Array(Note.Info) },
-  Failed: { message: Schema.String },
-})
-type NotesState = typeof NotesState.Type
+// Notes use Foldkit's AsyncData so a refresh keeps the last good list visible
+// (`Refreshing`), and a failed refresh keeps it with an error (`Stale`).
+export const Notes = AsyncData.Schema(Schema.Array(Note.Info), Schema.String)
 
 export const EditorState = defineTaggedUnion({
   Closed: {},
-  Creating: {
-    kind: Note.Kind,
-    title: Schema.String,
-    content: Schema.String,
-    reference: Schema.String,
-  },
-  Editing: {
-    kind: Note.Kind,
-    id: Schema.String,
-    title: Schema.String,
-    content: Schema.String,
-    reference: Schema.String,
-  },
-  Saving: {
+  Open: {
     kind: Note.Kind,
     maybeId: Schema.Option(Schema.String),
-    title: Schema.String,
-    content: Schema.String,
-    reference: Schema.String,
+    draft: NoteDraft,
+  },
+  Saving: {
+    requestId: Schema.Int,
+    kind: Note.Kind,
+    maybeId: Schema.Option(Schema.String),
+    draft: NoteDraft,
   },
 })
 type EditorState = typeof EditorState.Type
 type SavingEditor = Extract<EditorState, { _tag: "Saving" }>
 
 export const Model = Schema.Struct({
-  notes: NotesState,
+  notes: Notes.schema,
   selectedKind: Note.Kind,
   editor: EditorState,
   lastError: Schema.Option(Schema.String),
+  // The newest load request. Results from older requests are ignored.
+  loadRequestId: Schema.Int,
+  // The newest save request. A save result only closes the editor when it
+  // belongs to the request still being saved.
+  saveRequestId: Schema.Int,
 })
 export type Model = typeof Model.Type
 
@@ -71,11 +67,11 @@ export const Message = defineMessageUnion({
   UpdatedTitle: { title: Schema.String },
   UpdatedContent: { content: Schema.String },
   UpdatedReference: { reference: Schema.String },
-  SucceededLoadNotes: { notes: Schema.Array(Note.Info) },
-  FailedLoadNotes: { message: Schema.String },
-  SucceededSaveNote: { note: Note.Info },
-  FailedSaveNote: { message: Schema.String },
-  SucceededDeleteNote: { id: Schema.String },
+  SucceededLoadNotes: { requestId: Schema.Int, notes: Schema.Array(Note.Info) },
+  FailedLoadNotes: { requestId: Schema.Int, message: Schema.String },
+  SucceededSaveNote: { requestId: Schema.Int, note: Note.Info },
+  FailedSaveNote: { requestId: Schema.Int, message: Schema.String },
+  SucceededDeleteNote: { kind: Note.Kind, id: Schema.String },
   FailedDeleteNote: { message: Schema.String },
 })
 export type Message = typeof Message.Type
@@ -84,48 +80,75 @@ export type Message = typeof Message.Type
 
 export const init: Runtime.ApplicationInit<Model, Message> = () => ({
   model: {
-    notes: NotesState.Idle(),
+    notes: AsyncData.Idle(),
     selectedKind: "fleeting",
     editor: EditorState.Closed(),
     lastError: Option.none(),
+    loadRequestId: 0,
+    saveRequestId: 0,
   },
-  commands: [LoadNotes()],
+  commands: [LoadNotes({ requestId: 0 })],
 })
 
 // COMMAND
 
+const failureMessage = (error: unknown, fallback: string): string =>
+  apiErrorMessage(error, fallback)
+
 export const LoadNotes = Command.define("LoadNotes", {
+  args: { requestId: Schema.Int },
   messages: [Message.SucceededLoadNotes, Message.FailedLoadNotes],
-  execute: listNotes.pipe(
-    Effect.map((notes) => Message.SucceededLoadNotes({ notes })),
-    Effect.catch(() =>
-      Effect.succeed(Message.FailedLoadNotes({ message: "Could not load notes." })),
+  execute: ({ requestId }) =>
+    listNotes.pipe(
+      Effect.map((notes) => Message.SucceededLoadNotes({ requestId, notes })),
+      Effect.catch((error) =>
+        Effect.succeed(
+          Message.FailedLoadNotes({
+            requestId,
+            message: failureMessage(error, "Could not load notes."),
+          }),
+        ),
+      ),
+      Effect.provide(Http.layer),
     ),
-    Effect.provide(Http.layer),
-  ),
 })
 
 export const CreateNote = Command.define("CreateNote", {
-  args: { kind: Note.Kind, draft: NoteDraft },
+  args: { requestId: Schema.Int, kind: Note.Kind, draft: NoteDraft },
   messages: [Message.SucceededSaveNote, Message.FailedSaveNote],
-  execute: ({ kind, draft }) =>
+  execute: ({ requestId, kind, draft }) =>
     createNote(kind, draft).pipe(
-      Effect.map((note) => Message.SucceededSaveNote({ note })),
-      Effect.catch(() =>
-        Effect.succeed(Message.FailedSaveNote({ message: "Could not save the note." })),
+      Effect.map((note) => Message.SucceededSaveNote({ requestId, note })),
+      Effect.catch((error) =>
+        Effect.succeed(
+          Message.FailedSaveNote({
+            requestId,
+            message: failureMessage(error, "Could not save the note."),
+          }),
+        ),
       ),
       Effect.provide(Http.layer),
     ),
 })
 
 export const UpdateNote = Command.define("UpdateNote", {
-  args: { kind: Note.Kind, id: Schema.String, draft: NoteDraft },
+  args: {
+    requestId: Schema.Int,
+    kind: Note.Kind,
+    id: Schema.String,
+    draft: NoteDraft,
+  },
   messages: [Message.SucceededSaveNote, Message.FailedSaveNote],
-  execute: ({ kind, id, draft }) =>
+  execute: ({ requestId, kind, id, draft }) =>
     updateNote(kind, id, draft).pipe(
-      Effect.map((note) => Message.SucceededSaveNote({ note })),
-      Effect.catch(() =>
-        Effect.succeed(Message.FailedSaveNote({ message: "Could not save the note." })),
+      Effect.map((note) => Message.SucceededSaveNote({ requestId, note })),
+      Effect.catch((error) =>
+        Effect.succeed(
+          Message.FailedSaveNote({
+            requestId,
+            message: failureMessage(error, "Could not save the note."),
+          }),
+        ),
       ),
       Effect.provide(Http.layer),
     ),
@@ -136,9 +159,13 @@ export const DeleteNote = Command.define("DeleteNote", {
   messages: [Message.SucceededDeleteNote, Message.FailedDeleteNote],
   execute: ({ kind, id }) =>
     deleteNote(kind, id).pipe(
-      Effect.map(() => Message.SucceededDeleteNote({ id })),
-      Effect.catch(() =>
-        Effect.succeed(Message.FailedDeleteNote({ message: "Could not delete the note." })),
+      Effect.map(() => Message.SucceededDeleteNote({ kind, id })),
+      Effect.catch((error) =>
+        Effect.succeed(
+          Message.FailedDeleteNote({
+            message: failureMessage(error, "Could not delete the note."),
+          }),
+        ),
       ),
       Effect.provide(Http.layer),
     ),
@@ -154,51 +181,83 @@ const kindLabels: Readonly<Record<Note.Kind, string>> = {
   permanent: "Permanent",
 }
 
-const notesForKind = (state: NotesState, kind: Note.Kind): ReadonlyArray<Note.Info> =>
-  NotesState.match(state, {
-    Idle: () => [],
-    Loading: () => [],
-    Failed: () => [],
-    Loaded: ({ notes }) => Array.filter(notes, (note) => note.type === kind),
+// Ids are only unique within a note table, so every lookup and removal includes
+// the kind as well as the id.
+const noteKey = (note: Pick<Note.Info, "type" | "id">): string =>
+  `${note.type}\u0000${note.id}`
+
+const noteOrder = Order.combine(
+  Order.mapInput(Order.flip(Order.Number), (note: Note.Info) => note.updatedAt),
+  Order.mapInput(Order.String, noteKey),
+)
+
+const sortNotes = (notes: ReadonlyArray<Note.Info>): ReadonlyArray<Note.Info> =>
+  Array.sort(notes, noteOrder)
+
+const notesOf = (state: typeof Notes.schema.Type): ReadonlyArray<Note.Info> =>
+  AsyncData.getOrElse(state, () => [])
+
+const notesForKind = (
+  state: typeof Notes.schema.Type,
+  kind: Note.Kind,
+): ReadonlyArray<Note.Info> =>
+  Array.filter(notesOf(state), (note) => note.type === kind)
+
+const upsertNote = (
+  notes: ReadonlyArray<Note.Info>,
+  note: Note.Info,
+): ReadonlyArray<Note.Info> =>
+  sortNotes([
+    ...Array.filter(notes, (existing) => noteKey(existing) !== noteKey(note)),
+    note,
+  ])
+
+const removeNote = (
+  notes: ReadonlyArray<Note.Info>,
+  kind: Note.Kind,
+  id: string,
+): ReadonlyArray<Note.Info> =>
+  Array.filter(
+    notes,
+    (note) => note.type !== kind || note.id !== id,
+  )
+
+const updateNotesWith = (
+  state: typeof Notes.schema.Type,
+  update: (notes: ReadonlyArray<Note.Info>) => ReadonlyArray<Note.Info>,
+): typeof Notes.schema.Type =>
+  AsyncData.match(state, {
+    onIdle: () => state,
+    onLoading: () => state,
+    onFailure: () => state,
+    onRefreshing: (data) => AsyncData.Refreshing({ data: update(data) }),
+    onStale: ({ error, data }) =>
+      AsyncData.Stale({ error, data: update(data) }),
+    onSuccess: (data) => AsyncData.Success({ data: update(data) }),
   })
 
-const withLoadedNote = (state: NotesState, note: Note.Info): NotesState =>
-  NotesState.match(state, {
-    Idle: () => NotesState.Loaded({ notes: [note] }),
-    Loading: () => NotesState.Loaded({ notes: [note] }),
-    Failed: () => NotesState.Loaded({ notes: [note] }),
-    Loaded: ({ notes }) => {
-      const withoutNote = Array.filter(notes, (existing) => existing.id !== note.id)
-      return NotesState.Loaded({ notes: [...withoutNote, note] })
-    },
+const refreshState = (
+  state: typeof Notes.schema.Type,
+): typeof Notes.schema.Type =>
+  Option.match(AsyncData.getData(state), {
+    onNone: () => AsyncData.Loading(),
+    onSome: (data) => AsyncData.Refreshing({ data }),
   })
 
-const withoutNote = (state: NotesState, id: string): NotesState =>
-  NotesState.match(state, {
-    Idle: () => state,
-    Loading: () => state,
-    Failed: () => state,
-    Loaded: ({ notes }) =>
-      NotesState.Loaded({ notes: Array.filter(notes, (note) => note.id !== id) }),
+const failedLoadState = (
+  state: typeof Notes.schema.Type,
+  message: string,
+): typeof Notes.schema.Type =>
+  Option.match(AsyncData.getData(state), {
+    onNone: () => AsyncData.Failure({ error: message }),
+    onSome: (data) => AsyncData.Stale({ error: message, data }),
   })
 
 const editorFromSaving = (saving: SavingEditor): EditorState =>
-  Option.match(saving.maybeId, {
-    onNone: () =>
-      EditorState.Creating({
-        kind: saving.kind,
-        title: saving.title,
-        content: saving.content,
-        reference: saving.reference,
-      }),
-    onSome: (id) =>
-      EditorState.Editing({
-        kind: saving.kind,
-        id,
-        title: saving.title,
-        content: saving.content,
-        reference: saving.reference,
-      }),
+  EditorState.Open({
+    kind: saving.kind,
+    maybeId: saving.maybeId,
+    draft: saving.draft,
   })
 
 const referenceOf = (note: Note.Info): string =>
@@ -208,65 +267,80 @@ const referenceOf = (note: Note.Info): string =>
     literature: ({ reference }) => reference,
   })
 
-const draftError = (kind: Note.Kind, draft: NoteDraft): Option.Option<string> => {
-  if (String.isEmpty(String.trim(draft.title))) {
-    return Option.some("Title is required.")
-  }
-  if (String.isEmpty(String.trim(draft.content))) {
-    return Option.some("Content is required.")
-  }
-  if (kind === "literature" && String.isEmpty(String.trim(draft.reference))) {
-    return Option.some("Reference is required for literature notes.")
-  }
-  return Option.none()
+const draftSchema = (kind: Note.Kind) =>
+  Match.value(kind).pipe(
+    Match.when("fleeting", () => FleetingNote.CreateInput),
+    Match.when("literature", () => LiteratureNote.CreateInput),
+    Match.when("permanent", () => PermanentNote.CreateInput),
+    Match.exhaustive,
+  )
+
+// Validate against the same per-kind schema the HTTP and MCP inputs use, so
+// the form cannot accept a draft the server will reject.
+const draftError = (
+  kind: Note.Kind,
+  draft: NoteDraft,
+): Option.Option<string> => {
+  const normalized = { ...draft, reference: draft.reference ?? "" }
+  const result = Schema.decodeUnknownResult(draftSchema(kind))(normalized)
+
+  return Result.match(result, {
+    onSuccess: () => Option.none(),
+    // Schema errors include a pointer path after the human-readable first line.
+    // The path is useful in logs, but the alert only needs the message.
+    onFailure: (error) =>
+      Option.some(error.message.split("\n")[0] || error.message),
+  })
 }
+
+const withDraft = (
+  editor: EditorState,
+  changes: Partial<NoteDraft>,
+): EditorState =>
+  EditorState.match(editor, {
+    Closed: () => editor,
+    Saving: () => editor,
+    Open: ({ kind, maybeId, draft }) =>
+      EditorState.Open({
+        kind,
+        maybeId,
+        draft: { ...draft, ...changes },
+      }),
+  })
 
 const startSave = (model: Model, editor: EditorState): UpdateReturn =>
   EditorState.match<UpdateReturn>(editor, {
     Closed: () => ({ model }),
     Saving: () => ({ model }),
-    Creating: ({ kind, title, content, reference }) => {
-      const draft = { title, content, reference }
+    Open: ({ kind, maybeId, draft }) => {
       const maybeError = draftError(kind, draft)
       if (Option.isSome(maybeError)) {
         return { model: modifyFields(model, { lastError: () => maybeError }) }
       }
 
-      return {
-        model: modifyFields(model, {
-          editor: () =>
-            EditorState.Saving({
-              kind,
-              maybeId: Option.none(),
-              title,
-              content,
-              reference,
-            }),
-          lastError: () => Option.none(),
-        }),
-        commands: [CreateNote({ kind, draft })],
-      }
-    },
-    Editing: ({ kind, id, title, content, reference }) => {
-      const draft = { title, content, reference }
-      const maybeError = draftError(kind, draft)
-      if (Option.isSome(maybeError)) {
-        return { model: modifyFields(model, { lastError: () => maybeError }) }
-      }
+      const requestId = model.saveRequestId + 1
+      const normalized = { ...draft, reference: draft.reference ?? "" }
+      const saving = EditorState.Saving({
+        requestId,
+        kind,
+        maybeId,
+        draft: normalized,
+      })
+
+      const commands = Option.match(maybeId, {
+        onNone: () => [CreateNote({ requestId, kind, draft: normalized })],
+        onSome: (id) => [
+          UpdateNote({ requestId, kind, id, draft: normalized }),
+        ],
+      })
 
       return {
         model: modifyFields(model, {
-          editor: () =>
-            EditorState.Saving({
-              kind,
-              maybeId: Option.some(id),
-              title,
-              content,
-              reference,
-            }),
+          editor: () => saving,
           lastError: () => Option.none(),
+          saveRequestId: () => requestId,
         }),
-        commands: [UpdateNote({ kind, id, draft })],
+        commands,
       }
     },
   })
@@ -290,11 +364,10 @@ export const update = (model: Model, message: Message) =>
     ClickedNewNote: () => ({
       model: modifyFields(model, {
         editor: () =>
-          EditorState.Creating({
+          EditorState.Open({
             kind: model.selectedKind,
-            title: "",
-            content: "",
-            reference: "",
+            maybeId: Option.none(),
+            draft: { title: "", content: "", reference: "" },
           }),
         lastError: () => Option.none(),
       }),
@@ -313,12 +386,14 @@ export const update = (model: Model, message: Message) =>
       return {
         model: modifyFields(model, {
           editor: () =>
-            EditorState.Editing({
+            EditorState.Open({
               kind,
-              id,
-              title: note.title,
-              content: note.content,
-              reference: referenceOf(note),
+              maybeId: Option.some(id),
+              draft: {
+                title: note.title,
+                content: note.content,
+                reference: referenceOf(note),
+              },
             }),
           lastError: () => Option.none(),
         }),
@@ -339,92 +414,152 @@ export const update = (model: Model, message: Message) =>
 
     ClickedSavedNote: () => startSave(model, model.editor),
 
-    ClickedRefreshNotes: () => ({
-      model: modifyFields(model, {
-        notes: () => NotesState.Loading(),
-        lastError: () => Option.none(),
-      }),
-      commands: [LoadNotes()],
-    }),
+    ClickedRefreshNotes: () => {
+      const requestId = model.loadRequestId + 1
+
+      return {
+        model: modifyFields(model, {
+          notes: () => refreshState(model.notes),
+          lastError: () => Option.none(),
+          loadRequestId: () => requestId,
+        }),
+        commands: [LoadNotes({ requestId })],
+      }
+    },
 
     UpdatedTitle: ({ title }) => ({
       model: modifyFields(model, {
-        editor: () =>
-          EditorState.match(model.editor, {
-            Closed: () => model.editor,
-            Saving: () => model.editor,
-            Creating: (editor) => EditorState.Creating({ ...editor, title }),
-            Editing: (editor) => EditorState.Editing({ ...editor, title }),
-          }),
+        editor: () => withDraft(model.editor, { title }),
       }),
     }),
 
     UpdatedContent: ({ content }) => ({
       model: modifyFields(model, {
-        editor: () =>
-          EditorState.match(model.editor, {
-            Closed: () => model.editor,
-            Saving: () => model.editor,
-            Creating: (editor) => EditorState.Creating({ ...editor, content }),
-            Editing: (editor) => EditorState.Editing({ ...editor, content }),
-          }),
+        editor: () => withDraft(model.editor, { content }),
       }),
     }),
 
     UpdatedReference: ({ reference }) => ({
       model: modifyFields(model, {
-        editor: () =>
-          EditorState.match(model.editor, {
-            Closed: () => model.editor,
-            Saving: () => model.editor,
-            Creating: (editor) => EditorState.Creating({ ...editor, reference }),
-            Editing: (editor) => EditorState.Editing({ ...editor, reference }),
+        editor: () => withDraft(model.editor, { reference }),
+      }),
+    }),
+
+    SucceededLoadNotes: ({ requestId, notes }) => {
+      if (requestId !== model.loadRequestId) {
+        // A newer load has already started; this result is stale.
+        return { model }
+      }
+
+      return {
+        model: modifyFields(model, {
+          notes: () => AsyncData.Success({ data: sortNotes(notes) }),
+          lastError: () => Option.none(),
+        }),
+      }
+    },
+
+    FailedLoadNotes: ({ requestId, message }) => {
+      if (requestId !== model.loadRequestId) {
+        return { model }
+      }
+
+      return {
+        model: modifyFields(model, {
+          notes: () => failedLoadState(model.notes, message),
+          // Keep the list's own error state as the single load-failure message.
+          lastError: () => Option.none(),
+        }),
+      }
+    },
+
+    SucceededSaveNote: ({ requestId, note }) => {
+      const hasData = AsyncData.hasData(model.notes)
+      const nextNotes = hasData
+        ? updateNotesWith(model.notes, (notes) => upsertNote(notes, note))
+        : AsyncData.Success({ data: [note] })
+      const nextLoadRequestId = model.loadRequestId + 1
+      const isCurrentSave = EditorState.match(model.editor, {
+        Saving: (saving) => saving.requestId === requestId,
+        Closed: () => false,
+        Open: () => false,
+      })
+
+      // Saving changes the server data. Invalidate any list load that was
+      // already in flight so it cannot overwrite this result with older data.
+      if (!isCurrentSave) {
+        return {
+          model: modifyFields(model, {
+            notes: () => nextNotes,
+            loadRequestId: () => nextLoadRequestId,
           }),
-      }),
-    }),
+          commands: hasData
+            ? undefined
+            : [LoadNotes({ requestId: nextLoadRequestId })],
+        }
+      }
 
-    SucceededLoadNotes: ({ notes }) => ({
-      model: modifyFields(model, {
-        notes: () => NotesState.Loaded({ notes }),
-        lastError: () => Option.none(),
-      }),
-    }),
+      return {
+        model: modifyFields(model, {
+          notes: () => nextNotes,
+          selectedKind: () => note.type,
+          editor: () => EditorState.Closed(),
+          lastError: () => Option.none(),
+          loadRequestId: () => nextLoadRequestId,
+        }),
+        commands: hasData
+          ? undefined
+          : [LoadNotes({ requestId: nextLoadRequestId })],
+      }
+    },
 
-    FailedLoadNotes: ({ message }) => ({
-      model: modifyFields(model, {
-        notes: () => NotesState.Failed({ message }),
-        lastError: () => Option.some(message),
-      }),
-    }),
+    FailedSaveNote: ({ requestId, message }) => {
+      const isCurrentSave = EditorState.match(model.editor, {
+        Saving: (saving) => saving.requestId === requestId,
+        Closed: () => false,
+        Open: () => false,
+      })
+      if (!isCurrentSave) {
+        return { model }
+      }
 
-    SucceededSaveNote: ({ note }) => ({
-      model: modifyFields(model, {
-        notes: () => withLoadedNote(model.notes, note),
-        selectedKind: () => note.type,
-        editor: () => EditorState.Closed(),
-        lastError: () => Option.none(),
-      }),
-    }),
+      return {
+        model: modifyFields(model, {
+          editor: () =>
+            EditorState.match(model.editor, {
+              Closed: () => model.editor,
+              Open: () => model.editor,
+              Saving: (saving) => editorFromSaving(saving),
+            }),
+          lastError: () => Option.some(message),
+        }),
+      }
+    },
 
-    FailedSaveNote: ({ message }) => ({
-      model: modifyFields(model, {
-        editor: () =>
-          EditorState.match(model.editor, {
-            Closed: () => model.editor,
-            Creating: () => model.editor,
-            Editing: () => model.editor,
-            Saving: (saving) => editorFromSaving(saving),
-          }),
-        lastError: () => Option.some(message),
-      }),
-    }),
+    SucceededDeleteNote: ({ kind, id }) => {
+      const hasData = AsyncData.hasData(model.notes)
+      const nextNotes = hasData
+        ? updateNotesWith(model.notes, (notes) => removeNote(notes, kind, id))
+        : model.notes
+      const nextLoadRequestId = model.loadRequestId + 1
+      const editorMatchesDeletedNote = EditorState.match(model.editor, {
+        Open: ({ kind: editorKind, maybeId }) =>
+          editorKind === kind &&
+          Option.exists(maybeId, (editorId) => editorId === id),
+        Closed: () => false,
+        Saving: () => false,
+      })
 
-    SucceededDeleteNote: ({ id }) => ({
-      model: modifyFields(model, {
-        notes: () => withoutNote(model.notes, id),
-        lastError: () => Option.none(),
-      }),
-    }),
+      return {
+        model: modifyFields(model, {
+          notes: () => nextNotes,
+          editor: () =>
+            editorMatchesDeletedNote ? EditorState.Closed() : model.editor,
+          lastError: () => Option.none(),
+          loadRequestId: () => nextLoadRequestId,
+        }),
+      }
+    },
 
     FailedDeleteNote: ({ message }) => ({
       model: modifyFields(model, {
@@ -447,6 +582,17 @@ const dangerButtonClass =
 const inputClass =
   "w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-emerald-400"
 
+const titleFieldId = "note-title"
+const contentFieldId = "note-content"
+const referenceFieldId = "note-reference"
+const notesHeadingId = "notes-heading"
+
+const statusMessage = (text: string, h: HtmlBuilder<Message>): Html =>
+  h.p(
+    [h.Class("text-sm text-slate-400"), h.Role("status"), h.AriaLive("polite")],
+    [text],
+  )
+
 const kindTab = (
   model: Model,
   kind: Note.Kind,
@@ -462,6 +608,7 @@ const kindTab = (
     [
       h.Type("button"),
       h.Class(tabClass),
+      h.AriaPressed(isSelected ? "true" : "false"),
       h.OnClick(Message.ClickedKind({ kind })),
     ],
     [`${kindLabels[kind]} ${count === 0 ? "" : `(${count})`}`.trim()],
@@ -470,7 +617,7 @@ const kindTab = (
 
 const noteCard = (note: Note.Info, h: HtmlBuilder<Message>): Html =>
   h.keyed("li")(
-    note.id,
+    noteKey(note),
     [
       h.Class(
         "flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4",
@@ -497,6 +644,7 @@ const noteCard = (note: Note.Info, h: HtmlBuilder<Message>): Html =>
                 [
                   h.Type("button"),
                   h.Class(buttonClass),
+                  h.AriaLabel(`Edit ${kindLabels[note.type].toLowerCase()} note: ${note.title}`),
                   h.OnClick(Message.ClickedEditNote({ kind: note.type, id: note.id })),
                 ],
                 ["Edit"],
@@ -505,6 +653,7 @@ const noteCard = (note: Note.Info, h: HtmlBuilder<Message>): Html =>
                 [
                   h.Type("button"),
                   h.Class(dangerButtonClass),
+                  h.AriaLabel(`Delete ${kindLabels[note.type].toLowerCase()} note: ${note.title}`),
                   h.OnClick(Message.ClickedDeleteNote({ kind: note.type, id: note.id })),
                 ],
                 ["Delete"],
@@ -526,222 +675,222 @@ const noteCard = (note: Note.Info, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
+const notesForData = (
+  model: Model,
+  notes: ReadonlyArray<Note.Info>,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const visibleNotes = Array.filter(
+    notes,
+    (note) => note.type === model.selectedKind,
+  )
+
+  return Array.match(visibleNotes, {
+    onEmpty: () =>
+      h.p(
+        [h.Class("text-sm text-slate-400")],
+        [
+          `No ${kindLabels[model.selectedKind].toLowerCase()} notes yet. Create one to get started.`,
+        ],
+      ),
+    onNonEmpty: (items) =>
+      h.ul(
+        [h.Class("flex flex-col gap-3")],
+        Array.map(items, (note) => noteCard(note, h)),
+      ),
+  })
+}
+
+const retryButton = (h: HtmlBuilder<Message>): Html =>
+  h.button(
+    [
+      h.Type("button"),
+      h.Class(buttonClass),
+      h.OnClick(Message.ClickedRefreshNotes()),
+    ],
+    ["Retry"],
+  )
+
 const notesList = (model: Model, h: HtmlBuilder<Message>): Html =>
-  NotesState.match(model.notes, {
-    Idle: () =>
-      h.p([h.Class("text-sm text-slate-400")], ["Loading notes..."]),
-    Loading: () =>
-      h.p([h.Class("text-sm text-slate-400")], ["Loading notes..."]),
-    Failed: ({ message }) =>
+  AsyncData.match(model.notes, {
+    onIdle: () => statusMessage("Loading notes...", h),
+    onLoading: () => statusMessage("Loading notes...", h),
+    onRefreshing: (notes) =>
+      h.div(
+        [h.Class("flex flex-col gap-3")],
+        [statusMessage("Refreshing notes...", h), notesForData(model, notes, h)],
+      ),
+    onStale: ({ data }) =>
+      h.div(
+        [h.Class("flex flex-col gap-3")],
+        [
+          h.div(
+            [h.Class("flex flex-col items-start gap-3")],
+            [
+              h.p(
+                [h.Class("text-sm text-amber-300")],
+                ["Could not refresh notes. Showing the last loaded notes."],
+              ),
+              retryButton(h),
+            ],
+          ),
+          notesForData(model, data, h),
+        ],
+      ),
+    onFailure: (message) =>
       h.div(
         [h.Class("flex flex-col items-start gap-3")],
         [
           h.p([h.Class("text-sm text-red-300")], [message]),
-          h.button(
-            [
-              h.Type("button"),
-              h.Class(buttonClass),
-              h.OnClick(Message.ClickedRefreshNotes()),
-            ],
-            ["Retry"],
-          ),
+          retryButton(h),
         ],
       ),
-    Loaded: () => {
-      const notes = notesForKind(model.notes, model.selectedKind)
-      return Array.match(notes, {
-        onEmpty: () =>
-          h.p(
-            [h.Class("text-sm text-slate-400")],
-            [
-              `No ${kindLabels[model.selectedKind].toLowerCase()} notes yet. Create one to get started.`,
-            ],
-          ),
-        onNonEmpty: (items) =>
-          h.ul(
-            [h.Class("flex flex-col gap-3")],
-            Array.map(items, (note) => noteCard(note, h)),
-          ),
-      })
-    },
+    onSuccess: (notes) => notesForData(model, notes, h),
   })
 
-const fieldLabel = (text: string, h: HtmlBuilder<Message>): Html =>
-  h.label([h.Class("text-sm font-medium text-slate-300")], [text])
+const fieldLabel = (
+  text: string,
+  fieldId: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.label(
+    [h.For(fieldId), h.Class("text-sm font-medium text-slate-300")],
+    [text],
+  )
+
+const field = (
+  label: string,
+  fieldId: string,
+  control: Html,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class("flex flex-col gap-1")],
+    [fieldLabel(label, fieldId, h), control],
+  )
+
+const editorFields = (
+  kind: Note.Kind,
+  draft: NoteDraft,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html> => {
+  const reference = draft.reference ?? ""
+  const isLiterature = kind === "literature"
+
+  return [
+    field(
+      "Title",
+      titleFieldId,
+      h.input([
+        h.Id(titleFieldId),
+        h.Class(inputClass),
+        h.Value(draft.title),
+        h.Placeholder("A short title"),
+        h.Autocomplete("off"),
+        h.Required(true),
+        h.OnInput((value) => Message.UpdatedTitle({ title: value })),
+      ]),
+      h,
+    ),
+    field(
+      "Content",
+      contentFieldId,
+      h.textarea([
+        h.Id(contentFieldId),
+        h.Class(inputClass),
+        h.Value(draft.content),
+        h.Placeholder("Write the note"),
+        h.Rows(5),
+        h.Required(true),
+        h.OnInput((value) => Message.UpdatedContent({ content: value })),
+      ]),
+      h,
+    ),
+    isLiterature
+      ? field(
+          "Reference",
+          referenceFieldId,
+          h.input([
+            h.Id(referenceFieldId),
+            h.Class(inputClass),
+            h.Value(reference),
+            h.Placeholder("Book, article, or URL"),
+            h.Autocomplete("off"),
+            h.Required(true),
+            h.OnInput((value) =>
+              Message.UpdatedReference({ reference: value }),
+            ),
+          ]),
+          h,
+        )
+      : h.empty,
+  ]
+}
+
+const formHeader = (
+  heading: string,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class("mb-4 flex items-center justify-between gap-3")],
+    [
+      h.h2([h.Class("text-xl font-semibold")], [heading]),
+      h.button(
+        [
+          h.Type("button"),
+          h.Class(buttonClass),
+          h.OnClick(Message.ClickedCancelEditor()),
+        ],
+        ["Cancel"],
+      ),
+    ],
+  )
 
 const editorView = (model: Model, h: HtmlBuilder<Message>): Html =>
   EditorState.match(model.editor, {
     Closed: () => h.empty,
-    Saving: ({ kind, title, content, reference }) => {
+    Saving: ({ kind, draft }) => {
+      const reference = draft.reference ?? ""
       const isLiterature = kind === "literature"
+
       return h.form(
+        [h.Class(panelClass), h.OnSubmit(Message.ClickedSavedNote())],
         [
-          h.Class(panelClass),
-          h.OnSubmit(Message.ClickedSavedNote()),
-        ],
-        [
-          h.h2([h.Class("text-xl font-semibold")], [`Saving ${kindLabels[kind].toLowerCase()} note`]),
-          h.p([h.Class("text-sm text-slate-400")], [title]),
-          h.p([h.Class("whitespace-pre-wrap text-sm text-slate-400")], [content]),
+          h.h2(
+            [h.Class("text-xl font-semibold"), h.Role("status"), h.AriaLive("polite")],
+            [`Saving ${kindLabels[kind].toLowerCase()} note`],
+          ),
+          h.p([h.Class("text-sm text-slate-400")], [draft.title]),
+          h.p(
+            [h.Class("whitespace-pre-wrap text-sm text-slate-400")],
+            [draft.content],
+          ),
           isLiterature
-            ? h.p([h.Class("text-sm text-slate-400")], [`Source: ${reference}`])
+            ? h.p(
+                [h.Class("text-sm text-slate-400")],
+                [`Source: ${reference}`],
+              )
             : h.empty,
         ],
       )
     },
-    Creating: ({ kind, title, content, reference }) => {
-      const isLiterature = kind === "literature"
+    Open: ({ kind, maybeId, draft }) => {
+      const isCreating = Option.isNone(maybeId)
+      const heading = isCreating
+        ? `New ${kindLabels[kind].toLowerCase()} note`
+        : `Edit ${kindLabels[kind].toLowerCase()} note`
+
       return h.form(
+        [h.Class(panelClass), h.OnSubmit(Message.ClickedSavedNote())],
         [
-          h.Class(panelClass),
-          h.OnSubmit(Message.ClickedSavedNote()),
-        ],
-        [
-          h.div(
-            [h.Class("mb-4 flex items-center justify-between gap-3")],
-            [
-              h.h2(
-                [h.Class("text-xl font-semibold")],
-                [`New ${kindLabels[kind].toLowerCase()} note`],
-              ),
-              h.button(
-                [
-                  h.Type("button"),
-                  h.Class(buttonClass),
-                  h.OnClick(Message.ClickedCancelEditor()),
-                ],
-                ["Cancel"],
-              ),
-            ],
-          ),
+          formHeader(heading, h),
           h.div(
             [h.Class("flex flex-col gap-4")],
             [
-              h.div(
-                [h.Class("flex flex-col gap-1")],
-                [
-                  fieldLabel("Title", h),
-                  h.input([
-                    h.Class(inputClass),
-                    h.Value(title),
-                    h.Placeholder("A short title"),
-                    h.Required(true),
-                    h.OnInput((value) => Message.UpdatedTitle({ title: value })),
-                  ]),
-                ],
-              ),
-              h.div(
-                [h.Class("flex flex-col gap-1")],
-                [
-                  fieldLabel("Content", h),
-                  h.textarea([
-                    h.Class(inputClass),
-                    h.Value(content),
-                    h.Placeholder("Write the note"),
-                    h.Rows(5),
-                    h.Required(true),
-                    h.OnInput((value) => Message.UpdatedContent({ content: value })),
-                  ]),
-                ],
-              ),
-              isLiterature
-                ? h.div(
-                    [h.Class("flex flex-col gap-1")],
-                    [
-                      fieldLabel("Reference", h),
-                      h.input([
-                        h.Class(inputClass),
-                        h.Value(reference),
-                        h.Placeholder("Book, article, or URL"),
-                        h.Required(true),
-                        h.OnInput((value) =>
-                          Message.UpdatedReference({ reference: value }),
-                        ),
-                      ]),
-                    ],
-                  )
-                : h.empty,
+              ...editorFields(kind, draft, h),
               h.button(
                 [h.Type("submit"), h.Class(primaryButtonClass)],
-                ["Save note"],
-              ),
-            ],
-          ),
-        ],
-      )
-    },
-    Editing: ({ kind, title, content, reference }) => {
-      const isLiterature = kind === "literature"
-      return h.form(
-        [
-          h.Class(panelClass),
-          h.OnSubmit(Message.ClickedSavedNote()),
-        ],
-        [
-          h.div(
-            [h.Class("mb-4 flex items-center justify-between gap-3")],
-            [
-              h.h2(
-                [h.Class("text-xl font-semibold")],
-                [`Edit ${kindLabels[kind].toLowerCase()} note`],
-              ),
-              h.button(
-                [
-                  h.Type("button"),
-                  h.Class(buttonClass),
-                  h.OnClick(Message.ClickedCancelEditor()),
-                ],
-                ["Cancel"],
-              ),
-            ],
-          ),
-          h.div(
-            [h.Class("flex flex-col gap-4")],
-            [
-              h.div(
-                [h.Class("flex flex-col gap-1")],
-                [
-                  fieldLabel("Title", h),
-                  h.input([
-                    h.Class(inputClass),
-                    h.Value(title),
-                    h.Required(true),
-                    h.OnInput((value) => Message.UpdatedTitle({ title: value })),
-                  ]),
-                ],
-              ),
-              h.div(
-                [h.Class("flex flex-col gap-1")],
-                [
-                  fieldLabel("Content", h),
-                  h.textarea([
-                    h.Class(inputClass),
-                    h.Value(content),
-                    h.Rows(5),
-                    h.Required(true),
-                    h.OnInput((value) => Message.UpdatedContent({ content: value })),
-                  ]),
-                ],
-              ),
-              isLiterature
-                ? h.div(
-                    [h.Class("flex flex-col gap-1")],
-                    [
-                      fieldLabel("Reference", h),
-                      h.input([
-                        h.Class(inputClass),
-                        h.Value(reference),
-                        h.Required(true),
-                        h.OnInput((value) =>
-                          Message.UpdatedReference({ reference: value }),
-                        ),
-                      ]),
-                    ],
-                  )
-                : h.empty,
-              h.button(
-                [h.Type("submit"), h.Class(primaryButtonClass)],
-                ["Save changes"],
+                [isCreating ? "Save note" : "Save changes"],
               ),
             ],
           ),
@@ -798,7 +947,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
           ),
 
           h.nav(
-            [h.Class("flex flex-wrap gap-2")],
+            [h.Class("flex flex-wrap gap-2"), h.AriaLabel("Filter notes by kind")],
             [
               kindTab(model, "fleeting", h),
               kindTab(model, "literature", h),
@@ -823,13 +972,17 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
           editorView(model, h),
 
           h.section(
-            [h.Class(panelClass)],
+            [
+              h.Class(panelClass),
+              h.AriaLabelledBy(notesHeadingId),
+              h.AriaBusy(AsyncData.isPending(model.notes)),
+            ],
             [
               h.div(
                 [h.Class("mb-4 flex items-center justify-between gap-3")],
                 [
                   h.h2(
-                    [h.Class("text-xl font-semibold")],
+                    [h.Id(notesHeadingId), h.Class("text-xl font-semibold")],
                     [`${kindLabels[model.selectedKind]} notes`],
                   ),
                   h.span(

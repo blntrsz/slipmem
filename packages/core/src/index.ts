@@ -1,4 +1,12 @@
 export {
+  makeNoteDatabaseLayer,
+  NoteDatabaseLive,
+  NoteDatabaseService,
+  type NoteDatabase,
+  type NoteDatabaseConfig,
+} from "./note-database"
+
+export {
   FleetingNoteNotFound,
   FleetingNoteService,
 } from "./fleeting-note/fleeting-note.service"

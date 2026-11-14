@@ -11,7 +11,9 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit",
+    "lint": "oxlint packages",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p packages/web/tsconfig.json",
+    "check": "bun run lint && bun run typecheck && bun test && bun run web:build",
     "db:generate": "drizzle-kit generate",
     "db:check": "drizzle-kit check",
     "web": "bun run --cwd packages/web start",
@@ -21,6 +23,7 @@
   "devDependencies": {
     "@types/bun": "^1.4.4",
     "drizzle-kit": "1.0.0-rc.5",
+    "oxlint": "^1.93.0",
     "typescript": "^7.0.2"
   },
   "packageManager": "bun@1.4.4"

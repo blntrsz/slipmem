@@ -329,3 +329,82 @@ test("fails clearly when the configured migrations folder is invalid", async () 
     }
   })
 })
+
+test("refuses a modern migration history that does not match the bundled migrations", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const databasePath = join(directory, "notes.db")
+    const db = new Database(databasePath)
+
+    try {
+      db.exec(`
+        CREATE TABLE __drizzle_migrations (
+          id INTEGER PRIMARY KEY,
+          hash text NOT NULL,
+          created_at numeric,
+          name text,
+          applied_at TEXT
+        );
+      `)
+      db.query(
+        "INSERT INTO __drizzle_migrations (hash, created_at, name, applied_at) VALUES (?, ?, ?, ?)",
+      ).run("foreign-hash", 1, "some_other_migration", new Date().toISOString())
+    } finally {
+      db.close()
+    }
+
+    await expect(startDatabase(databasePath)).rejects.toBeInstanceOf(MigrationError)
+
+    const after = new Database(databasePath)
+    try {
+      expect(tableNames(after)).toEqual(["__drizzle_migrations"])
+      expect(
+        after
+          .query<{ name: string }, []>(
+            "SELECT name FROM __drizzle_migrations ORDER BY id",
+          )
+          .all(),
+      ).toEqual([{ name: "some_other_migration" }])
+    } finally {
+      after.close()
+    }
+  })
+})
+
+test("converts an unmatched legacy migration row into a MigrationError", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    const databasePath = join(directory, "notes.db")
+    const db = new Database(databasePath)
+
+    try {
+      db.exec(`
+        CREATE TABLE __drizzle_migrations (
+          id INTEGER PRIMARY KEY,
+          hash text NOT NULL,
+          created_at numeric
+        );
+      `)
+      db.query(
+        "INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+      ).run("unknown-hash", 1)
+    } finally {
+      db.close()
+    }
+
+    await expect(startDatabase(databasePath)).rejects.toBeInstanceOf(MigrationError)
+
+    const after = new Database(databasePath)
+    try {
+      expect(tableNames(after)).toEqual(["__drizzle_migrations"])
+      expect(
+        after
+          .query<{ name: string }, []>(
+            "PRAGMA table_info(__drizzle_migrations)",
+          )
+          .all()
+          .map((column) => column.name),
+      ).toEqual(["id", "hash", "created_at"])
+    } finally {
+      after.close()
+    }
+  })
+})

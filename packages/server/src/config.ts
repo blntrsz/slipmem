@@ -3,8 +3,8 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 
 /**
- * Resolves the SQLite file used by the web app. The default matches the stdio
- * MCP server so both processes read and write the same notes.
+ * Resolves the SQLite file used by the web app and the stdio MCP server. The
+ * shared default keeps both processes reading and writing the same notes.
  */
 export const resolveDatabasePath = (): string => {
   const dataHome = process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share")

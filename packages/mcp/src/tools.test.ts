@@ -5,8 +5,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer } from "effect"
 import { McpProtocol, McpTest } from "effect/ai"
-import { makeDatabaseLayer } from "./database"
-import { NoteRegistrations } from "./tools"
+import { makeDatabaseLayer } from "@slipmem/server"
+import { NoteRegistrations } from "@slipmem/server/note-tools"
 
 const noteToolNames = [
   "list_fleeting_notes",

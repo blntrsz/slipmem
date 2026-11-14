@@ -1,17 +1,25 @@
 import { Context, Layer } from "effect"
 import { HttpRouter } from "effect/http"
 import { NoteRoutes } from "./api"
-import { makeDatabaseLayer } from "./database"
+import { makeDatabaseLayer, type DatabaseLayerOptions } from "./database"
 import { McpHttp } from "./mcp"
 
 /**
  * Combines the JSON API and the streamable HTTP MCP endpoint over one SQLite
  * database. Both transports share the same note services.
  */
-export const makeAppLayer = (databasePath: string) =>
+export const makeAppLayer = (
+  databasePath: string,
+  options?: DatabaseLayerOptions,
+) =>
   Layer.mergeAll(NoteRoutes, McpHttp).pipe(
-    Layer.provide(makeDatabaseLayer(databasePath)),
+    Layer.provide(makeDatabaseLayer(databasePath, options)),
   )
+
+export interface ApiHandlerOptions {
+  readonly disableLogger?: boolean
+  readonly database?: DatabaseLayerOptions
+}
 
 /**
  * Builds a Web `fetch` handler for the JSON API and MCP endpoint. Build it
@@ -19,11 +27,14 @@ export const makeAppLayer = (databasePath: string) =>
  */
 export const makeApiHandler = (
   databasePath: string,
-  options?: { readonly disableLogger?: boolean },
+  options?: ApiHandlerOptions,
 ) => {
-  const app = HttpRouter.toWebHandler(makeAppLayer(databasePath), {
-    disableLogger: options?.disableLogger,
-  })
+  const app = HttpRouter.toWebHandler(
+    makeAppLayer(databasePath, options?.database),
+    {
+      disableLogger: options?.disableLogger,
+    },
+  )
 
   return {
     handler: (request: Request) => app.handler(request, Context.empty()),

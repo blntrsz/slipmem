@@ -1,10 +1,11 @@
 import { McpProtocol, McpServer } from "effect/ai"
 import { NoteRegistrations } from "./note-tools"
 
+// Shared with the stdio MCP server so the two transports advertise the same
+// identity and instructions.
 export const mcpServerName = "slipmem"
 export const mcpServerVersion = "0.0.0"
-
-const instructions = [
+export const mcpInstructions = [
   "slipmem stores three kinds of notes: fleeting, permanent, and literature notes.",
   "Use the list and get tools to read notes, and create, update, and delete tools to manage them.",
   "Literature notes also require a reference to their source.",
@@ -18,7 +19,7 @@ const instructions = [
 export const McpHttp = McpServer.layerHttp({
   name: mcpServerName,
   version: mcpServerVersion,
-  instructions,
+  instructions: mcpInstructions,
   path: "/mcp",
   protocols: [
     McpProtocol.v2025_11_25,

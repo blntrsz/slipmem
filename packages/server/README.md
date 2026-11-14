@@ -40,7 +40,9 @@ It falls back to `~/.local/share/slipmem/slipmem.db` and honors
 `SLIPMEM_DB_PATH`. Startup runs the checked-in Drizzle migrations, so an
 existing database is upgraded in place; databases created by the old
 `CREATE TABLE IF NOT EXISTS` bootstrap are validated and adopted without
-losing rows. In a deployment that does not keep the repository's
+losing rows. A database whose Drizzle history does not include the bundled
+initial migration is refused instead of having the initial migration appended
+to unknown history. In a deployment that does not keep the repository's
 `packages/server/drizzle` directory next to the running code, point
 `SLIPMEM_MIGRATIONS_DIR` at a copy of it.
 

@@ -3,16 +3,18 @@ import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { LiteratureNote } from "@slipmem/schemas/literature-note"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core"
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect"
+import { NoteDatabaseLive } from "../note-database"
 import { LiteratureNoteNotFound, LiteratureNoteService } from "./literature-note.service"
 import { SQLiteLiteratureNoteService } from "./sqlite-literature-note.service"
 
 const defects = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect) : []
 
-const memoryLayer = () => {
-  const sqlite = SqliteClient.layer({ filename: ":memory:" })
-  return SQLiteLiteratureNoteService.pipe(Layer.provideMerge(sqlite))
-}
+const memoryLayer = () =>
+  SQLiteLiteratureNoteService.pipe(
+    Layer.provide(NoteDatabaseLive),
+    Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
+  )
 
 test("SQLite literature note service persists notes", async () => {
   const layer = memoryLayer()
@@ -39,9 +41,10 @@ test("SQLite literature note service persists notes", async () => {
     expect(Option.getOrThrow(yield* service.get({ id: created.id }))).toEqual(created)
     expect(yield* service.list({})).toEqual([created])
 
+    yield* Effect.promise(() => Bun.sleep(2))
     const second = yield* service.create({ title: "Second", content: "world", reference: "Article, section 2" })
     expect(second.id).not.toBe(created.id)
-    expect(yield* service.list({})).toEqual([created, second])
+    expect(yield* service.list({})).toEqual([second, created])
 
     yield* Effect.promise(() => Bun.sleep(5))
     const updated = yield* service.update({ id: created.id, title: "Updated", content: "changed", reference: "Book, chapter 2" })

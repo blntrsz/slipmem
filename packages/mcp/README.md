@@ -26,9 +26,14 @@ SLIPMEM_DB_PATH=/path/to/slipmem.db bun run --cwd packages/mcp start
 The database file and its parent directory are created automatically. Startup
 runs the checked-in Drizzle migrations, so pointing the server at a new file is
 enough, and databases created by the old `CREATE TABLE IF NOT EXISTS` bootstrap
-are validated and adopted without losing rows. When the server is deployed
-without the repository's `packages/server/drizzle` directory, set
-`SLIPMEM_MIGRATIONS_DIR` to a copy of it.
+are validated and adopted without losing rows. A Drizzle history that does not
+include the bundled initial migration is refused rather than extended with an
+unrelated history. When the server is deployed without the repository's
+`packages/server/drizzle` directory, set `SLIPMEM_MIGRATIONS_DIR` to a copy of
+it.
+
+`SIGINT` and `SIGTERM` interrupt the server, which closes its SQLite connection
+and lets the MCP transport finish before the process exits.
 
 ## MCP client configuration
 

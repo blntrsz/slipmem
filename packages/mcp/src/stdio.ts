@@ -42,9 +42,13 @@ const stdin = Stream.fromAsyncIterable<Uint8Array, PlatformError>(
 )
 
 /**
- * `Stdio` over the current Node/Bun process. This is the small subset of
- * `@effect/platform-node` that the stdio MCP transport needs, without pulling
- * in the rest of the platform packages.
+ * `Stdio` over the current Node/Bun process.
+ *
+ * This is the small subset of `@effect/platform-node` that the stdio MCP
+ * transport needs. Reassessed against `NodeStdio`/`BunStdio`: the official
+ * layer would add a platform package and Node runtime requirements without
+ * providing anything else this transport uses. Signal-aware shutdown, the one
+ * behavior the platform runtimes add around stdio, lives in `main.ts`.
  */
 export const layer = Layer.succeed(
   Stdio.Stdio,

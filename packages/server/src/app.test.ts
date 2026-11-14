@@ -171,6 +171,81 @@ test("JSON API rejects unknown note types and malformed bodies", async () => {
   }
 })
 
+test("JSON API rejects empty required text", async () => {
+  const api = makeApiHandler(":memory:", { disableLogger: true })
+
+  try {
+    const emptyTitleResponse = await api.handler(
+      jsonRequest("/api/notes/fleeting", "POST", {
+        title: "   ",
+        content: "body",
+      }),
+    )
+    expect(emptyTitleResponse.status).toBe(400)
+
+    const emptyContentResponse = await api.handler(
+      jsonRequest("/api/notes/permanent", "POST", {
+        title: "Title",
+        content: "",
+      }),
+    )
+    expect(emptyContentResponse.status).toBe(400)
+
+    const missingReferenceResponse = await api.handler(
+      jsonRequest("/api/notes/literature", "POST", {
+        title: "Source",
+        content: "Quote",
+        reference: "  ",
+      }),
+    )
+    expect(missingReferenceResponse.status).toBe(400)
+
+    const emptyReference = (await missingReferenceResponse.json()) as {
+      readonly error: string
+    }
+    expect(emptyReference.error).toBe("Invalid note body")
+  } finally {
+    await api.dispose()
+  }
+})
+
+test("JSON API reports typed validation and not-found errors", async () => {
+  const api = makeApiHandler(":memory:", { disableLogger: true })
+
+  try {
+    const unknownType = await api.handler(
+      new Request("http://localhost/api/notes/unknown"),
+    )
+    expect(unknownType.status).toBe(400)
+    expect(await unknownType.json()).toEqual({
+      error: "Unknown note type: unknown",
+    })
+
+    const malformed = await api.handler(
+      new Request("http://localhost/api/notes/fleeting", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{",
+      }),
+    )
+    expect(malformed.status).toBe(400)
+    expect(await malformed.json()).toEqual({ error: "Invalid note body" })
+
+    const missing = await api.handler(
+      jsonRequest("/api/notes/fleeting/missing", "PUT", {
+        title: "Missing",
+        content: "missing",
+      }),
+    )
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toEqual({
+      error: "Note not found: missing",
+    })
+  } finally {
+    await api.dispose()
+  }
+})
+
 test("notes persist across API handler restarts", async () => {
   const directory = await mkdtemp(join(tmpdir(), "slipmem-web-"))
   const databasePath = join(directory, "notes.db")

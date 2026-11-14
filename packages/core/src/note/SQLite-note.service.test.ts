@@ -5,6 +5,7 @@ import { LiteratureNote } from "@slipmem/schemas/literature-note"
 import { PermanentNote } from "@slipmem/schemas/permanent-note"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core"
 import { Cause, Effect, Exit, Layer, Schema } from "effect"
+import { NoteDatabaseLive } from "../note-database"
 import { NoteService } from "./note.service"
 import { SQLiteNoteService } from "./SQLite-note.service"
 
@@ -15,10 +16,14 @@ const permanentId = Schema.decodeUnknownSync(PermanentNote.ID)("permanent-1")
 const defects = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect) : []
 
-// Only SqliteClient is provided. If the note service depended on the per-kind
-// note services, this layer would fail to typecheck or construct.
+// Only SqliteClient and the shared NoteDatabase are provided. If the note
+// service depended on the per-kind note services, this layer would fail to
+// typecheck or construct.
 const memoryLayer = () =>
-  SQLiteNoteService.pipe(Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })))
+  SQLiteNoteService.pipe(
+    Layer.provide(NoteDatabaseLive),
+    Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
+  )
 
 const createTables = Effect.gen(function* () {
   const sql = yield* SqliteClient.SqliteClient
@@ -47,12 +52,12 @@ test("SQLite note service unions the three note tables into the tagged union", a
 
     expect(yield* notes.list({})).toEqual([
       {
-        type: "fleeting",
-        id: fleetingId,
-        title: "Fleeting",
-        content: "quick thought",
-        createdAt: 1,
-        updatedAt: 2,
+        type: "permanent",
+        id: permanentId,
+        title: "Permanent",
+        content: "a lasting idea",
+        createdAt: 5,
+        updatedAt: 6,
       },
       {
         type: "literature",
@@ -64,12 +69,12 @@ test("SQLite note service unions the three note tables into the tagged union", a
         updatedAt: 4,
       },
       {
-        type: "permanent",
-        id: permanentId,
-        title: "Permanent",
-        content: "a lasting idea",
-        createdAt: 5,
-        updatedAt: 6,
+        type: "fleeting",
+        id: fleetingId,
+        title: "Fleeting",
+        content: "quick thought",
+        createdAt: 1,
+        updatedAt: 2,
       },
     ])
   }).pipe(Effect.provide(layer)))
@@ -85,9 +90,38 @@ test("SQLite note service lists titles across all note kinds", async () => {
     const notes = yield* NoteService
 
     expect(yield* notes.listTitles({})).toEqual([
-      { id: "fleeting-1", type: "fleeting", title: "Fleeting" },
-      { id: "literature-1", type: "literature", title: "Literature" },
       { id: "permanent-1", type: "permanent", title: "Permanent" },
+      { id: "literature-1", type: "literature", title: "Literature" },
+      { id: "fleeting-1", type: "fleeting", title: "Fleeting" },
+    ])
+  }).pipe(Effect.provide(layer)))
+})
+
+test("SQLite note service orders ties by kind and id", async () => {
+  const layer = memoryLayer()
+
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* createTables
+    const sql = yield* SqliteClient.SqliteClient
+
+    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('b', 'B', '', 1, 10)`
+    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('a', 'A', '', 1, 10)`
+    yield* sql`INSERT INTO literature_note (id, title, content, reference, created_at, updated_at) VALUES ('z', 'Z', '', 'Source', 1, 10)`
+    yield* sql`INSERT INTO permanent_note (id, title, content, created_at, updated_at) VALUES ('m', 'M', '', 1, 10)`
+
+    const notes = yield* NoteService
+
+    expect((yield* notes.list({})).map((note) => `${note.type}:${note.id}`)).toEqual([
+      "fleeting:a",
+      "fleeting:b",
+      "literature:z",
+      "permanent:m",
+    ])
+    expect((yield* notes.listTitles({})).map((note) => `${note.type}:${note.id}`)).toEqual([
+      "fleeting:a",
+      "fleeting:b",
+      "literature:z",
+      "permanent:m",
     ])
   }).pipe(Effect.provide(layer)))
 })

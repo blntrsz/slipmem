@@ -112,6 +112,10 @@ The tools read and write the same database as the web UI and the stdio server.
 
 ```sh
 bun test packages/web packages/server
+bun run lint
 bun run typecheck
 bun run web:build
 ```
+
+`bun run check` runs lint, typecheck, the full test suite, and the production
+web build in one step. Styles use Tailwind CSS through the Vite plugin.

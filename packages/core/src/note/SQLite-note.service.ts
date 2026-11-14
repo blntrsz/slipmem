@@ -3,10 +3,10 @@ import type { FleetingNote } from "@slipmem/schemas/fleeting-note"
 import type { LiteratureNote } from "@slipmem/schemas/literature-note"
 import type { PermanentNote } from "@slipmem/schemas/permanent-note"
 import { sql } from "drizzle-orm"
-import * as SQLiteDrizzle from "drizzle-orm/effect-sqlite-bun"
 import { Effect, Layer } from "effect"
 import { FleetingNoteTable } from "../fleeting-note/fleeting-note.sql"
 import { LiteratureNoteTable } from "../literature-note/literature-note.sql"
+import { NoteDatabaseService } from "../note-database"
 import { PermanentNoteTable } from "../permanent-note/permanent-note.sql"
 import { NoteService } from "./note.service"
 
@@ -56,7 +56,11 @@ const toInfo = (row: NoteRow): Note.Info => {
   }
 }
 
-const listQuery = (db: SQLiteDrizzle.EffectSQLiteBunDatabase) =>
+// Newest first, then kind and id. Ids are only unique within their own table,
+// so the tie-breaker must include the kind as well.
+const listOrder = sql`updated_at DESC, type ASC, id ASC`
+
+const listQuery = (db: typeof NoteDatabaseService.Service) =>
   db
     .select({
       id: sql<string>`${FleetingNoteTable.id}`.as("id"),
@@ -94,13 +98,15 @@ const listQuery = (db: SQLiteDrizzle.EffectSQLiteBunDatabase) =>
         })
         .from(PermanentNoteTable),
     )
+    .orderBy(listOrder)
 
-const listTitlesQuery = (db: SQLiteDrizzle.EffectSQLiteBunDatabase) =>
+const listTitlesQuery = (db: typeof NoteDatabaseService.Service) =>
   db
     .select({
       id: sql<string>`${FleetingNoteTable.id}`.as("id"),
       type: sql<Note.Kind>`'fleeting'`.as("type"),
       title: FleetingNoteTable.title,
+      updatedAt: FleetingNoteTable.updatedAt,
     })
     .from(FleetingNoteTable)
     .unionAll(
@@ -109,6 +115,7 @@ const listTitlesQuery = (db: SQLiteDrizzle.EffectSQLiteBunDatabase) =>
           id: sql<string>`${LiteratureNoteTable.id}`.as("id"),
           type: sql<Note.Kind>`'literature'`.as("type"),
           title: LiteratureNoteTable.title,
+          updatedAt: LiteratureNoteTable.updatedAt,
         })
         .from(LiteratureNoteTable),
     )
@@ -118,9 +125,11 @@ const listTitlesQuery = (db: SQLiteDrizzle.EffectSQLiteBunDatabase) =>
           id: sql<string>`${PermanentNoteTable.id}`.as("id"),
           type: sql<Note.Kind>`'permanent'`.as("type"),
           title: PermanentNoteTable.title,
+          updatedAt: PermanentNoteTable.updatedAt,
         })
         .from(PermanentNoteTable),
     )
+    .orderBy(listOrder)
 
 // Reads all three note tables directly. It deliberately does not depend on the
 // per-kind note services: the database is the only dependency, and each query
@@ -128,7 +137,7 @@ const listTitlesQuery = (db: SQLiteDrizzle.EffectSQLiteBunDatabase) =>
 export const SQLiteNoteService = Layer.effect(
   NoteService,
   Effect.gen(function* () {
-    const db = yield* SQLiteDrizzle.makeWithDefaults()
+    const db = yield* NoteDatabaseService
 
     return NoteService.of({
       list: (_input) => Effect.gen(function* () {
@@ -136,7 +145,8 @@ export const SQLiteNoteService = Layer.effect(
         return rows.map(toInfo)
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
       listTitles: (_input) => Effect.gen(function* () {
-        return yield* listTitlesQuery(db)
+        const rows = yield* listTitlesQuery(db)
+        return rows.map(({ id, type, title }) => ({ id, type, title }))
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
     })
   }),

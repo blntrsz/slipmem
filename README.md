@@ -9,6 +9,12 @@ Install dependencies from the repository root:
 bun install
 ```
 
+Run the full lint, typecheck, test, and web build pipeline with:
+
+```sh
+bun run check
+```
+
 ## Packages
 
 - `packages/core` — note services and SQLite implementations
