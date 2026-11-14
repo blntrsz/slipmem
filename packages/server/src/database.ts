@@ -6,6 +6,7 @@ import {
   SQLiteLiteratureNoteService,
   SQLiteNoteService,
   SQLitePermanentNoteService,
+  SQLiteSearchService,
 } from "@slipmem/core"
 import { Layer } from "effect"
 import { makeMigrationsLayer } from "./migrations"
@@ -24,9 +25,9 @@ export interface DatabaseLayerOptions {
 }
 
 /**
- * Builds every note service and the aggregate read-only note service on top of
- * a SQLite database. The database is upgraded by the checked-in Drizzle
- * migrations before any note service is constructed.
+ * Builds every note service, the aggregate read-only note service, and the
+ * bounded search service on top of a SQLite database. The database is upgraded
+ * by the checked-in Drizzle migrations before any service is constructed.
  *
  * Pass `":memory:"` for an isolated test database. The same layer is used by
  * the web server and the stdio MCP server so both agree on the schema.
@@ -43,7 +44,7 @@ export const makeDatabaseLayer = (
   // `Layer.provide` builds its argument first, so migrations finish before the
   // services (and their database) are constructed. The single `SqliteClient`
   // supplied last is shared by the migration runner and every service.
-  return Layer.mergeAll(noteServices, SQLiteNoteService).pipe(
+  return Layer.mergeAll(noteServices, SQLiteNoteService, SQLiteSearchService).pipe(
     Layer.provide(makeNoteDatabaseLayer(options.drizzle)),
     Layer.provide(migrations),
     Layer.provide(SqliteClient.layer({ filename })),

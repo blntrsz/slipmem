@@ -412,3 +412,55 @@ test("MCP tools over HTTP share the JSON API database", async () => {
     await api.dispose()
   }
 })
+
+test("MCP search over HTTP is scoped and bounded", async () => {
+  const api = makeApiHandler(":memory:", { disableLogger: true })
+
+  try {
+    const sessionId = await initializeMcp(api)
+
+    for (const [id, title, scope] of [
+      [2, "HTTP alpha one", "project:alpha"],
+      [3, "HTTP alpha two", "project:alpha"],
+      [4, "HTTP beta", "project:beta"],
+    ] as const) {
+      const created = await api.handler(
+        mcpToolCall(sessionId, id, "create_permanent_note", {
+          title,
+          content: "same term in every scope",
+          scope,
+        }),
+      )
+      expect(created.status).toBe(200)
+    }
+
+    const response = await api.handler(
+      mcpToolCall(sessionId, 5, "search_notes", {
+        query: "HTTP",
+        scope: "project:alpha",
+        limit: 1,
+      }),
+    )
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      readonly result: {
+        readonly structuredContent: {
+          readonly limit: number
+          readonly hasMore: boolean
+          readonly matches: ReadonlyArray<{
+            readonly note: { readonly title: string; readonly scope: string }
+          }>
+        }
+      }
+    }
+
+    expect(body.result.structuredContent.limit).toBe(1)
+    expect(body.result.structuredContent.hasMore).toBe(true)
+    expect(body.result.structuredContent.matches).toHaveLength(1)
+    expect(body.result.structuredContent.matches[0]!.note.scope).toBe(
+      "project:alpha",
+    )
+  } finally {
+    await api.dispose()
+  }
+})

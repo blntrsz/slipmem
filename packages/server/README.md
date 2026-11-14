@@ -78,7 +78,19 @@ length limits.
 
 `NoteRegistrations` is also exported from `@slipmem/server/note-tools`. The stdio
 server in `@slipmem/mcp` uses the same registrations, so the two MCP transports
-cannot drift apart.
+cannot drift apart. In addition to the fifteen CRUD tools, the registrations
+expose `search_notes`, a read-only bounded recall tool backed by
+`SQLiteSearchService`. `makeDatabaseLayer` builds that service next to the note
+services, so both the JSON API process and the stdio server satisfy the same
+tool layer.
+
+`search_notes` takes `{ query, limit?, kinds?, scope? }`. The limit defaults to
+10 and is clamped to 50, and scope defaults to `global` and is applied in SQL
+before ranking. Results are full `Note.Info` values, not excerpts, so they
+remain untrusted data and should be requested with a small limit. Scope is a
+namespace, not an authorization boundary; see
+[`packages/mcp/README.md`](../mcp/README.md#security-limitations) for the
+transport-level security limitations.
 
 ## Development
 

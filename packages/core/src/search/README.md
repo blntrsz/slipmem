@@ -92,18 +92,24 @@ This implementation is based on `scope-contract` commit `765d1d8`:
 * Rows include the decoded `provenance` envelope and the note's own scope.
 * No schema, migration, CRUD, or scope code is changed by this work.
 
-## Transport integration (not implemented here)
+## Transport integration
 
-The same service can back the HTTP API and MCP tool once their input schemas
-exist, for example:
+The MCP integration is implemented in `packages/server/src/note-tools.ts` as
+the `search_notes` tool. It is registered once in `NoteRegistrations`, so the
+stdio server and the streamable HTTP `/mcp` endpoint expose identical input and
+output schemas. `packages/server/src/database.ts` builds `SQLiteSearchService`
+alongside the note services, which is what satisfies the registration layer.
 
-* `POST /api/search` with `{ query, limit?, kinds?, scope? }`
-* MCP `search_notes` returning `{ matches, hasMore, limit }`
+The tool input follows `SearchInput` and reuses `MemoryScope.Scope`, so a
+malformed scope is rejected by the tool schema before search runs. The success
+shape is the full `SearchResult`, including `query`, the effective `limit`,
+`hasMore`, and `matches`. This milestone returns full note content rather than
+snippets; `MAX_SEARCH_LIMIT` is the payload bound. The MCP README records the
+security limitations of that choice, including the fact that scope is a
+namespace rather than an authorization check.
 
-Both transports should validate input first and resolve a missing scope the
-same way they do for list/get: `global`. Neither needs a new database table.
-Validation should reuse `MemoryScope.Scope` so malformed scopes are rejected
-before search runs.
+A future HTTP JSON search route would still need its own input schema and error
+mapping. It does not need a new database table or index.
 
 ## Tests
 

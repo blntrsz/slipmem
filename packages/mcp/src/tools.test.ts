@@ -24,6 +24,7 @@ const noteToolNames = [
   "create_literature_note",
   "update_literature_note",
   "delete_literature_note",
+  "search_notes",
 ]
 
 const makeClient = (databasePath = ":memory:") =>
