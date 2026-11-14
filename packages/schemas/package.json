@@ -5,7 +5,8 @@
   "exports": {
     "./fleeting-note": "./src/fleeting-note.ts",
     "./permanent-note": "./src/permanent-note.ts",
-    "./literature-note": "./src/literature-note.ts"
+    "./literature-note": "./src/literature-note.ts",
+    "./note": "./src/note.ts"
   },
   "dependencies": {
     "effect": "catalog:"

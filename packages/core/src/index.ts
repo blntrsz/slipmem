@@ -15,3 +15,6 @@ export {
   PermanentNoteService,
 } from "./permanent-note/permanent-note.service"
 export { SQLitePermanentNoteService } from "./permanent-note/sqlite-permanent-note.service"
+
+export { NoteService } from "./note/note.service"
+export { CombinedNoteService } from "./note/combined-note.service"
