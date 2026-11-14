@@ -1,0 +1,178 @@
+{
+  "fixtureVersion": 1,
+  "corpus": "corpus.json",
+  "notes": [
+    "These cases name intended query semantics, not production API fields.",
+    "expectedKeys are exact only where the answer does not depend on ranking or an open tokenizer/case-folding decision.",
+    "scope/kind/limit are proposed inputs; the eventual test adapter maps them to the contract's names."
+  ],
+  "cases": [
+    {
+      "id": "SEARCH-01",
+      "query": "Scoped memory",
+      "scope": null,
+      "kind": null,
+      "limit": null,
+      "expectedKeys": ["alpha-permanent-migration", "beta-fleeting-title-only"],
+      "ordering": "contract-defined",
+      "dependsOn": ["case folding", "multi-term matching"]
+    },
+    {
+      "id": "SEARCH-02",
+      "query": "legacy database",
+      "scope": null,
+      "kind": null,
+      "limit": null,
+      "expectedKeys": ["alpha-permanent-migration"],
+      "ordering": "contract-defined",
+      "dependsOn": ["multi-term matching", "content indexing"]
+    },
+    {
+      "id": "SEARCH-03",
+      "query": "chapter 3",
+      "scope": null,
+      "kind": null,
+      "limit": null,
+      "expectedKeys": ["alpha-literature-ranking", "beta-literature-source"],
+      "ordering": "contract-defined",
+      "dependsOn": ["reference indexing"]
+    },
+    {
+      "id": "SEARCH-04",
+      "query": "migration",
+      "scope": "project-alpha",
+      "kind": null,
+      "limit": null,
+      "expectedKeys": ["alpha-permanent-migration", "alpha-fleeting-index"],
+      "ordering": "contract-defined"
+    },
+    {
+      "id": "SEARCH-05",
+      "query": "migration",
+      "scope": null,
+      "kind": null,
+      "limit": null,
+      "expectedKeys": [
+        "alpha-permanent-migration",
+        "alpha-fleeting-index",
+        "beta-permanent-migration",
+        "beta-permanent-duplicate-title",
+        "global-permanent-migration"
+      ],
+      "ordering": "contract-defined"
+    },
+    {
+      "id": "SEARCH-06",
+      "query": "migration",
+      "scope": null,
+      "kind": "fleeting",
+      "limit": null,
+      "expectedKeys": ["alpha-fleeting-index"],
+      "ordering": "contract-defined"
+    },
+    {
+      "id": "SEARCH-07",
+      "query": "rollback",
+      "scope": "project-alpha",
+      "kind": null,
+      "limit": null,
+      "expectedKeys": [],
+      "ordering": "not-applicable",
+      "dependsOn": ["no cross-scope leakage"]
+    },
+    {
+      "id": "SEARCH-08",
+      "query": "rollback plan",
+      "scope": "project-beta",
+      "kind": null,
+      "limit": null,
+      "expectedKeys": [
+        "beta-permanent-migration",
+        "beta-permanent-duplicate-title"
+      ],
+      "ordering": "must be deterministic across repeated calls; both notes share updatedAt 1900",
+      "dependsOn": ["tie-break contract"]
+    },
+    {
+      "id": "SEARCH-09",
+      "query": "node.js",
+      "scope": null,
+      "kind": null,
+      "limit": null,
+      "expectedKeys": ["global-fleeting-punctuation"],
+      "ordering": "not-applicable",
+      "dependsOn": ["tokenizer punctuation handling"]
+    },
+    {
+      "id": "SEARCH-10",
+      "query": "café",
+      "scope": null,
+      "kind": null,
+      "limit": null,
+      "expectedKeys": ["alpha-fleeting-unicode"],
+      "ordering": "not-applicable",
+      "dependsOn": ["unicode normalization"],
+      "openVariant": "Decide whether unaccented 'cafe' also matches."
+    },
+    {
+      "id": "SEARCH-11",
+      "query": "\" OR 1=1 --",
+      "scope": null,
+      "kind": null,
+      "limit": null,
+      "expectedKeys": [],
+      "ordering": "not-applicable",
+      "dependsOn": ["parameterized query handling"]
+    },
+    {
+      "id": "SEARCH-12",
+      "query": "migration",
+      "scope": null,
+      "kind": null,
+      "limit": 2,
+      "expectedKeysSubset": ["alpha-permanent-migration", "alpha-fleeting-index", "beta-permanent-migration", "beta-permanent-duplicate-title", "global-permanent-migration"],
+      "expectedCount": 2,
+      "ordering": "contract-defined",
+      "dependsOn": ["bounded results", "stable ordering"]
+    },
+    {
+      "id": "SEARCH-13",
+      "query": "   ",
+      "scope": null,
+      "kind": null,
+      "limit": null,
+      "expectedKeys": [],
+      "ordering": "not-applicable",
+      "dependsOn": ["empty-query contract; empty result is preferred over an unbounded listing"]
+    },
+    {
+      "id": "SEARCH-14",
+      "query": "needle-at-end",
+      "scope": null,
+      "kind": null,
+      "limit": null,
+      "expectedKeys": ["alpha-permanent-long"],
+      "ordering": "not-applicable"
+    },
+    {
+      "id": "SEARCH-15",
+      "query": "rollback",
+      "scope": "project-beta",
+      "kind": "permanent",
+      "limit": null,
+      "expectedKeys": [
+        "beta-permanent-migration",
+        "beta-permanent-duplicate-title"
+      ],
+      "ordering": "contract-defined"
+    }
+  ],
+  "openQuestions": [
+    "Token prefix matching: does 'migrat' match 'migration'?",
+    "Phrase vs AND: does 'scoped migration' require adjacency or both tokens?",
+    "Accent folding: does 'cafe' match 'café'?",
+    "Scope inheritance: does a project scope include global notes by default?",
+    "Default and maximum limits when limit is omitted.",
+    "Total/next-cursor fields in a paginated response."
+  ]
+}

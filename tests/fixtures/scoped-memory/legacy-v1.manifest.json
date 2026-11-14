@@ -1,0 +1,60 @@
+{
+  "fixtureVersion": 1,
+  "description": "Rows inserted by legacy-v1.sql. A scope migration must preserve every field below exactly.",
+  "expectedDefaultScope": "TBD by the scope contract; every migrated row must use the agreed default",
+  "notes": [
+    {
+      "key": "legacy-fleeting-migration",
+      "kind": "fleeting",
+      "id": "legacy-fleeting-migration",
+      "title": "Legacy migration note",
+      "content": "Old rows must survive and become searchable.",
+      "createdAt": 300,
+      "updatedAt": 400
+    },
+    {
+      "key": "legacy-fleeting-unicode",
+      "kind": "fleeting",
+      "id": "legacy-fleeting-unicode",
+      "title": "Legacy Café",
+      "content": "Punctuation in old data: —; 100%.",
+      "createdAt": 900,
+      "updatedAt": 1000
+    },
+    {
+      "key": "legacy-permanent-search",
+      "kind": "permanent",
+      "id": "legacy-permanent-search",
+      "title": "Legacy search target",
+      "content": "Chapter references stay attached after migration.",
+      "createdAt": 500,
+      "updatedAt": 600
+    },
+    {
+      "key": "legacy-permanent-duplicate",
+      "kind": "permanent",
+      "id": "legacy-permanent-duplicate",
+      "title": "Legacy search target",
+      "content": "Duplicate title from before scopes.",
+      "createdAt": 500,
+      "updatedAt": 600
+    },
+    {
+      "key": "legacy-literature-source",
+      "kind": "literature",
+      "id": "legacy-literature-source",
+      "title": "Legacy source",
+      "content": "A quote that must keep its source.",
+      "reference": "Legacy Book, chapter 3",
+      "createdAt": 700,
+      "updatedAt": 800
+    }
+  ],
+  "invariants": [
+    "The row count per kind is unchanged after migration.",
+    "Every id, title, content, reference, createdAt, and updatedAt value is unchanged.",
+    "Both permanent rows with the same title and timestamps remain distinct rows.",
+    "The migrated rows are findable by search without a manual reindex.",
+    "A second startup does not duplicate rows, history rows, or index entries."
+  ]
+}

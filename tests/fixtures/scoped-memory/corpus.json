@@ -1,0 +1,123 @@
+{
+  "fixtureVersion": 1,
+  "description": "Deterministic corpus for scoped-memory and search acceptance tests. Keys are stable test identifiers; ids are arbitrary because the current ID schema accepts any string.",
+  "scopes": {
+    "global": "global",
+    "alpha": "project-alpha",
+    "beta": "project-beta"
+  },
+  "notes": [
+    {
+      "key": "alpha-permanent-migration",
+      "kind": "permanent",
+      "id": "alpha-permanent-migration",
+      "scope": "project-alpha",
+      "title": "Scoped memory migration",
+      "content": "Adopting a legacy database without dropping rows.",
+      "createdAt": 1000,
+      "updatedAt": 1100
+    },
+    {
+      "key": "alpha-fleeting-index",
+      "kind": "fleeting",
+      "id": "alpha-fleeting-index",
+      "scope": "project-alpha",
+      "title": "Index rebuild checklist",
+      "content": "Reindex every note after the scoped migration runs.",
+      "createdAt": 1200,
+      "updatedAt": 1300
+    },
+    {
+      "key": "alpha-literature-ranking",
+      "kind": "literature",
+      "id": "alpha-literature-ranking",
+      "scope": "project-alpha",
+      "title": "Search ranking references",
+      "content": "Relevance and recency both matter.",
+      "reference": "Designing Data-Intensive Applications, chapter 3",
+      "createdAt": 1400,
+      "updatedAt": 1500
+    },
+    {
+      "key": "alpha-fleeting-unicode",
+      "kind": "fleeting",
+      "id": "alpha-fleeting-unicode",
+      "scope": "project-alpha",
+      "title": "Café naïve",
+      "content": "Übermäßig; punctuation: \"quoted\" — dash-token.",
+      "createdAt": 1600,
+      "updatedAt": 1700
+    },
+    {
+      "key": "beta-permanent-migration",
+      "kind": "permanent",
+      "id": "beta-permanent-migration",
+      "scope": "project-beta",
+      "title": "Migration rollback plan",
+      "content": "A scoped migration must be reversible.",
+      "createdAt": 1800,
+      "updatedAt": 1900
+    },
+    {
+      "key": "beta-fleeting-title-only",
+      "kind": "fleeting",
+      "id": "beta-fleeting-title-only",
+      "scope": "project-beta",
+      "title": "Scoped memory",
+      "content": "Title-only match for the two-word query.",
+      "createdAt": 2000,
+      "updatedAt": 2100
+    },
+    {
+      "key": "beta-literature-source",
+      "kind": "literature",
+      "id": "beta-literature-source",
+      "scope": "project-beta",
+      "title": "Source notes",
+      "content": "Reference-only match lives here.",
+      "reference": "Chapter 3: Search at scale",
+      "createdAt": 2200,
+      "updatedAt": 2300
+    },
+    {
+      "key": "beta-permanent-duplicate-title",
+      "kind": "permanent",
+      "id": "beta-permanent-duplicate-title",
+      "scope": "project-beta",
+      "title": "Migration rollback plan",
+      "content": "Duplicate title, different id.",
+      "createdAt": 1800,
+      "updatedAt": 1900
+    },
+    {
+      "key": "global-permanent-migration",
+      "kind": "permanent",
+      "id": "global-permanent-migration",
+      "scope": "global",
+      "title": "Global migration index",
+      "content": "A global note that mentions migration and scoped search.",
+      "createdAt": 2400,
+      "updatedAt": 2500
+    },
+    {
+      "key": "global-fleeting-punctuation",
+      "kind": "fleeting",
+      "id": "global-fleeting-punctuation",
+      "scope": "global",
+      "title": "Punctuation probe",
+      "content": "100% literal, C++ and node.js; SQLite's FTS5.",
+      "createdAt": 2600,
+      "updatedAt": 2700
+    },
+    {
+      "key": "alpha-permanent-long",
+      "kind": "permanent",
+      "id": "alpha-permanent-long",
+      "scope": "project-alpha",
+      "title": "Long note boundary",
+      "content": "filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler filler needle-at-end",
+      "createdAt": 800,
+      "updatedAt": 900
+    }
+  ]
+}
