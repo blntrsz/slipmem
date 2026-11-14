@@ -32,6 +32,12 @@ unrelated history. When the server is deployed without the repository's
 `packages/server/drizzle` directory, set `SLIPMEM_MIGRATIONS_DIR` to a copy of
 it.
 
+Every note tool accepts an optional `scope` namespace and defaults to `global`.
+Scope isolates reads and writes but is not an authorization check; see
+[`docs/scoped-memory.md`](../../docs/scoped-memory.md). Tools that create notes
+default their provenance source to `mcp`, and callers may pass `provenance` with
+`source`, `actor`, and `externalId`.
+
 `SIGINT` and `SIGTERM` interrupt the server, which closes its SQLite connection
 and lets the MCP transport finish before the process exits.
 

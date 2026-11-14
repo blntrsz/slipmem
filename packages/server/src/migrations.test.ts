@@ -66,6 +66,9 @@ const startDatabase = (databasePath: string) =>
   )
 
 const noteTableNames = ["fleeting_note", "literature_note", "permanent_note"]
+const bundledMigrationCount = readMigrationFiles({
+  migrationsFolder: resolveMigrationsFolder(),
+}).length
 
 const tableNames = (db: Database): ReadonlyArray<string> =>
   db
@@ -82,7 +85,7 @@ const migrationCount = (db: Database): number =>
     )
     .get()!.count
 
-test("a fresh database gets every note table and one migration record", async () => {
+test("a fresh database gets every note table and the bundled migration history", async () => {
   await withTemporaryDirectory(async (directory) => {
     const databasePath = join(directory, "notes.db")
 
@@ -93,7 +96,7 @@ test("a fresh database gets every note table and one migration record", async ()
       expect(tableNames(db)).toEqual(
         [...noteTableNames, "__drizzle_migrations"].sort(),
       )
-      expect(migrationCount(db)).toBe(1)
+      expect(migrationCount(db)).toBe(bundledMigrationCount)
     } finally {
       db.close()
     }
@@ -122,7 +125,7 @@ test("repeated startup is idempotent and does not lose notes", async () => {
 
     const second = new Database(databasePath)
     try {
-      expect(migrationCount(second)).toBe(1)
+      expect(migrationCount(second)).toBe(bundledMigrationCount)
       expect(
         second
           .query<{ id: string; title: string }, []>(
@@ -166,7 +169,7 @@ test("adopts a populated database created by the old bootstrap", async () => {
 
     const db = new Database(databasePath)
     try {
-      expect(migrationCount(db)).toBe(1)
+      expect(migrationCount(db)).toBe(bundledMigrationCount)
       expect(
         db
           .query<{ id: string; title: string }, []>(
@@ -223,7 +226,7 @@ test("adds missing tables to a partially created legacy database", async () => {
       expect(tableNames(db)).toEqual(
         [...noteTableNames, "__drizzle_migrations"].sort(),
       )
-      expect(migrationCount(db)).toBe(1)
+      expect(migrationCount(db)).toBe(bundledMigrationCount)
       expect(
         db
           .query<{ id: string }, []>("SELECT id FROM fleeting_note")

@@ -3,7 +3,9 @@ export * as Note from "./note.js"
 import { Schema } from "effect"
 import { FleetingNote } from "./fleeting-note.js"
 import { LiteratureNote } from "./literature-note.js"
+import { MemoryScope } from "./memory-scope.js"
 import { PermanentNote } from "./permanent-note.js"
+import { Provenance } from "./provenance.js"
 
 // Every note kind is exposed through one discriminated union so callers that
 // only care about "a note" do not need to know which slice it came from. The
@@ -42,19 +44,28 @@ export type Info = typeof Info.Type
 // still validate the actual create/update input: this draft only describes
 // fields a caller may send before the kind-specific rules are applied.
 export interface Draft extends Schema.Schema.Type<typeof Draft> {}
+// `scope` and `provenance` remain optional on the wire so existing editors and
+// clients keep working. The API resolves a missing scope to the default and a
+// missing provenance to its own transport (`api` or `mcp`).
 export const Draft = Schema.Struct({
   title: Schema.String,
   content: Schema.String,
-  reference: Schema.optional(Schema.String),
+  reference: Schema.optionalKey(Schema.String),
+  scope: Schema.optionalKey(MemoryScope.Scope),
+  provenance: Schema.optionalKey(Provenance.Info),
 }).annotate({ identifier: "Note.Draft" })
 
-// Lists are currently unfiltered. Keep an explicit empty input so every
-// operation has a schema and filters can be added without changing signatures.
+// Every aggregate read is partitioned by one scope. Omitting the scope reads
+// the default namespace, which is where pre-scope notes live.
 export interface ListInput extends Schema.Schema.Type<typeof ListInput> {}
-export const ListInput = Schema.Struct({}).annotate({ identifier: "Note.ListInput" })
+export const ListInput = Schema.Struct({
+  scope: Schema.optionalKey(MemoryScope.Scope),
+}).annotate({ identifier: "Note.ListInput" })
 
 export interface ListTitlesInput extends Schema.Schema.Type<typeof ListTitlesInput> {}
-export const ListTitlesInput = Schema.Struct({}).annotate({ identifier: "Note.ListTitlesInput" })
+export const ListTitlesInput = Schema.Struct({
+  scope: Schema.optionalKey(MemoryScope.Scope),
+}).annotate({ identifier: "Note.ListTitlesInput" })
 
 // Title results are intentionally lighter than Info: they carry enough to
 // identify a note and render a list without loading its content. The kind is

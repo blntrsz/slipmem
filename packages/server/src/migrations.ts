@@ -88,6 +88,10 @@ const legacyNoteTables: ReadonlyArray<ExpectedTable> = [
 // The shape produced after every checked-in migration has run. Update this
 // list whenever a migration changes a note table; startup validates the
 // migrated database against it. Keep `legacyNoteTables` untouched.
+//
+// `scope` and `provenance` were added by the second migration. The scope
+// migration supplies `global` and `{"source":"legacy"}` defaults so existing
+// rows become part of the default namespace without a copy or a rewrite.
 const noteTables: ReadonlyArray<ExpectedTable> = [
   {
     name: "fleeting_note",
@@ -95,6 +99,8 @@ const noteTables: ReadonlyArray<ExpectedTable> = [
       { name: "id", type: "TEXT", notNull: true, primaryKey: true },
       { name: "title", type: "TEXT", notNull: true, primaryKey: false },
       { name: "content", type: "TEXT", notNull: true, primaryKey: false },
+      { name: "scope", type: "TEXT", notNull: true, primaryKey: false },
+      { name: "provenance", type: "TEXT", notNull: true, primaryKey: false },
       { name: "created_at", type: "REAL", notNull: true, primaryKey: false },
       { name: "updated_at", type: "REAL", notNull: true, primaryKey: false },
     ],
@@ -106,6 +112,8 @@ const noteTables: ReadonlyArray<ExpectedTable> = [
       { name: "title", type: "TEXT", notNull: true, primaryKey: false },
       { name: "content", type: "TEXT", notNull: true, primaryKey: false },
       { name: "reference", type: "TEXT", notNull: true, primaryKey: false },
+      { name: "scope", type: "TEXT", notNull: true, primaryKey: false },
+      { name: "provenance", type: "TEXT", notNull: true, primaryKey: false },
       { name: "created_at", type: "REAL", notNull: true, primaryKey: false },
       { name: "updated_at", type: "REAL", notNull: true, primaryKey: false },
     ],
@@ -116,6 +124,8 @@ const noteTables: ReadonlyArray<ExpectedTable> = [
       { name: "id", type: "TEXT", notNull: true, primaryKey: true },
       { name: "title", type: "TEXT", notNull: true, primaryKey: false },
       { name: "content", type: "TEXT", notNull: true, primaryKey: false },
+      { name: "scope", type: "TEXT", notNull: true, primaryKey: false },
+      { name: "provenance", type: "TEXT", notNull: true, primaryKey: false },
       { name: "created_at", type: "REAL", notNull: true, primaryKey: false },
       { name: "updated_at", type: "REAL", notNull: true, primaryKey: false },
     ],
@@ -298,6 +308,16 @@ const assertAllTables = (sql: DatabaseClient): Effect.Effect<void, MigrationFail
     discard: true,
   })
 
+// When the initial migration is recorded but later migrations are not, the
+// note tables must still have the shape that the initial migration created.
+// Checking this before Drizzle runs the next migration turns a half-restored
+// database into a MigrationError instead of a raw ALTER TABLE failure, and it
+// also catches a schema that is already newer than its recorded history.
+const assertInitialTables = (sql: DatabaseClient): Effect.Effect<void, MigrationFailure> =>
+  Effect.forEach(legacyNoteTables, (expected) => assertTableSchema(sql, expected), {
+    discard: true,
+  })
+
 const migrationTableColumns = (sql: DatabaseClient) =>
   Effect.map(
     sql<TableInfoRow>`PRAGMA table_info(${sql(migrationsTable)})`,
@@ -305,30 +325,30 @@ const migrationTableColumns = (sql: DatabaseClient) =>
   )
 
 /**
- * Returns whether the first local migration has already been applied.
+ * Returns the migration names recorded in a modern Drizzle history.
  *
  * A database created by the old handwritten bootstrap has note tables but no
- * `__drizzle_migrations` table, so it must be validated before the generated
- * migration adopts it. A database with an unrelated or partially created
- * migration table is treated the same way until the initial migration is
- * actually recorded.
+ * `__drizzle_migrations` table, and a version-0 Drizzle history has no `name`
+ * column. Both return an empty list, which routes them through legacy
+ * validation and Drizzle's own history upgrade.
  */
-const initialMigrationApplied = (
+const appliedMigrationNames = (
   sql: DatabaseClient,
-  initialMigrationName: string,
-): Effect.Effect<boolean, MigrationFailure> =>
+): Effect.Effect<ReadonlyArray<string>, MigrationFailure> =>
   Effect.gen(function* () {
     const kind = yield* tableType(sql, migrationsTable)
-    if (kind !== "table") return false
+    if (kind !== "table") return []
 
     const columns = yield* migrationTableColumns(sql)
-    if (!columns.some((column) => column.name === "name")) return false
+    if (!columns.some((column) => column.name === "name")) return []
 
     const rows = yield* sql<{ readonly name: string | null }>`
       SELECT name FROM ${sql(migrationsTable)}
     `
 
-    return Array.from(rows).some((row) => row.name === initialMigrationName)
+    return Array.from(rows).flatMap((row) =>
+      row.name === null ? [] : [row.name],
+    )
   })
 
 /**
@@ -415,8 +435,9 @@ export const runMigrations = (
         }),
     })
     const initial = localMigrations[0]
+    const latest = localMigrations[localMigrations.length - 1]
 
-    if (initial === undefined) {
+    if (initial === undefined || latest === undefined) {
       return yield* failMigration(
         `The migrations folder "${migrationsFolder}" contains no migrations. Refusing to start with an unmigrated database.`,
       )
@@ -424,11 +445,24 @@ export const runMigrations = (
 
     yield* sql.withTransaction(
       Effect.gen(function* () {
-        const adopted = yield* initialMigrationApplied(sql, initial.name)
+        const applied = yield* appliedMigrationNames(sql)
+        const initialApplied = applied.includes(initial.name)
+        const latestApplied = applied.includes(latest.name)
 
-        if (!adopted) {
-          // Validate every table that already exists before letting the
-          // generated CREATE TABLE statements touch the file.
+        if (latestApplied && initialApplied) {
+          // The history claims to be current. Validate the schema before
+          // Drizzle runs (a no-op in this case) and again afterwards.
+          yield* assertAllTables(sql)
+        } else if (initialApplied) {
+          // A later migration is pending. The tables must be in the shape the
+          // initial migration produced; if they are already newer, the history
+          // is inconsistent and ALTER TABLE would fail halfway through.
+          yield* assertInitialTables(sql)
+        } else {
+          // No initial migration is recorded. Validate every table that
+          // already exists before letting the generated CREATE TABLE
+          // statements touch the file. Missing tables are allowed because a
+          // fresh or partially bootstrapped database may not have them yet.
           yield* assertExistingTables(sql)
           yield* assertMigrationHistoryAdoptable(sql, initial.name)
         }

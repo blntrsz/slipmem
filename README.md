@@ -45,6 +45,12 @@ The generated migrations live in `packages/server/drizzle`. A packaged
 deployment that does not keep the source tree next to the executable can point
 `SLIPMEM_MIGRATIONS_DIR` at a copy of that directory.
 
+Every note also belongs to a scope namespace and carries provenance metadata.
+`global` is the default scope and the namespace adopted by pre-scope rows.
+Scope partitions reads and writes; it is not an authorization boundary. See
+[`docs/scoped-memory.md`](docs/scoped-memory.md) for the contract and migration
+rules.
+
 ## Web application
 
 The Foldkit app in `packages/web` serves the note list and CRUD editor for all

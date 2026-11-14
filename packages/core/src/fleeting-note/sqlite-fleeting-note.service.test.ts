@@ -21,7 +21,7 @@ test("SQLite fleeting note service persists notes", async () => {
 
   await Effect.runPromise(Effect.gen(function* () {
     const sql = yield* SqliteClient.SqliteClient
-    yield* sql`CREATE TABLE fleeting_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
+    yield* sql`CREATE TABLE fleeting_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', provenance TEXT NOT NULL DEFAULT '{"source":"legacy"}', created_at REAL NOT NULL, updated_at REAL NOT NULL)`
     const service = yield* FleetingNoteService
 
     const beforeCreate = Date.now()

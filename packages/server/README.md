@@ -62,9 +62,17 @@ to unknown history. In a deployment that does not keep the repository's
 `NoteService` so every result is a `Note.Info` tagged union. Writes use the
 per-kind services because each kind has its own input schema.
 
+Every route accepts an optional `?scope=...` query parameter. The scope
+partitions notes and defaults to `global`, where pre-scope notes were migrated.
+It is a namespace, not an authorization token. A note id from another scope is
+reported as missing, and an invalid scope returns `400`. Responses include the
+note's `scope` and `provenance`; API-created notes default to the `api` source.
+
 Create and update bodies require `title` and `content`; literature notes also
-require `reference`. Requests must use `content-type: application/json`, and the
-per-kind schemas enforce the content length limits.
+require `reference`. Create bodies may include an optional `provenance` object
+with `source`, `actor`, and `externalId`. Requests must use
+`content-type: application/json`, and the per-kind schemas enforce the content
+length limits.
 
 ## MCP tools
 

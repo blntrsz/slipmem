@@ -9,8 +9,10 @@ import {
 } from "@slipmem/core"
 import { FleetingNote } from "@slipmem/schemas/fleeting-note"
 import { LiteratureNote } from "@slipmem/schemas/literature-note"
+import { MemoryScope } from "@slipmem/schemas/memory-scope"
 import { Note } from "@slipmem/schemas/note"
 import { PermanentNote } from "@slipmem/schemas/permanent-note"
+import { Provenance } from "@slipmem/schemas/provenance"
 import { Array, Data, Effect, Layer, Match, Option, Order, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 
@@ -36,10 +38,15 @@ export class NoteNotFound extends Data.TaggedError("NoteNotFound")<{
   readonly id: string
 }> {}
 
+export class InvalidScope extends Data.TaggedError("InvalidScope")<{
+  readonly scope: string
+}> {}
+
 type ApiError =
   | InvalidNoteType
   | InvalidNoteId
   | InvalidNoteBody
+  | InvalidScope
   | NoteNotFound
 
 const fromFleeting = (note: FleetingNote.Info): Note.Info => ({
@@ -71,6 +78,8 @@ const errorResponse = (error: ApiError): HttpServerResponse.HttpServerResponse =
       )),
     Match.tag("InvalidNoteBody", ({ reason }) =>
       json({ error: reason }, 400)),
+    Match.tag("InvalidScope", ({ scope }) =>
+      json({ error: `Invalid scope: ${scope}` }, 400)),
     Match.tag("NoteNotFound", ({ id }) =>
       json({ error: `Note not found: ${id}` }, 404)),
     Match.exhaustive,
@@ -191,17 +200,40 @@ const readDraft = (kind: Note.Kind, id?: string) =>
     return yield* decodeDraft(kind, body, id)
   })
 
+// HTTP callers select a namespace with `?scope=...`. Scope is a partition, not
+// an authentication token: the server does not derive permissions from it, it
+// only uses it to keep reads and writes inside one namespace. Omitting the
+// parameter uses the default namespace where legacy notes were adopted.
+const scopeFromRequest = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest
+  const value = new URL(request.url, "http://localhost").searchParams.get("scope")
+
+  if (value === null) {
+    return MemoryScope.DEFAULT_SCOPE
+  }
+
+  return yield* Schema.decodeUnknownEffect(MemoryScope.Scope)(value).pipe(
+    Effect.mapError(() => new InvalidScope({ scope: value })),
+  )
+})
+
 interface NoteOperations {
-  readonly create: (draft: NoteDraft) => Effect.Effect<Note.Info>
+  readonly create: (
+    draft: NoteDraft,
+    scope: MemoryScope.Scope,
+  ) => Effect.Effect<Note.Info>
   readonly get: (
     id: string | undefined,
+    scope: MemoryScope.Scope,
   ) => Effect.Effect<Option.Option<Note.Info>, InvalidNoteId>
   readonly update: (
     id: string | undefined,
     draft: NoteDraft,
+    scope: MemoryScope.Scope,
   ) => Effect.Effect<Note.Info, InvalidNoteId | NoteNotFound>
   readonly remove: (
     id: string | undefined,
+    scope: MemoryScope.Scope,
   ) => Effect.Effect<boolean, InvalidNoteId>
 }
 
@@ -211,22 +243,29 @@ const makeNoteOperations = (
   literature: typeof LiteratureNoteService.Service,
 ): Readonly<Record<Note.Kind, NoteOperations>> => ({
   fleeting: {
-    create: (draft) =>
-      fleeting.create({ title: draft.title, content: draft.content }).pipe(
-        Effect.map(fromFleeting),
-      ),
-    get: (id) =>
+    create: (draft, scope) =>
+      fleeting.create({
+        title: draft.title,
+        content: draft.content,
+        scope,
+        provenance: draft.provenance ?? Provenance.API,
+      }).pipe(Effect.map(fromFleeting)),
+    get: (id, scope) =>
       Effect.gen(function* () {
-        const note = yield* fleeting.get({ id: yield* decodeNoteId("fleeting", id, FleetingNote.ID) })
+        const note = yield* fleeting.get({
+          id: yield* decodeNoteId("fleeting", id, FleetingNote.ID),
+          scope,
+        })
         return Option.map(note, fromFleeting)
       }),
-    update: (id, draft) =>
+    update: (id, draft, scope) =>
       Effect.gen(function* () {
         const decodedId = yield* decodeNoteId("fleeting", id, FleetingNote.ID)
         const note = yield* fleeting.update({
           id: decodedId,
           title: draft.title,
           content: draft.content,
+          scope,
         }).pipe(
           Effect.catchTag("FleetingNoteNotFound", (error: FleetingNoteNotFound) =>
             Effect.fail(new NoteNotFound({ id: error.id })),
@@ -234,28 +273,38 @@ const makeNoteOperations = (
         )
         return fromFleeting(note)
       }),
-    remove: (id) =>
+    remove: (id, scope) =>
       Effect.gen(function* () {
-        return yield* fleeting.delete({ id: yield* decodeNoteId("fleeting", id, FleetingNote.ID) })
+        return yield* fleeting.delete({
+          id: yield* decodeNoteId("fleeting", id, FleetingNote.ID),
+          scope,
+        })
       }),
   },
   permanent: {
-    create: (draft) =>
-      permanent.create({ title: draft.title, content: draft.content }).pipe(
-        Effect.map(fromPermanent),
-      ),
-    get: (id) =>
+    create: (draft, scope) =>
+      permanent.create({
+        title: draft.title,
+        content: draft.content,
+        scope,
+        provenance: draft.provenance ?? Provenance.API,
+      }).pipe(Effect.map(fromPermanent)),
+    get: (id, scope) =>
       Effect.gen(function* () {
-        const note = yield* permanent.get({ id: yield* decodeNoteId("permanent", id, PermanentNote.ID) })
+        const note = yield* permanent.get({
+          id: yield* decodeNoteId("permanent", id, PermanentNote.ID),
+          scope,
+        })
         return Option.map(note, fromPermanent)
       }),
-    update: (id, draft) =>
+    update: (id, draft, scope) =>
       Effect.gen(function* () {
         const decodedId = yield* decodeNoteId("permanent", id, PermanentNote.ID)
         const note = yield* permanent.update({
           id: decodedId,
           title: draft.title,
           content: draft.content,
+          scope,
         }).pipe(
           Effect.catchTag("PermanentNoteNotFound", (error: PermanentNoteNotFound) =>
             Effect.fail(new NoteNotFound({ id: error.id })),
@@ -263,24 +312,32 @@ const makeNoteOperations = (
         )
         return fromPermanent(note)
       }),
-    remove: (id) =>
+    remove: (id, scope) =>
       Effect.gen(function* () {
-        return yield* permanent.delete({ id: yield* decodeNoteId("permanent", id, PermanentNote.ID) })
+        return yield* permanent.delete({
+          id: yield* decodeNoteId("permanent", id, PermanentNote.ID),
+          scope,
+        })
       }),
   },
   literature: {
-    create: (draft) =>
+    create: (draft, scope) =>
       literature.create({
         title: draft.title,
         content: draft.content,
         reference: draft.reference ?? "",
+        scope,
+        provenance: draft.provenance ?? Provenance.API,
       }).pipe(Effect.map(fromLiterature)),
-    get: (id) =>
+    get: (id, scope) =>
       Effect.gen(function* () {
-        const note = yield* literature.get({ id: yield* decodeNoteId("literature", id, LiteratureNote.ID) })
+        const note = yield* literature.get({
+          id: yield* decodeNoteId("literature", id, LiteratureNote.ID),
+          scope,
+        })
         return Option.map(note, fromLiterature)
       }),
-    update: (id, draft) =>
+    update: (id, draft, scope) =>
       Effect.gen(function* () {
         const decodedId = yield* decodeNoteId("literature", id, LiteratureNote.ID)
         const note = yield* literature.update({
@@ -288,6 +345,7 @@ const makeNoteOperations = (
           title: draft.title,
           content: draft.content,
           reference: draft.reference ?? "",
+          scope,
         }).pipe(
           Effect.catchTag("LiteratureNoteNotFound", (error: LiteratureNoteNotFound) =>
             Effect.fail(new NoteNotFound({ id: error.id })),
@@ -295,9 +353,12 @@ const makeNoteOperations = (
         )
         return fromLiterature(note)
       }),
-    remove: (id) =>
+    remove: (id, scope) =>
       Effect.gen(function* () {
-        return yield* literature.delete({ id: yield* decodeNoteId("literature", id, LiteratureNote.ID) })
+        return yield* literature.delete({
+          id: yield* decodeNoteId("literature", id, LiteratureNote.ID),
+          scope,
+        })
       }),
   },
 })
@@ -328,7 +389,8 @@ export const NoteRoutes = Layer.unwrap(
 
     const listNotes = route(
       Effect.gen(function* () {
-        const allNotes = yield* notes.list({})
+        const scope = yield* scopeFromRequest
+        const allNotes = yield* notes.list({ scope })
         return json({ notes: sortByUpdatedAt(allNotes) })
       }),
     )
@@ -337,8 +399,9 @@ export const NoteRoutes = Layer.unwrap(
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const kind = yield* decodeKind(params.type)
+        const scope = yield* scopeFromRequest
 
-        const allNotes = yield* notes.list({})
+        const allNotes = yield* notes.list({ scope })
         const matchingNotes = Array.filter(
           allNotes,
           (note) => note.type === kind,
@@ -352,7 +415,8 @@ export const NoteRoutes = Layer.unwrap(
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const kind = yield* decodeKind(params.type)
-        const note = yield* operations[kind].get(params.id)
+        const scope = yield* scopeFromRequest
+        const note = yield* operations[kind].get(params.id, scope)
         return json({ note: Option.getOrNull(note) })
       }),
     )
@@ -361,8 +425,9 @@ export const NoteRoutes = Layer.unwrap(
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const kind = yield* decodeKind(params.type)
+        const scope = yield* scopeFromRequest
         const draft = yield* readDraft(kind)
-        const note = yield* operations[kind].create(draft)
+        const note = yield* operations[kind].create(draft, scope)
         return json(note, 201)
       }),
     )
@@ -371,8 +436,9 @@ export const NoteRoutes = Layer.unwrap(
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const kind = yield* decodeKind(params.type)
+        const scope = yield* scopeFromRequest
         const draft = yield* readDraft(kind, params.id)
-        const note = yield* operations[kind].update(params.id, draft)
+        const note = yield* operations[kind].update(params.id, draft, scope)
         return json(note)
       }),
     )
@@ -381,7 +447,8 @@ export const NoteRoutes = Layer.unwrap(
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const kind = yield* decodeKind(params.type)
-        const deleted = yield* operations[kind].remove(params.id)
+        const scope = yield* scopeFromRequest
+        const deleted = yield* operations[kind].remove(params.id, scope)
         return json({ deleted })
       }),
     )

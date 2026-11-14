@@ -1,4 +1,5 @@
 import { PermanentNote } from "@slipmem/schemas/permanent-note"
+import { Provenance } from "@slipmem/schemas/provenance"
 import { Effect, Layer } from "effect"
 import { PermanentNoteNotFound, PermanentNoteService } from "./permanent-note.service"
 import { PermanentNoteTable } from "./permanent-note.sql"
@@ -15,9 +16,20 @@ export const SQLitePermanentNoteService = Layer.effect(
     PermanentNoteNotFound
   >({
     table: PermanentNoteTable,
-    createValues: (input) => input,
-    updateValues: ({ id: _id, ...changes }) => changes,
-    toInfo: (row) => row,
+    createValues: (input) => ({
+      title: input.title,
+      content: input.content,
+    }),
+    updateValues: ({ title, content }) => ({ title, content }),
+    toInfo: (row) => ({
+      id: row.id,
+      title: row.title,
+      content: row.content,
+      scope: row.scope,
+      provenance: Provenance.decode(row.provenance),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    }),
     notFound: (id) => new PermanentNoteNotFound({ id }),
   }).pipe(Effect.map(PermanentNoteService.of)),
 )

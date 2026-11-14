@@ -1,8 +1,11 @@
 import { Note } from "@slipmem/schemas/note"
 import type { FleetingNote } from "@slipmem/schemas/fleeting-note"
 import type { LiteratureNote } from "@slipmem/schemas/literature-note"
+import type { MemoryScope } from "@slipmem/schemas/memory-scope"
+import { MemoryScope as MemoryScopeSchema } from "@slipmem/schemas/memory-scope"
 import type { PermanentNote } from "@slipmem/schemas/permanent-note"
-import { sql } from "drizzle-orm"
+import { Provenance } from "@slipmem/schemas/provenance"
+import { eq, sql } from "drizzle-orm"
 import { Effect, Layer } from "effect"
 import { FleetingNoteTable } from "../fleeting-note/fleeting-note.sql"
 import { LiteratureNoteTable } from "../literature-note/literature-note.sql"
@@ -19,11 +22,15 @@ interface NoteRow {
   readonly title: string
   readonly content: string
   readonly reference: string | null
+  readonly scope: MemoryScope.Scope
+  readonly provenance: string
   readonly createdAt: number
   readonly updatedAt: number
 }
 
 const toInfo = (row: NoteRow): Note.Info => {
+  const provenance = Provenance.decode(row.provenance)
+
   switch (row.type) {
     case "fleeting":
       return {
@@ -31,6 +38,8 @@ const toInfo = (row: NoteRow): Note.Info => {
         id: row.id as FleetingNote.ID,
         title: row.title,
         content: row.content,
+        scope: row.scope,
+        provenance,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }
@@ -41,6 +50,8 @@ const toInfo = (row: NoteRow): Note.Info => {
         title: row.title,
         content: row.content,
         reference: row.reference ?? "",
+        scope: row.scope,
+        provenance,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }
@@ -50,6 +61,8 @@ const toInfo = (row: NoteRow): Note.Info => {
         id: row.id as PermanentNote.ID,
         title: row.title,
         content: row.content,
+        scope: row.scope,
+        provenance,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }
@@ -60,7 +73,13 @@ const toInfo = (row: NoteRow): Note.Info => {
 // so the tie-breaker must include the kind as well.
 const listOrder = sql`updated_at DESC, type ASC, id ASC`
 
-const listQuery = (db: typeof NoteDatabaseService.Service) =>
+// Every branch carries the same scope predicate. Filtering each table before
+// the union keeps the query plan index-friendly and makes it impossible for a
+// branch to contribute rows from another namespace.
+const listQuery = (
+  db: typeof NoteDatabaseService.Service,
+  scope: MemoryScope.Scope,
+) =>
   db
     .select({
       id: sql<string>`${FleetingNoteTable.id}`.as("id"),
@@ -68,10 +87,13 @@ const listQuery = (db: typeof NoteDatabaseService.Service) =>
       title: FleetingNoteTable.title,
       content: FleetingNoteTable.content,
       reference: sql<string | null>`NULL`.as("reference"),
+      scope: FleetingNoteTable.scope,
+      provenance: FleetingNoteTable.provenance,
       createdAt: FleetingNoteTable.createdAt,
       updatedAt: FleetingNoteTable.updatedAt,
     })
     .from(FleetingNoteTable)
+    .where(eq(FleetingNoteTable.scope, scope))
     .unionAll(
       db
         .select({
@@ -80,10 +102,13 @@ const listQuery = (db: typeof NoteDatabaseService.Service) =>
           title: LiteratureNoteTable.title,
           content: LiteratureNoteTable.content,
           reference: LiteratureNoteTable.reference,
+          scope: LiteratureNoteTable.scope,
+          provenance: LiteratureNoteTable.provenance,
           createdAt: LiteratureNoteTable.createdAt,
           updatedAt: LiteratureNoteTable.updatedAt,
         })
-        .from(LiteratureNoteTable),
+        .from(LiteratureNoteTable)
+        .where(eq(LiteratureNoteTable.scope, scope)),
     )
     .unionAll(
       db
@@ -93,14 +118,20 @@ const listQuery = (db: typeof NoteDatabaseService.Service) =>
           title: PermanentNoteTable.title,
           content: PermanentNoteTable.content,
           reference: sql<string | null>`NULL`.as("reference"),
+          scope: PermanentNoteTable.scope,
+          provenance: PermanentNoteTable.provenance,
           createdAt: PermanentNoteTable.createdAt,
           updatedAt: PermanentNoteTable.updatedAt,
         })
-        .from(PermanentNoteTable),
+        .from(PermanentNoteTable)
+        .where(eq(PermanentNoteTable.scope, scope)),
     )
     .orderBy(listOrder)
 
-const listTitlesQuery = (db: typeof NoteDatabaseService.Service) =>
+const listTitlesQuery = (
+  db: typeof NoteDatabaseService.Service,
+  scope: MemoryScope.Scope,
+) =>
   db
     .select({
       id: sql<string>`${FleetingNoteTable.id}`.as("id"),
@@ -109,6 +140,7 @@ const listTitlesQuery = (db: typeof NoteDatabaseService.Service) =>
       updatedAt: FleetingNoteTable.updatedAt,
     })
     .from(FleetingNoteTable)
+    .where(eq(FleetingNoteTable.scope, scope))
     .unionAll(
       db
         .select({
@@ -117,7 +149,8 @@ const listTitlesQuery = (db: typeof NoteDatabaseService.Service) =>
           title: LiteratureNoteTable.title,
           updatedAt: LiteratureNoteTable.updatedAt,
         })
-        .from(LiteratureNoteTable),
+        .from(LiteratureNoteTable)
+        .where(eq(LiteratureNoteTable.scope, scope)),
     )
     .unionAll(
       db
@@ -127,25 +160,29 @@ const listTitlesQuery = (db: typeof NoteDatabaseService.Service) =>
           title: PermanentNoteTable.title,
           updatedAt: PermanentNoteTable.updatedAt,
         })
-        .from(PermanentNoteTable),
+        .from(PermanentNoteTable)
+        .where(eq(PermanentNoteTable.scope, scope)),
     )
     .orderBy(listOrder)
 
 // Reads all three note tables directly. It deliberately does not depend on the
 // per-kind note services: the database is the only dependency, and each query
-// is a single UNION ALL statement.
+// is a single UNION ALL statement over one scope.
 export const SQLiteNoteService = Layer.effect(
   NoteService,
   Effect.gen(function* () {
     const db = yield* NoteDatabaseService
 
     return NoteService.of({
-      list: (_input) => Effect.gen(function* () {
-        const rows = yield* listQuery(db)
+      list: (input) => Effect.gen(function* () {
+        const rows = yield* listQuery(db, input.scope ?? MemoryScopeSchema.DEFAULT_SCOPE)
         return rows.map(toInfo)
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
-      listTitles: (_input) => Effect.gen(function* () {
-        const rows = yield* listTitlesQuery(db)
+      listTitles: (input) => Effect.gen(function* () {
+        const rows = yield* listTitlesQuery(
+          db,
+          input.scope ?? MemoryScopeSchema.DEFAULT_SCOPE,
+        )
         return rows.map(({ id, type, title }) => ({ id, type, title }))
       }).pipe(Effect.catchTag("EffectDrizzleQueryError", Effect.die)),
     })

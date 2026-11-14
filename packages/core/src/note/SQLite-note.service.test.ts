@@ -2,7 +2,9 @@ import { expect, test } from "bun:test"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { FleetingNote } from "@slipmem/schemas/fleeting-note"
 import { LiteratureNote } from "@slipmem/schemas/literature-note"
+import { MemoryScope } from "@slipmem/schemas/memory-scope"
 import { PermanentNote } from "@slipmem/schemas/permanent-note"
+import { Provenance } from "@slipmem/schemas/provenance"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core"
 import { Cause, Effect, Exit, Layer, Schema } from "effect"
 import { NoteDatabaseLive } from "../note-database"
@@ -28,9 +30,9 @@ const memoryLayer = () =>
 const createTables = Effect.gen(function* () {
   const sql = yield* SqliteClient.SqliteClient
 
-  yield* sql`CREATE TABLE fleeting_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-  yield* sql`CREATE TABLE permanent_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-  yield* sql`CREATE TABLE literature_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, reference TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
+  yield* sql`CREATE TABLE fleeting_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', provenance TEXT NOT NULL DEFAULT '{"source":"legacy"}', created_at REAL NOT NULL, updated_at REAL NOT NULL)`
+  yield* sql`CREATE TABLE permanent_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', provenance TEXT NOT NULL DEFAULT '{"source":"legacy"}', created_at REAL NOT NULL, updated_at REAL NOT NULL)`
+  yield* sql`CREATE TABLE literature_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, reference TEXT NOT NULL, scope TEXT NOT NULL DEFAULT 'global', provenance TEXT NOT NULL DEFAULT '{"source":"legacy"}', created_at REAL NOT NULL, updated_at REAL NOT NULL)`
 })
 
 const insertNotes = Effect.gen(function* () {
@@ -56,6 +58,8 @@ test("SQLite note service unions the three note tables into the tagged union", a
         id: permanentId,
         title: "Permanent",
         content: "a lasting idea",
+        scope: MemoryScope.DEFAULT_SCOPE,
+        provenance: Provenance.LEGACY,
         createdAt: 5,
         updatedAt: 6,
       },
@@ -65,6 +69,8 @@ test("SQLite note service unions the three note tables into the tagged union", a
         title: "Literature",
         content: "a quote",
         reference: "Book, chapter 2",
+        scope: MemoryScope.DEFAULT_SCOPE,
+        provenance: Provenance.LEGACY,
         createdAt: 3,
         updatedAt: 4,
       },
@@ -73,6 +79,8 @@ test("SQLite note service unions the three note tables into the tagged union", a
         id: fleetingId,
         title: "Fleeting",
         content: "quick thought",
+        scope: MemoryScope.DEFAULT_SCOPE,
+        provenance: Provenance.LEGACY,
         createdAt: 1,
         updatedAt: 2,
       },

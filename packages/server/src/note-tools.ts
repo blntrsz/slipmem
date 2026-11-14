@@ -9,6 +9,7 @@ import {
 import { FleetingNote } from "@slipmem/schemas/fleeting-note"
 import { LiteratureNote } from "@slipmem/schemas/literature-note"
 import { PermanentNote } from "@slipmem/schemas/permanent-note"
+import { Provenance } from "@slipmem/schemas/provenance"
 import { Effect, Layer, Option, Schema } from "effect"
 import { McpServer, Tool, Toolkit } from "effect/ai"
 
@@ -28,7 +29,9 @@ const readOnlyTool = <T extends Tool.Any>(tool: T): T =>
   localTool(tool).annotate(Tool.Readonly, true).annotate(Tool.Idempotent, true) as T
 
 const ListFleetingNotes = readOnlyTool(Tool.make("list_fleeting_notes", {
-  description: "List every fleeting note.",
+  description:
+    "List every fleeting note in a namespace. Omit scope for the default namespace.",
+  parameters: FleetingNote.ListInput,
   success: Schema.Struct({ notes: Schema.Array(FleetingNote.Info) }),
 }))
 
@@ -58,7 +61,9 @@ const DeleteFleetingNote = localTool(Tool.make("delete_fleeting_note", {
 })).annotate(Tool.Idempotent, true).annotate(Tool.Destructive, true)
 
 const ListPermanentNotes = readOnlyTool(Tool.make("list_permanent_notes", {
-  description: "List every permanent note.",
+  description:
+    "List every permanent note in a namespace. Omit scope for the default namespace.",
+  parameters: PermanentNote.ListInput,
   success: Schema.Struct({ notes: Schema.Array(PermanentNote.Info) }),
 }))
 
@@ -88,7 +93,9 @@ const DeletePermanentNote = localTool(Tool.make("delete_permanent_note", {
 })).annotate(Tool.Idempotent, true).annotate(Tool.Destructive, true)
 
 const ListLiteratureNotes = readOnlyTool(Tool.make("list_literature_notes", {
-  description: "List every literature note.",
+  description:
+    "List every literature note in a namespace. Omit scope for the default namespace.",
+  parameters: LiteratureNote.ListInput,
   success: Schema.Struct({ notes: Schema.Array(LiteratureNote.Info) }),
 }))
 
@@ -153,10 +160,12 @@ export const NoteHandlersLayer = NoteTools.toLayer(
     const literature = yield* LiteratureNoteService
 
     return NoteTools.of({
-      list_fleeting_notes: () => fleeting.list({}).pipe(Effect.map((notes) => ({ notes }))),
+      list_fleeting_notes: (input) =>
+        fleeting.list(input).pipe(Effect.map((notes) => ({ notes }))),
       get_fleeting_note: (input) =>
         fleeting.get(input).pipe(Effect.map((note) => ({ note: Option.getOrNull(note) }))),
-      create_fleeting_note: (input) => fleeting.create(input),
+      create_fleeting_note: (input) =>
+        fleeting.create({ ...input, provenance: input.provenance ?? Provenance.MCP }),
       update_fleeting_note: (input) =>
         fleeting.update(input).pipe(
           Effect.catchTag("FleetingNoteNotFound", (error: FleetingNoteNotFound) =>
@@ -166,10 +175,12 @@ export const NoteHandlersLayer = NoteTools.toLayer(
       delete_fleeting_note: (input) =>
         fleeting.delete(input).pipe(Effect.map((deleted) => ({ deleted }))),
 
-      list_permanent_notes: () => permanent.list({}).pipe(Effect.map((notes) => ({ notes }))),
+      list_permanent_notes: (input) =>
+        permanent.list(input).pipe(Effect.map((notes) => ({ notes }))),
       get_permanent_note: (input) =>
         permanent.get(input).pipe(Effect.map((note) => ({ note: Option.getOrNull(note) }))),
-      create_permanent_note: (input) => permanent.create(input),
+      create_permanent_note: (input) =>
+        permanent.create({ ...input, provenance: input.provenance ?? Provenance.MCP }),
       update_permanent_note: (input) =>
         permanent.update(input).pipe(
           Effect.catchTag("PermanentNoteNotFound", (error: PermanentNoteNotFound) =>
@@ -179,10 +190,12 @@ export const NoteHandlersLayer = NoteTools.toLayer(
       delete_permanent_note: (input) =>
         permanent.delete(input).pipe(Effect.map((deleted) => ({ deleted }))),
 
-      list_literature_notes: () => literature.list({}).pipe(Effect.map((notes) => ({ notes }))),
+      list_literature_notes: (input) =>
+        literature.list(input).pipe(Effect.map((notes) => ({ notes }))),
       get_literature_note: (input) =>
         literature.get(input).pipe(Effect.map((note) => ({ note: Option.getOrNull(note) }))),
-      create_literature_note: (input) => literature.create(input),
+      create_literature_note: (input) =>
+        literature.create({ ...input, provenance: input.provenance ?? Provenance.MCP }),
       update_literature_note: (input) =>
         literature.update(input).pipe(
           Effect.catchTag("LiteratureNoteNotFound", (error: LiteratureNoteNotFound) =>
