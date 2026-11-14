@@ -5,6 +5,11 @@
       "repository": "Effect-TS/effect",
       "branch": "main",
       "description": "Use when working with Effect v4 APIs, source, or implementation details."
+    },
+    "foldkit": {
+      "repository": "foldkit/foldkit",
+      "branch": "main",
+      "description": "Use when working with Foldkit APIs, architecture, packages, or implementation details."
     }
   }
 }
