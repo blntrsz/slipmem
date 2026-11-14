@@ -1,5 +1,5 @@
 import { resolveDatabasePath } from "@slipmem/server"
-import { Layer, Runtime } from "effect"
+import { Cause, Exit, Layer, Runtime } from "effect"
 import { makeServerLayer } from "./server"
 
 // The web server owns the default path and directory creation, so both
@@ -21,6 +21,17 @@ const runMain = Runtime.makeRunMain(({ fiber, teardown }) => {
   fiber.addObserver((exit) => {
     process.removeListener("SIGINT", interrupt)
     process.removeListener("SIGTERM", interrupt)
+
+    // `makeRunMain`'s default reporter runs outside the server layer and would
+    // write to stdout. Report failures here, on stderr, and only for failures
+    // that have not already been reported.
+    if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
+      const error = Cause.squash(exit.cause)
+      if (Runtime.getErrorReported(error)) {
+        process.stderr.write(`${Cause.pretty(exit.cause)}\n`)
+      }
+    }
+
     teardown(exit, (code) => {
       if (receivedSignal) {
         process.exit(0)
@@ -34,4 +45,7 @@ const runMain = Runtime.makeRunMain(({ fiber, teardown }) => {
   process.on("SIGTERM", interrupt)
 })
 
-runMain(Layer.launch(makeServerLayer(databasePath)))
+runMain(
+  Layer.launch(makeServerLayer(databasePath)),
+  { disableErrorReporting: true },
+)

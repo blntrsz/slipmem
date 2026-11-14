@@ -59,6 +59,7 @@ const loadedModel = (
     lastError: Option.none(),
     loadRequestId: 0,
     saveRequestId: 0,
+    deletedNoteKeys: [],
     ...overrides,
   })
 
@@ -236,6 +237,173 @@ test("a stale save result cannot close a newer editor", () => {
     }),
   ).toBe("Still editing")
   expect(notesFrom(resolved.model)).toContainEqual(created)
+})
+
+test("a successful save settles an in-flight refresh and ignores its result", () => {
+  const created = decodeNote({
+    type: "fleeting",
+    id: "fleeting-new",
+    title: "Saved during refresh",
+    content: "Body",
+    createdAt: 4,
+    updatedAt: 4,
+  })
+
+  const refreshed = update(loadedModel(), Message.ClickedRefreshNotes())
+  expect(AsyncData.isRefreshing(refreshed.model.notes)).toBe(true)
+
+  const opened = update(refreshed.model, Message.ClickedNewNote())
+  const titled = update(
+    opened.model,
+    Message.UpdatedTitle({ title: "Saved during refresh" }),
+  )
+  const written = update(
+    titled.model,
+    Message.UpdatedContent({ content: "Body" }),
+  )
+  const saving = update(written.model, Message.ClickedSavedNote())
+  const saved = update(
+    saving.model,
+    Message.SucceededSaveNote({ requestId: 1, note: created }),
+  )
+
+  expect(AsyncData.isSuccess(saved.model.notes)).toBe(true)
+  expect(noteTitles(saved.model)).toContain("Saved during refresh")
+
+  const stale = update(
+    saved.model,
+    Message.SucceededLoadNotes({ requestId: 1, notes: [permanent] }),
+  )
+  expect(AsyncData.isSuccess(stale.model.notes)).toBe(true)
+  expect(noteTitles(stale.model)).toContain("Saved during refresh")
+  expect(noteTitles(stale.model)).not.toEqual(["An evergreen idea"])
+})
+
+test("a successful save also settles a stale list", () => {
+  const created = decodeNote({
+    type: "fleeting",
+    id: "fleeting-stale",
+    title: "Saved after a failed refresh",
+    content: "Body",
+    createdAt: 4,
+    updatedAt: 4,
+  })
+
+  const refreshed = update(loadedModel(), Message.ClickedRefreshNotes())
+  const failed = update(
+    refreshed.model,
+    Message.FailedLoadNotes({ requestId: 1, message: "Network down" }),
+  )
+  expect(AsyncData.isStale(failed.model.notes)).toBe(true)
+
+  const saved = update(
+    failed.model,
+    Message.SucceededSaveNote({ requestId: 1, note: created }),
+  )
+
+  expect(AsyncData.isSuccess(saved.model.notes)).toBe(true)
+  expect(noteTitles(saved.model)).toContain("Saved after a failed refresh")
+  expect(noteTitles(saved.model)).toHaveLength(4)
+})
+
+test("a successful delete settles an in-flight refresh and ignores its result", () => {
+  const refreshed = update(loadedModel(), Message.ClickedRefreshNotes())
+  expect(AsyncData.isRefreshing(refreshed.model.notes)).toBe(true)
+
+  const deleted = update(
+    refreshed.model,
+    Message.SucceededDeleteNote({ kind: "fleeting", id: fleeting.id }),
+  )
+
+  expect(AsyncData.isSuccess(deleted.model.notes)).toBe(true)
+  expect(
+    Array.some(notesFrom(deleted.model), (note) => note.id === fleeting.id),
+  ).toBe(false)
+
+  const stale = update(
+    deleted.model,
+    Message.SucceededLoadNotes({ requestId: 1, notes: [fleeting] }),
+  )
+  expect(AsyncData.isSuccess(stale.model.notes)).toBe(true)
+  expect(
+    Array.some(notesFrom(stale.model), (note) => note.id === fleeting.id),
+  ).toBe(false)
+})
+
+test("save and delete responses in either order keep the note deleted", () => {
+  const updatedFleeting = decodeNote({
+    ...fleeting,
+    title: "Changed",
+    content: "Changed body",
+    updatedAt: 10,
+  })
+  const deleteMessage = Message.SucceededDeleteNote({
+    kind: "fleeting",
+    id: fleeting.id,
+  })
+  const saveMessage = Message.SucceededSaveNote({
+    requestId: 1,
+    note: updatedFleeting,
+  })
+
+  const startSaving = (): Model => {
+    const editing = update(
+      loadedModel([fleeting, literature]),
+      Message.ClickedEditNote({ kind: "fleeting", id: fleeting.id }),
+    )
+    const titled = update(
+      editing.model,
+      Message.UpdatedTitle({ title: "Changed" }),
+    )
+    const written = update(
+      titled.model,
+      Message.UpdatedContent({ content: "Changed body" }),
+    )
+    const saving = update(written.model, Message.ClickedSavedNote())
+    expect(saving.model.editor._tag).toBe("Saving")
+    return saving.model
+  }
+
+  const hasFleeting = (model: Model): boolean =>
+    Array.some(notesFrom(model), (note) => note.id === fleeting.id)
+
+  // The save response arrives first, then the delete removes the note.
+  const savedFirst = update(startSaving(), saveMessage)
+  const deletedSecond = update(savedFirst.model, deleteMessage)
+  expect(hasFleeting(deletedSecond.model)).toBe(false)
+
+  // The delete response arrives first. The save was already in flight, so its
+  // later result must not put the note back.
+  const deletedFirst = update(startSaving(), deleteMessage)
+  expect(deletedFirst.model.editor._tag).toBe("Closed")
+  const savedSecond = update(deletedFirst.model, saveMessage)
+  expect(hasFleeting(savedSecond.model)).toBe(false)
+
+  // The tombstone only suppresses the result that was in flight at delete
+  // time; a later save is still applied normally.
+  const reopened = update(savedSecond.model, Message.ClickedNewNote())
+  const titled = update(
+    reopened.model,
+    Message.UpdatedTitle({ title: "A later note" }),
+  )
+  const written = update(
+    titled.model,
+    Message.UpdatedContent({ content: "Still allowed" }),
+  )
+  const savingAgain = update(written.model, Message.ClickedSavedNote())
+  const laterNote = decodeNote({
+    type: "fleeting",
+    id: "fleeting-later",
+    title: "A later note",
+    content: "Still allowed",
+    createdAt: 20,
+    updatedAt: 20,
+  })
+  const savedLater = update(
+    savingAgain.model,
+    Message.SucceededSaveNote({ requestId: 2, note: laterNote }),
+  )
+  expect(noteTitles(savedLater.model)).toContain("A later note")
 })
 
 test("saving one kind replaces only the matching kind and id", () => {

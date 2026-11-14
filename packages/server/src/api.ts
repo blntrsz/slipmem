@@ -113,21 +113,59 @@ const decodeNoteId = <S extends Schema.ConstraintDecoder<unknown>>(
     : Effect.succeed(decoded.value)
 }
 
-// Validate a draft with the schema for its note kind. The per-kind schemas
-// carry the content length limits and the required literature reference, so
-// HTTP callers cannot bypass validation that MCP tool inputs enforce.
-const decodeDraft = (kind: Note.Kind, body: unknown) =>
+// Validate a draft with the schema for its note kind and operation. The
+// per-kind schemas carry the content length limits and the required literature
+// reference, so HTTP callers cannot bypass validation that MCP tool inputs
+// enforce. Updates reuse the path id while validating the writable fields, so
+// a body cannot smuggle in a different note id.
+const createDraftSchema = (kind: Note.Kind) =>
   Match.value(kind).pipe(
-    Match.when("fleeting", () =>
-      Schema.decodeUnknownEffect(FleetingNote.CreateInput)(body)),
-    Match.when("permanent", () =>
-      Schema.decodeUnknownEffect(PermanentNote.CreateInput)(body)),
-    Match.when("literature", () =>
-      Schema.decodeUnknownEffect(LiteratureNote.CreateInput)(body)),
+    Match.when("fleeting", () => FleetingNote.CreateInput),
+    Match.when("permanent", () => PermanentNote.CreateInput),
+    Match.when("literature", () => LiteratureNote.CreateInput),
     Match.exhaustive,
-  ).pipe(
-    Effect.mapError(() => new InvalidNoteBody({ reason: "Invalid note body" })),
   )
+
+const updateDraftSchema = (kind: Note.Kind) =>
+  Match.value(kind).pipe(
+    Match.when("fleeting", () => FleetingNote.UpdateInput),
+    Match.when("permanent", () => PermanentNote.UpdateInput),
+    Match.when("literature", () => LiteratureNote.UpdateInput),
+    Match.exhaustive,
+  )
+
+const withNoteId = (body: unknown, id: string): unknown =>
+  typeof body === "object" && body !== null && !Array.isArray(body)
+    ? { ...(body as Record<string, unknown>), id }
+    : body
+
+// Keep the schema's human-readable summary and its field path, flattened onto
+// one line. The path makes a missing or mistyped field actionable without
+// exposing the full stack-like issue tree in an HTTP response.
+const validationReason = (message: string): string => {
+  const [summary = "Invalid note body", ...details] = message
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+
+  return details.length > 0 ? `${summary} (${details.join(" ")})` : summary
+}
+
+const decodeDraft = (kind: Note.Kind, body: unknown, id?: string) => {
+  const result =
+    id === undefined
+      ? Schema.decodeUnknownEffect(createDraftSchema(kind))(body)
+      : Schema.decodeUnknownEffect(updateDraftSchema(kind))(
+          withNoteId(body, id),
+        )
+
+  return result.pipe(
+    Effect.mapError(
+      (error) =>
+        new InvalidNoteBody({ reason: validationReason(error.message) }),
+    ),
+  )
+}
 
 // Mutating API requests must use JSON. Browsers treat `text/plain` bodies as
 // CORS-simple, so accepting them would let another origin write notes with a
@@ -136,7 +174,7 @@ const decodeDraft = (kind: Note.Kind, body: unknown) =>
 const isJsonContentType = (contentType: string | undefined) =>
   contentType?.toLowerCase().startsWith("application/json") === true
 
-const readDraft = (kind: Note.Kind) =>
+const readDraft = (kind: Note.Kind, id?: string) =>
   Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     if (!isJsonContentType(request.headers["content-type"])) {
@@ -150,7 +188,7 @@ const readDraft = (kind: Note.Kind) =>
         () => new InvalidNoteBody({ reason: "Invalid note body" }),
       ),
     )
-    return yield* decodeDraft(kind, body)
+    return yield* decodeDraft(kind, body, id)
   })
 
 interface NoteOperations {
@@ -333,7 +371,7 @@ export const NoteRoutes = Layer.unwrap(
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const kind = yield* decodeKind(params.type)
-        const draft = yield* readDraft(kind)
+        const draft = yield* readDraft(kind, params.id)
         const note = yield* operations[kind].update(params.id, draft)
         return json(note)
       }),

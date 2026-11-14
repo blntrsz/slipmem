@@ -6,8 +6,9 @@ import {
   HttpClientResponse,
 } from "effect/http"
 
-// The draft shape is shared with the server and the per-kind schemas. Keeping
-// one schema avoids the client accepting fields the API would reject.
+// The wire shape is shared with the server. It describes the fields the editor
+// sends; per-kind rules (required text, content limits, literature reference)
+// are still applied against the matching schema before sending.
 export const NoteDraft = Note.Draft
 export type NoteDraft = typeof NoteDraft.Type
 

@@ -203,7 +203,39 @@ test("JSON API rejects empty required text", async () => {
     const emptyReference = (await missingReferenceResponse.json()) as {
       readonly error: string
     }
-    expect(emptyReference.error).toBe("Invalid note body")
+    expect(emptyReference.error).toBe(
+      'Reference is required for literature notes. (at ["reference"])',
+    )
+  } finally {
+    await api.dispose()
+  }
+})
+
+test("JSON API returns the field-level validation message", async () => {
+  const api = makeApiHandler(":memory:", { disableLogger: true })
+
+  try {
+    const tooLong = await api.handler(
+      jsonRequest("/api/notes/fleeting", "POST", {
+        title: "Too long",
+        content: "a".repeat(1001),
+      }),
+    )
+    expect(tooLong.status).toBe(400)
+    expect(await tooLong.json()).toEqual({
+      error: 'Content must be 1000 characters or fewer. (at ["content"])',
+    })
+
+    const updateWithoutReference = await api.handler(
+      jsonRequest("/api/notes/literature/missing", "PUT", {
+        title: "Source",
+        content: "Quote",
+      }),
+    )
+    expect(updateWithoutReference.status).toBe(400)
+    expect(await updateWithoutReference.json()).toEqual({
+      error: 'Missing key (at ["reference"])',
+    })
   } finally {
     await api.dispose()
   }

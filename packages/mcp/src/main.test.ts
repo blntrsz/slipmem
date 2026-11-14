@@ -34,21 +34,62 @@ const waitForMigrations = async (databasePath: string): Promise<void> => {
   throw new Error(`Migrations did not complete for ${databasePath}`)
 }
 
-test("stdio server exits cleanly on SIGTERM", async () => {
+test("stdio server exits cleanly on SIGTERM and SIGINT", async () => {
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    const directory = await mkdtemp(join(tmpdir(), "slipmem-mcp-main-"))
+    const databasePath = join(directory, "notes.db")
+    const server = Bun.spawn([process.execPath, "packages/mcp/src/main.ts"], {
+      cwd: repositoryRoot,
+      env: { ...process.env, SLIPMEM_DB_PATH: databasePath },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    })
+    const stdout = new Response(server.stdout).text()
+    const stderr = new Response(server.stderr).text()
+
+    try {
+      await waitForMigrations(databasePath)
+      server.kill(signal)
+      expect(await server.exited).toBe(0)
+      expect(await stdout).toBe("")
+      expect(await stderr).toBe("")
+    } finally {
+      server.kill("SIGKILL")
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+})
+
+test("stdio startup failures go to stderr and leave stdout untouched", async () => {
   const directory = await mkdtemp(join(tmpdir(), "slipmem-mcp-main-"))
   const databasePath = join(directory, "notes.db")
+  const missingMigrations = join(directory, "missing-migrations")
   const server = Bun.spawn([process.execPath, "packages/mcp/src/main.ts"], {
     cwd: repositoryRoot,
-    env: { ...process.env, SLIPMEM_DB_PATH: databasePath },
+    env: {
+      ...process.env,
+      SLIPMEM_DB_PATH: databasePath,
+      SLIPMEM_MIGRATIONS_DIR: missingMigrations,
+    },
     stdin: "pipe",
-    stdout: "ignore",
-    stderr: "ignore",
+    stdout: "pipe",
+    stderr: "pipe",
   })
+  const stdout = new Response(server.stdout).text()
+  const stderr = new Response(server.stderr).text()
 
   try {
-    await waitForMigrations(databasePath)
-    server.kill("SIGTERM")
-    expect(await server.exited).toBe(0)
+    const [exitCode, output, errors] = await Promise.all([
+      server.exited,
+      stdout,
+      stderr,
+    ])
+
+    expect(exitCode).not.toBe(0)
+    expect(output).toBe("")
+    expect(errors).toContain("MigrationError")
+    expect(errors).toContain(missingMigrations)
   } finally {
     server.kill("SIGKILL")
     await rm(directory, { recursive: true, force: true })

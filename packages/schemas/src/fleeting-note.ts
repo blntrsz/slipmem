@@ -34,8 +34,8 @@ export const Info = Schema.Struct({
   updatedAt: Schema.Finite,
 }).annotate({ identifier: "FleetingNote.Info" })
 
-// Create input only carries user-authored fields. The database generates the
-// id and timestamps, so callers cannot choose them.
+// Create input only carries user-authored fields. The persistence layer
+// generates the id and timestamps, so callers cannot choose them.
 export interface CreateInput extends Schema.Schema.Type<typeof CreateInput> {}
 export const CreateInput = Schema.Struct({
   title: RequiredTitle,
@@ -53,7 +53,7 @@ export interface ListInput extends Schema.Schema.Type<typeof ListInput> {}
 export const ListInput = Schema.Struct({}).annotate({ identifier: "FleetingNote.ListInput" })
 
 // Update input still needs the id to locate the note, but timestamps are
-// managed by the database and are not accepted from callers.
+// managed by the persistence layer and are not accepted from callers.
 export interface UpdateInput extends Schema.Schema.Type<typeof UpdateInput> {}
 export const UpdateInput = Schema.Struct({
   id: ID,

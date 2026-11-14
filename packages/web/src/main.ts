@@ -51,6 +51,9 @@ export const Model = Schema.Struct({
   // The newest save request. A save result only closes the editor when it
   // belongs to the request still being saved.
   saveRequestId: Schema.Int,
+  // Composite keys of notes deleted during this session. A save response that
+  // was already in flight when the note was deleted must not put it back.
+  deletedNoteKeys: Schema.Array(Schema.String),
 })
 export type Model = typeof Model.Type
 
@@ -86,6 +89,7 @@ export const init: Runtime.ApplicationInit<Model, Message> = () => ({
     lastError: Option.none(),
     loadRequestId: 0,
     saveRequestId: 0,
+    deletedNoteKeys: [],
   },
   commands: [LoadNotes({ requestId: 0 })],
 })
@@ -183,8 +187,10 @@ const kindLabels: Readonly<Record<Note.Kind, string>> = {
 
 // Ids are only unique within a note table, so every lookup and removal includes
 // the kind as well as the id.
-const noteKey = (note: Pick<Note.Info, "type" | "id">): string =>
-  `${note.type}\u0000${note.id}`
+const noteKey = (note: {
+  readonly type: Note.Kind
+  readonly id: string
+}): string => `${note.type}\u0000${note.id}`
 
 const noteOrder = Order.combine(
   Order.mapInput(Order.flip(Order.Number), (note: Note.Info) => note.updatedAt),
@@ -222,7 +228,11 @@ const removeNote = (
     (note) => note.type !== kind || note.id !== id,
   )
 
-const updateNotesWith = (
+// Apply a mutation result directly to the cached list and settle any pending
+// refresh. A mutation invalidates the older load below, so leaving `Refreshing`
+// or `Stale` here would make the list pending forever: the invalidated load
+// can no longer deliver the message that would finish it.
+const settleNotesWith = (
   state: typeof Notes.schema.Type,
   update: (notes: ReadonlyArray<Note.Info>) => ReadonlyArray<Note.Info>,
 ): typeof Notes.schema.Type =>
@@ -230,9 +240,8 @@ const updateNotesWith = (
     onIdle: () => state,
     onLoading: () => state,
     onFailure: () => state,
-    onRefreshing: (data) => AsyncData.Refreshing({ data: update(data) }),
-    onStale: ({ error, data }) =>
-      AsyncData.Stale({ error, data: update(data) }),
+    onRefreshing: (data) => AsyncData.Success({ data: update(data) }),
+    onStale: ({ data }) => AsyncData.Success({ data: update(data) }),
     onSuccess: (data) => AsyncData.Success({ data: update(data) }),
   })
 
@@ -451,10 +460,21 @@ export const update = (model: Model, message: Message) =>
         return { model }
       }
 
+      const sortedNotes = sortNotes(notes)
+      const loadedKeys = new Set(Array.map(sortedNotes, noteKey))
+      // A successful load is authoritative: a note that is present again was
+      // recreated, so an old save response may update it. Notes that are absent
+      // keep their tombstone so a late save cannot resurrect them.
+      const remainingDeletedKeys = Array.filter(
+        model.deletedNoteKeys,
+        (key) => !loadedKeys.has(key),
+      )
+
       return {
         model: modifyFields(model, {
-          notes: () => AsyncData.Success({ data: sortNotes(notes) }),
+          notes: () => AsyncData.Success({ data: sortedNotes }),
           lastError: () => Option.none(),
+          deletedNoteKeys: () => remainingDeletedKeys,
         }),
       }
     },
@@ -474,16 +494,32 @@ export const update = (model: Model, message: Message) =>
     },
 
     SucceededSaveNote: ({ requestId, note }) => {
-      const hasData = AsyncData.hasData(model.notes)
-      const nextNotes = hasData
-        ? updateNotesWith(model.notes, (notes) => upsertNote(notes, note))
-        : AsyncData.Success({ data: [note] })
-      const nextLoadRequestId = model.loadRequestId + 1
       const isCurrentSave = EditorState.match(model.editor, {
         Saving: (saving) => saving.requestId === requestId,
         Closed: () => false,
         Open: () => false,
       })
+      const key = noteKey(note)
+
+      // The delete may have reached the server first, or its response may
+      // simply have arrived first. Either way the note is gone, and this save
+      // response was already in flight when that happened.
+      if (Array.contains(model.deletedNoteKeys, key)) {
+        return isCurrentSave
+          ? {
+              model: modifyFields(model, {
+                editor: () => EditorState.Closed(),
+                lastError: () => Option.none(),
+              }),
+            }
+          : { model }
+      }
+
+      const hasData = AsyncData.hasData(model.notes)
+      const nextNotes = hasData
+        ? settleNotesWith(model.notes, (notes) => upsertNote(notes, note))
+        : AsyncData.Success({ data: [note] })
+      const nextLoadRequestId = model.loadRequestId + 1
 
       // Saving changes the server data. Invalidate any list load that was
       // already in flight so it cannot overwrite this result with older data.
@@ -537,17 +573,23 @@ export const update = (model: Model, message: Message) =>
     },
 
     SucceededDeleteNote: ({ kind, id }) => {
+      const deletedKey = noteKey({ type: kind, id })
+      const nextDeletedKeys = Array.contains(model.deletedNoteKeys, deletedKey)
+        ? model.deletedNoteKeys
+        : [...model.deletedNoteKeys, deletedKey]
       const hasData = AsyncData.hasData(model.notes)
       const nextNotes = hasData
-        ? updateNotesWith(model.notes, (notes) => removeNote(notes, kind, id))
-        : model.notes
+        ? settleNotesWith(model.notes, (notes) => removeNote(notes, kind, id))
+        : refreshState(model.notes)
       const nextLoadRequestId = model.loadRequestId + 1
       const editorMatchesDeletedNote = EditorState.match(model.editor, {
         Open: ({ kind: editorKind, maybeId }) =>
           editorKind === kind &&
           Option.exists(maybeId, (editorId) => editorId === id),
+        Saving: ({ kind: editorKind, maybeId }) =>
+          editorKind === kind &&
+          Option.exists(maybeId, (editorId) => editorId === id),
         Closed: () => false,
-        Saving: () => false,
       })
 
       return {
@@ -557,7 +599,11 @@ export const update = (model: Model, message: Message) =>
             editorMatchesDeletedNote ? EditorState.Closed() : model.editor,
           lastError: () => Option.none(),
           loadRequestId: () => nextLoadRequestId,
+          deletedNoteKeys: () => nextDeletedKeys,
         }),
+        commands: hasData
+          ? undefined
+          : [LoadNotes({ requestId: nextLoadRequestId })],
       }
     },
 
