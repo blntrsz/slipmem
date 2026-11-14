@@ -13,6 +13,7 @@
     "@effect/sql-sqlite-bun": "catalog:",
     "@slipmem/core": "workspace:*",
     "@slipmem/schemas": "workspace:*",
+    "@slipmem/server": "workspace:*",
     "effect": "catalog:"
   }
 }

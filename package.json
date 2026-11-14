@@ -11,7 +11,10 @@
   },
   "scripts": {
     "test": "bun test",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "web": "bun run --cwd packages/web start",
+    "web:build": "bun run --cwd packages/web build",
+    "web:serve": "bun run --cwd packages/web serve"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",

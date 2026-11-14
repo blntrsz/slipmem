@@ -1,0 +1,23 @@
+{
+  "name": "@slipmem/web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --bun vite",
+    "start": "bun --bun vite",
+    "build": "vite build",
+    "serve": "bun scripts/serve.ts"
+  },
+  "dependencies": {
+    "@effect/platform-browser": "^4.1.4",
+    "@slipmem/schemas": "workspace:*",
+    "@slipmem/server": "workspace:*",
+    "effect": "catalog:",
+    "foldkit": "0.170.0"
+  },
+  "devDependencies": {
+    "@foldkit/vite-plugin": "0.29.0",
+    "vite": "^8.3.1"
+  }
+}

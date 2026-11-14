@@ -1,0 +1,16 @@
+{
+  "name": "@slipmem/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./note-tools": "./src/note-tools.ts"
+  },
+  "dependencies": {
+    "@effect/sql-sqlite-bun": "catalog:",
+    "@slipmem/core": "workspace:*",
+    "@slipmem/schemas": "workspace:*",
+    "effect": "catalog:"
+  }
+}
