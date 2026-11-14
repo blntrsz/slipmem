@@ -2,32 +2,25 @@ import { expect, test } from "bun:test"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { FleetingNote } from "@slipmem/schemas/fleeting-note"
 import { LiteratureNote } from "@slipmem/schemas/literature-note"
-import { Note } from "@slipmem/schemas/note"
+import { MemoryScope } from "@slipmem/schemas/memory-scope"
+import { Provenance } from "@slipmem/schemas/provenance"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core"
-import { sql } from "drizzle-orm"
 import { Cause, Effect, Exit, Layer, Schema } from "effect"
 import { NoteDatabaseLive } from "../note-database"
-import { SQLiteSearchService, UnscopedSQLiteSearchService } from "./SQLite-search.service"
+import { SQLiteSearchService } from "./SQLite-search.service"
 import {
   DEFAULT_SEARCH_LIMIT,
   MAX_SEARCH_LIMIT,
-  SearchScopeFilter,
   SearchService,
-  type SearchScope,
 } from "./search.service"
 
 const memoryClient = SqliteClient.layer({ filename: ":memory:" })
 
 const fleetingId = Schema.decodeUnknownSync(FleetingNote.ID)
 const literatureId = Schema.decodeUnknownSync(LiteratureNote.ID)
+const scope = Schema.decodeUnknownSync(MemoryScope.Scope)
 
-const layerWith = (scopeFilter: Layer.Layer<SearchScopeFilter>) =>
-  SQLiteSearchService.pipe(
-    Layer.provide(Layer.merge(NoteDatabaseLive, scopeFilter)),
-    Layer.provideMerge(memoryClient),
-  )
-
-const unscopedLayer = UnscopedSQLiteSearchService.pipe(
+const layer = SQLiteSearchService.pipe(
   Layer.provide(NoteDatabaseLive),
   Layer.provideMerge(memoryClient),
 )
@@ -35,17 +28,34 @@ const unscopedLayer = UnscopedSQLiteSearchService.pipe(
 const createTables = Effect.gen(function* () {
   const client = yield* SqliteClient.SqliteClient
 
-  yield* client`CREATE TABLE fleeting_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-  yield* client`CREATE TABLE permanent_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-  yield* client`CREATE TABLE literature_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, reference TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-})
-
-const createScopedTables = Effect.gen(function* () {
-  const client = yield* SqliteClient.SqliteClient
-
-  yield* client`CREATE TABLE fleeting_note (id TEXT PRIMARY KEY NOT NULL, scope_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-  yield* client`CREATE TABLE permanent_note (id TEXT PRIMARY KEY NOT NULL, scope_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-  yield* client`CREATE TABLE literature_note (id TEXT PRIMARY KEY NOT NULL, scope_id TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, reference TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
+  yield* client`CREATE TABLE fleeting_note (
+    id TEXT PRIMARY KEY NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'global',
+    provenance TEXT NOT NULL DEFAULT '{"source":"legacy"}',
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+  )`
+  yield* client`CREATE TABLE permanent_note (
+    id TEXT PRIMARY KEY NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'global',
+    provenance TEXT NOT NULL DEFAULT '{"source":"legacy"}',
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+  )`
+  yield* client`CREATE TABLE literature_note (
+    id TEXT PRIMARY KEY NOT NULL,
+    scope TEXT NOT NULL DEFAULT 'global',
+    provenance TEXT NOT NULL DEFAULT '{"source":"legacy"}',
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+  )`
 })
 
 const insertRankedNotes = Effect.gen(function* () {
@@ -83,14 +93,16 @@ test("ranks term hits by title, reference, then content across all kinds", async
         ["content"],
       ])
 
-      // The literature result carries its reference and the other kinds keep
-      // the exact Note.Info shape from the unified note schema.
+      // Results carry the exact Note.Info shape, including the scope and
+      // provenance fields introduced by the scope contract.
       expect(result.matches[0]!.note).toEqual({
         type: "literature",
         id: literatureId("literature-search"),
         title: "Search notes",
         content: "body about sqlite",
         reference: "Search Book",
+        scope: MemoryScope.DEFAULT_SCOPE,
+        provenance: Provenance.LEGACY,
         createdAt: 2,
         updatedAt: 20,
       })
@@ -99,10 +111,12 @@ test("ranks term hits by title, reference, then content across all kinds", async
         id: fleetingId("fleeting-search"),
         title: "Search basics",
         content: "quick thought",
+        scope: MemoryScope.DEFAULT_SCOPE,
+        provenance: Provenance.LEGACY,
         createdAt: 1,
         updatedAt: 10,
       })
-    }).pipe(Effect.provide(unscopedLayer)),
+    }).pipe(Effect.provide(layer)),
   )
 })
 
@@ -126,7 +140,7 @@ test("requires every term and scores every matching field", async () => {
       ])
       expect(result.matches[0]!.fields).toEqual(["title"])
       expect(result.matches[1]!.fields).toEqual(["title", "content"])
-    }).pipe(Effect.provide(unscopedLayer)),
+    }).pipe(Effect.provide(layer)),
   )
 })
 
@@ -148,7 +162,7 @@ test("breaks ranking ties by updatedAt, then kind, then id", async () => {
           (match) => `${match.note.type}:${String(match.note.id)}`,
         ),
       ).toEqual(["fleeting:newer", "literature:lit", "permanent:a", "permanent:z"])
-    }).pipe(Effect.provide(unscopedLayer)),
+    }).pipe(Effect.provide(layer)),
   )
 })
 
@@ -184,7 +198,7 @@ test("bounds results, clamps limits, and reports additional matches", async () =
 
       const invalid = yield* search.search({ query: "alpha", limit: Number.NaN })
       expect(invalid.limit).toBe(DEFAULT_SEARCH_LIMIT)
-    }).pipe(Effect.provide(unscopedLayer)),
+    }).pipe(Effect.provide(layer)),
   )
 })
 
@@ -202,7 +216,7 @@ test("restricts searches to requested kinds without changing the bound", async (
       expect(fleeting.hasMore).toBe(false)
 
       expect((yield* search.search({ query: "search", kinds: [] })).matches).toEqual([])
-    }).pipe(Effect.provide(unscopedLayer)),
+    }).pipe(Effect.provide(layer)),
   )
 })
 
@@ -224,7 +238,7 @@ test("returns no matches for empty or punctuation-only queries without querying"
         hasMore: false,
         matches: [],
       })
-    }).pipe(Effect.provide(unscopedLayer)),
+    }).pipe(Effect.provide(layer)),
   )
 })
 
@@ -242,7 +256,7 @@ test("tokenizes case and punctuation and reports the surviving terms", async () 
       expect(result.matches).toHaveLength(1)
       expect(String(result.matches[0]!.note.id)).toBe("lit")
       expect(result.matches[0]!.score).toBe(10)
-    }).pipe(Effect.provide(unscopedLayer)),
+    }).pipe(Effect.provide(layer)),
   )
 })
 
@@ -265,73 +279,56 @@ test("treats punctuation and SQL operators as literal terms", async () => {
           String(match.note.id),
         ),
       ).toEqual(["node"])
-    }).pipe(Effect.provide(unscopedLayer)),
-  )
-})
-
-test("applies an installed scope filter when a scope is named", async () => {
-  const scopeFilter = Layer.succeed(
-    SearchScopeFilter,
-    SearchScopeFilter.of({
-      where: ({ scope, kind }: { readonly scope: SearchScope; readonly kind: Note.Kind }) =>
-        kind === "literature" ? undefined : sql`scope_id = ${scope}`,
-    }),
-  )
-  const layer = layerWith(scopeFilter)
-
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* createScopedTables
-      const client = yield* SqliteClient.SqliteClient
-
-      yield* client`INSERT INTO fleeting_note (id, scope_id, title, content, created_at, updated_at) VALUES ('f-a', 'a', 'alpha', '', 1, 1)`
-      yield* client`INSERT INTO fleeting_note (id, scope_id, title, content, created_at, updated_at) VALUES ('f-b', 'b', 'alpha', '', 1, 2)`
-      yield* client`INSERT INTO fleeting_note (id, scope_id, title, content, created_at, updated_at) VALUES ('f-global', 'global', 'alpha', '', 1, 1)`
-      yield* client`INSERT INTO permanent_note (id, scope_id, title, content, created_at, updated_at) VALUES ('p-a', 'a', 'alpha', '', 1, 1)`
-      yield* client`INSERT INTO permanent_note (id, scope_id, title, content, created_at, updated_at) VALUES ('p-b', 'b', 'alpha', '', 1, 2)`
-      yield* client`INSERT INTO permanent_note (id, scope_id, title, content, created_at, updated_at) VALUES ('p-global', 'global', 'alpha', '', 1, 2)`
-      yield* client`INSERT INTO literature_note (id, scope_id, title, content, reference, created_at, updated_at) VALUES ('l-a', 'a', 'alpha', '', 'source', 1, 1)`
-
-      const search = yield* SearchService
-
-      const a = yield* search.search({ query: "alpha", scope: "a" })
-      expect(a.matches.map((match) => String(match.note.id))).toEqual(["f-a", "p-a"])
-
-      const b = yield* search.search({ query: "alpha", scope: "b" })
-      expect(b.matches.map((match) => String(match.note.id))).toEqual(["f-b", "p-b"])
-
-      const missing = yield* search.search({ query: "alpha", scope: "missing" })
-      expect(missing.matches).toEqual([])
-
-      // Omitting scope searches every scope and does not consult the filter,
-      // so cross-scope memory recall sees every kind and namespace.
-      const allScopes = yield* search.search({ query: "alpha" })
-      expect(allScopes.matches.map((match) => String(match.note.id))).toEqual([
-        "f-b",
-        "p-b",
-        "p-global",
-        "f-a",
-        "f-global",
-        "l-a",
-        "p-a",
-      ])
     }).pipe(Effect.provide(layer)),
   )
 })
 
-test("the unscoped layer treats every scope as visible", async () => {
+test("filters by scope in SQL before ranking and limiting", async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* createTables
       yield* insertRankedNotes
+      const client = yield* SqliteClient.SqliteClient
+
+      yield* client`INSERT INTO fleeting_note (id, scope, title, content, created_at, updated_at) VALUES ('alpha-fleeting', ${scope("project-alpha")}, 'Search alpha', 'scoped body', 1, 5)`
+      yield* client`INSERT INTO literature_note (id, scope, title, content, reference, created_at, updated_at) VALUES ('alpha-literature', ${scope("project-alpha")}, 'Search reference', 'body', 'source', 1, 6)`
+      yield* client`INSERT INTO permanent_note (id, scope, title, content, created_at, updated_at) VALUES ('beta-permanent', ${scope("project-beta")}, 'Search beta', 'body', 1, 7)`
 
       const search = yield* SearchService
 
-      expect((yield* search.search({ query: "search" })).matches).toHaveLength(3)
-      expect(
-        (yield* search.search({ query: "search", scope: "anything" })).matches,
-      ).toHaveLength(3)
-    }).pipe(Effect.provide(unscopedLayer)),
+      // Omitting scope uses the scope contract's default namespace.
+      const byDefault = yield* search.search({ query: "search" })
+      expect(byDefault.matches.map((match) => String(match.note.id)).sort()).toEqual([
+        "fleeting-search",
+        "literature-search",
+        "permanent-mention",
+      ])
+
+      const alpha = yield* search.search({ query: "search", scope: scope("project-alpha") })
+      expect(alpha.matches.map((match) => String(match.note.id)).sort()).toEqual([
+        "alpha-fleeting",
+        "alpha-literature",
+      ])
+      expect(alpha.matches.every((match) => match.note.scope === "project-alpha")).toBe(true)
+
+      const beta = yield* search.search({ query: "search", scope: scope("project-beta") })
+      expect(beta.matches.map((match) => String(match.note.id))).toEqual(["beta-permanent"])
+
+      // Scope and kind filters compose, and a bounded scope search still only
+      // ranks rows from that scope.
+      const alphaFleeting = yield* search.search({
+        query: "search",
+        scope: scope("project-alpha"),
+        kinds: ["fleeting"],
+        limit: 1,
+      })
+      expect(alphaFleeting.matches.map((match) => String(match.note.id))).toEqual([
+        "alpha-fleeting",
+      ])
+
+      const missing = yield* search.search({ query: "search", scope: scope("project-missing") })
+      expect(missing.matches).toEqual([])
+    }).pipe(Effect.provide(layer)),
   )
 })
 
@@ -343,6 +340,6 @@ test("dies on Drizzle SQL errors", async () => {
       const exit = yield* Effect.exit(search.search({ query: "alpha" }))
 
       expect(defects(exit)).toEqual([expect.any(EffectDrizzleQueryError)])
-    }).pipe(Effect.provide(unscopedLayer)),
+    }).pipe(Effect.provide(layer)),
   )
 })

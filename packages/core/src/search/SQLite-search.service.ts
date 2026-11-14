@@ -1,9 +1,13 @@
 import { Note } from "@slipmem/schemas/note"
 import type { FleetingNote } from "@slipmem/schemas/fleeting-note"
 import type { LiteratureNote } from "@slipmem/schemas/literature-note"
+import type { MemoryScope } from "@slipmem/schemas/memory-scope"
+import { MemoryScope as MemoryScopeSchema } from "@slipmem/schemas/memory-scope"
 import type { PermanentNote } from "@slipmem/schemas/permanent-note"
+import { Provenance } from "@slipmem/schemas/provenance"
 import {
   and,
+  eq,
   or,
   sql,
   type AnyColumn,
@@ -18,10 +22,8 @@ import { NoteDatabaseService } from "../note-database"
 import { PermanentNoteTable } from "../permanent-note/permanent-note.sql"
 import {
   DEFAULT_SEARCH_LIMIT,
-  AllowAllSearchScopeFilterLive,
   MAX_SEARCH_LIMIT,
   MAX_SEARCH_TOKENS,
-  SearchScopeFilter,
   SearchService,
   type SearchField,
   type SearchInput,
@@ -107,6 +109,8 @@ interface SearchTable extends AnySQLiteTable {
   readonly id: AnyColumn
   readonly title: AnyColumn
   readonly content: AnyColumn
+  readonly scope: AnyColumn
+  readonly provenance: AnyColumn
   readonly createdAt: AnyColumn
   readonly updatedAt: AnyColumn
 }
@@ -117,6 +121,8 @@ interface SearchRow {
   readonly title: string
   readonly content: string
   readonly reference: string | null
+  readonly scope: MemoryScope.Scope
+  readonly provenance: string
   readonly createdAt: number
   readonly updatedAt: number
   readonly score: number
@@ -130,10 +136,10 @@ const buildKindQuery = (
     /** A real reference column, or the SQL NULL literal for kinds without one. */
     readonly reference: SQLWrapper
     readonly tokens: ReadonlyArray<string>
-    readonly scopeCondition: SQL | undefined
+    readonly scope: MemoryScope.Scope
   },
 ) => {
-  const { kind, table, reference, tokens, scopeCondition } = input
+  const { kind, table, reference, tokens, scope } = input
 
   const textCondition = and(
     ...tokens.map((token) =>
@@ -163,17 +169,22 @@ const buildKindQuery = (
       title: sql<string>`${table.title}`.as("title"),
       content: sql<string>`${table.content}`.as("content"),
       reference: sql<string | null>`${reference}`.as("reference"),
+      scope: sql<MemoryScope.Scope>`${table.scope}`.as("scope"),
+      provenance: sql<string>`${table.provenance}`.as("provenance"),
       createdAt: sql<number>`${table.createdAt}`.as("created_at"),
       updatedAt: sql<number>`${table.updatedAt}`.as("updated_at"),
       score: score.as("score"),
     })
     .from(table)
-    .where(and(textCondition, scopeCondition))
+    .where(and(textCondition, eq(table.scope, scope)))
 }
 
 // The three note kinds have different id brands, so each branch casts its row
-// id back to the schema brand. The rest of the fields already share one shape.
+// id back to the schema brand. Scope and provenance are decoded exactly like
+// the aggregate note list does.
 const toInfo = (row: SearchRow): Note.Info => {
+  const provenance = Provenance.decode(row.provenance)
+
   switch (row.type) {
     case "fleeting":
       return {
@@ -181,6 +192,8 @@ const toInfo = (row: SearchRow): Note.Info => {
         id: row.id as FleetingNote.ID,
         title: row.title,
         content: row.content,
+        scope: row.scope,
+        provenance,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }
@@ -191,6 +204,8 @@ const toInfo = (row: SearchRow): Note.Info => {
         title: row.title,
         content: row.content,
         reference: row.reference ?? "",
+        scope: row.scope,
+        provenance,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }
@@ -200,6 +215,8 @@ const toInfo = (row: SearchRow): Note.Info => {
         id: row.id as PermanentNote.ID,
         title: row.title,
         content: row.content,
+        scope: row.scope,
+        provenance,
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
       }
@@ -214,12 +231,12 @@ const toMatch = (row: SearchRow, tokens: ReadonlyArray<string>): SearchMatch => 
 
 const search = (
   db: typeof NoteDatabaseService.Service,
-  scopeFilter: typeof SearchScopeFilter.Service,
   input: SearchInput,
 ): Effect.Effect<SearchResult> =>
   Effect.gen(function* () {
     const tokens = tokenize(input.query)
     const limit = effectiveLimit(input.limit)
+    const scope = input.scope ?? MemoryScopeSchema.DEFAULT_SCOPE
     const kinds = new Set<Note.Kind>(input.kinds ?? ["fleeting", "literature", "permanent"])
 
     if (tokens.length === 0 || kinds.size === 0) {
@@ -229,16 +246,6 @@ const search = (
         hasMore: false,
         matches: [],
       }
-    }
-
-    const scopeCondition = (kind: Note.Kind): SQL => {
-      if (input.scope === undefined) {
-        return sql`1 = 1`
-      }
-
-      // A filter that cannot express a scope is treated as denying access to
-      // that kind, never as an unscoped query.
-      return scopeFilter.where({ scope: input.scope, kind }) ?? sql`0 = 1`
     }
 
     const queries: Array<{
@@ -254,7 +261,7 @@ const search = (
           table: FleetingNoteTable,
           reference: sql<string | null>`NULL`,
           tokens,
-          scopeCondition: scopeCondition("fleeting"),
+          scope,
         }),
       })
     }
@@ -266,7 +273,7 @@ const search = (
           table: LiteratureNoteTable,
           reference: LiteratureNoteTable.reference,
           tokens,
-          scopeCondition: scopeCondition("literature"),
+          scope,
         }),
       })
     }
@@ -278,7 +285,7 @@ const search = (
           table: PermanentNoteTable,
           reference: sql<string | null>`NULL`,
           tokens,
-          scopeCondition: scopeCondition("permanent"),
+          scope,
         }),
       })
     }
@@ -318,26 +325,13 @@ export const SQLiteSearchService = Layer.effect(
   SearchService,
   Effect.gen(function* () {
     const db = yield* NoteDatabaseService
-    const scopeFilter = yield* SearchScopeFilter
 
     const implementation: SearchShape = {
-      search: (input) => search(db, scopeFilter, input),
+      search: (input) => search(db, input),
     }
 
     return SearchService.of(implementation)
   }),
-)
-
-/**
- * Search over the current database without a scope schema.
- *
- * Every scope (including `DEFAULT_SEARCH_SCOPE`) is visible. Use this only
- * before the scope migration, or when the database genuinely is unscoped.
- * Once scope columns or membership tables exist, provide `SQLiteSearchService`
- * with a real `SearchScopeFilter` instead.
- */
-export const UnscopedSQLiteSearchService = SQLiteSearchService.pipe(
-  Layer.provide(AllowAllSearchScopeFilterLive),
 )
 
 export type { SearchInput, SearchMatch, SearchResult, SearchScope } from "./search.service"

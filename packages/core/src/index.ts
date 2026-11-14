@@ -29,20 +29,14 @@ export { SQLiteNoteService } from "./note/SQLite-note.service"
 
 export {
   DEFAULT_SEARCH_LIMIT,
-  AllowAllSearchScopeFilterLive,
   MAX_SEARCH_LIMIT,
   MAX_SEARCH_TOKENS,
-  SearchScopeFilter,
   SearchService,
   type SearchField,
   type SearchInput,
   type SearchMatch,
   type SearchResult,
   type SearchScope,
-  type SearchScopeFilterShape,
   type SearchShape,
 } from "./search/search.service"
-export {
-  SQLiteSearchService,
-  UnscopedSQLiteSearchService,
-} from "./search/SQLite-search.service"
+export { SQLiteSearchService } from "./search/SQLite-search.service"

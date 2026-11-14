@@ -1,7 +1,8 @@
 # Bounded ranked cross-kind search
 
 `SearchService` is a read-only memory search across all three note kinds. It
-reuses the existing note tables and requires no migration or index of its own.
+reuses the existing note tables, including the `scope` and `provenance` columns
+from the scope contract, and requires no migration or search index of its own.
 
 ## Interface
 
@@ -10,7 +11,7 @@ interface SearchInput {
   query: string
   limit?: number              // clamped to 1..50, default 10
   kinds?: Note.Kind[]         // default: all three kinds
-  scope?: SearchScope         // default: search every scope
+  scope?: SearchScope         // default: MemoryScope.DEFAULT_SCOPE
 }
 
 interface SearchMatch {
@@ -27,10 +28,22 @@ interface SearchResult {
 }
 ```
 
-`SearchService` is a `Context.Service`; the SQLite implementation is
-`SQLiteSearchService`. Callers that exist before the scope migration can use the
-`UnscopedSQLiteSearchService` convenience layer, which makes every scope
-visible.
+`SearchScope` is `MemoryScope.Scope` from `@slipmem/schemas/memory-scope`, so
+search and the note services share one branded scope type. `SearchService` is a
+`Context.Service`; `SQLiteSearchService` is the SQLite implementation and needs
+only `NoteDatabaseService`.
+
+## Scope filtering
+
+Every per-kind query includes `scope = ?` in its `WHERE` clause before ranking
+or limiting. A note from another scope can never enter the candidate set, even
+when a broad limit is requested.
+
+`SearchInput.scope` is optional. Omitting it uses
+`MemoryScope.DEFAULT_SCOPE` (`global`), matching the note services, the JSON
+API, and MCP. Cross-scope search is intentionally not part of this contract; a
+future operation that needs it should make that choice explicit rather than
+overloading the missing-scope case.
 
 ## Ranking
 
@@ -63,74 +76,21 @@ case-sensitively, and the tokenizer still splits it correctly.
 * Response: matches contain full `Note.Info` values, so `MAX_SEARCH_LIMIT`
   bounds the amount of content returned.
 
-The global top `limit` results can contain at most `limit` rows from any single
+The scoped top `limit` results can contain at most `limit` rows from any single
 kind, so fetching `limit + 1` per kind and merging in memory is equivalent to a
 global top-K query for the supported scoring function.
 
 Empty or punctuation-only queries return no matches before touching SQL.
 
-## Scope integration
+## Contract alignment
 
-Search does not own the scope schema or migration. It treats a scope as an
-opaque string (`SearchScope`) and resolves it through one service:
+This implementation is based on `scope-contract` commit `765d1d8`:
 
-```ts
-interface SearchScopeFilterShape {
-  where(input: {
-    scope: SearchScope
-    kind: Note.Kind
-  }): SQL | undefined   // undefined denies that kind
-}
-```
-
-Assumptions for the scope contract:
-
-1. A scope is a string. `SearchScope` is structurally compatible with
-   `MemoryScope.Scope`; importing the branded schema is an integration choice,
-   not a dependency of search.
-2. An omitted `SearchInput.scope` searches every scope. Scope is a namespace,
-   not an authorization boundary, so cross-scope recall is the default for
-   search while note CRUD defaults to `MemoryScope.DEFAULT_SCOPE`. Transports
-   that want a default-scope search must pass that scope explicitly.
-3. An explicit scope is resolved by the installed filter. The filter must
-   produce a SQL predicate for every kind; returning `undefined` means "not
-   visible" and search returns no rows for that kind. It never widens to an
-   unscoped query.
-4. Once the scope migration adds a `scope` column to each note table, provide a
-   filter layer instead of `UnscopedSQLiteSearchService`:
-
-   ```ts
-   import { eq } from "drizzle-orm"
-   import { Layer } from "effect"
-   import { SearchScopeFilter } from "@slipmem/core"
-   import { FleetingNoteTable } from "./fleeting-note/fleeting-note.sql"
-   import { LiteratureNoteTable } from "./literature-note/literature-note.sql"
-   import { PermanentNoteTable } from "./permanent-note/permanent-note.sql"
-
-   export const ScopedSearchScopeFilterLive = Layer.succeed(
-     SearchScopeFilter,
-     SearchScopeFilter.of({
-       where: ({ scope, kind }) => {
-         switch (kind) {
-           case "fleeting":
-             return eq(FleetingNoteTable.scope, scope)
-           case "literature":
-             return eq(LiteratureNoteTable.scope, scope)
-           case "permanent":
-             return eq(PermanentNoteTable.scope, scope)
-         }
-       },
-     }),
-   )
-   ```
-
-   That layer can live inside `packages/core` (where the tables are already
-   imported) or another package if the table modules are exported there.
-
-5. When `Note.Info` gains required fields (for example `scope` and
-   `provenance`), `SQLite-search.service.ts` must select and map those columns
-   in `SearchRow`/`toInfo` alongside the other note reads. Search intentionally
-   keeps its own row mapper so this change is local and explicit.
+* `SearchScope` is `MemoryScope.Scope`; IDs, scope, and provenance are mapped
+  into the same `Note.Info` union as the note services.
+* Every query filters `scope` in SQL and defaults to `MemoryScope.DEFAULT_SCOPE`.
+* Rows include the decoded `provenance` envelope and the note's own scope.
+* No schema, migration, CRUD, or scope code is changed by this work.
 
 ## Transport integration (not implemented here)
 
@@ -140,14 +100,16 @@ exist, for example:
 * `POST /api/search` with `{ query, limit?, kinds?, scope? }`
 * MCP `search_notes` returning `{ matches, hasMore, limit }`
 
-Both transports should validate input first and pass the resolved scope from
-their own scope handling. Neither needs a new database table.
+Both transports should validate input first and resolve a missing scope the
+same way they do for list/get: `global`. Neither needs a new database table.
+Validation should reuse `MemoryScope.Scope` so malformed scopes are rejected
+before search runs.
 
 ## Tests
 
 `SQLite-search.service.test.ts` covers cross-kind ranking, weighted fields,
 term deduplication and AND matching, deterministic tie-breaking, limit clamping
 and `hasMore`, kind filters, empty queries, ASCII case folding, punctuation and
-operator-as-term handling, scope filtering with a custom predicate, cross-scope
-search when scope is omitted, the unscoped convenience layer, and SQL error
+operator-as-term handling, scope filtering composing with kind and limit,
+default-scope behavior, `scope`/`provenance` in results, and SQL error
 propagation.
