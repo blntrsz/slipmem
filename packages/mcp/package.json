@@ -2,7 +2,17 @@
   "name": "@slipmem/mcp",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
+  "bin": {
+    "slipmem-mcp": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "bun src/main.ts"
+  },
   "dependencies": {
+    "@effect/sql-sqlite-bun": "catalog:",
+    "@slipmem/core": "workspace:*",
+    "@slipmem/schemas": "workspace:*",
     "effect": "catalog:"
   }
 }

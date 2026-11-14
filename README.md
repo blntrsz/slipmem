@@ -8,3 +8,12 @@ Install dependencies from the repository root:
 ```sh
 bun install
 ```
+
+## Packages
+
+- `packages/core` — note services and SQLite implementations
+- `packages/schemas` — Effect Schema definitions for each note slice
+- `packages/mcp` — stdio MCP server exposing the note services
+
+See [`packages/mcp/README.md`](packages/mcp/README.md) for MCP client setup.
+

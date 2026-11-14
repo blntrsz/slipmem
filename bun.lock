@@ -22,7 +22,13 @@
     "packages/mcp": {
       "name": "@slipmem/mcp",
       "version": "0.0.0",
+      "bin": {
+        "slipmem-mcp": "./src/main.ts",
+      },
       "dependencies": {
+        "@effect/sql-sqlite-bun": "catalog:",
+        "@slipmem/core": "workspace:*",
+        "@slipmem/schemas": "workspace:*",
         "effect": "catalog:",
       },
     },
