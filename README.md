@@ -17,6 +17,28 @@ bun install
 - `packages/server` — HTTP JSON API and streamable HTTP MCP endpoint
 - `packages/web` — Foldkit web application with list and CRUD UI
 
+## Database migrations
+
+The SQLite note tables are defined with Drizzle in `packages/core` and the
+checked-in migrations are generated with Drizzle Kit:
+
+```sh
+bun run db:generate   # add a migration after changing a *.sql.ts table
+bun run db:check      # verify the migration history
+```
+
+Both the web server and the stdio MCP server run the same migration runner at
+startup. A fresh database gets the three note tables and a
+`__drizzle_migrations` history. A database created by the old handwritten
+`CREATE TABLE` bootstrap is validated against the expected legacy schema and
+then adopted without dropping or copying rows. If an existing table has an
+unexpected shape, startup fails with a `MigrationError` instead of guessing,
+recreating, or deleting data.
+
+The generated migrations live in `packages/server/drizzle`. A packaged
+deployment that does not keep the source tree next to the executable can point
+`SLIPMEM_MIGRATIONS_DIR` at a copy of that directory.
+
 ## Web application
 
 The Foldkit app in `packages/web` serves the note list and CRUD editor for all

@@ -37,8 +37,12 @@ $XDG_DATA_HOME/slipmem/slipmem.db
 ```
 
 It falls back to `~/.local/share/slipmem/slipmem.db` and honors
-`SLIPMEM_DB_PATH`. Startup creates the three note tables with
-`CREATE TABLE IF NOT EXISTS`, so an existing database is opened in place.
+`SLIPMEM_DB_PATH`. Startup runs the checked-in Drizzle migrations, so an
+existing database is upgraded in place; databases created by the old
+`CREATE TABLE IF NOT EXISTS` bootstrap are validated and adopted without
+losing rows. In a deployment that does not keep the repository's
+`packages/server/drizzle` directory next to the running code, point
+`SLIPMEM_MIGRATIONS_DIR` at a copy of it.
 
 ## JSON API
 

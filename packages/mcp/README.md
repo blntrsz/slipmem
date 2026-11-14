@@ -23,9 +23,12 @@ Notes are stored in SQLite. The default database is
 SLIPMEM_DB_PATH=/path/to/slipmem.db bun run --cwd packages/mcp start
 ```
 
-The database file and its parent directory are created automatically, and the
-three note tables are created on startup with `CREATE TABLE IF NOT EXISTS`, so
-pointing the server at a new file is enough.
+The database file and its parent directory are created automatically. Startup
+runs the checked-in Drizzle migrations, so pointing the server at a new file is
+enough, and databases created by the old `CREATE TABLE IF NOT EXISTS` bootstrap
+are validated and adopted without losing rows. When the server is deployed
+without the repository's `packages/server/drizzle` directory, set
+`SLIPMEM_MIGRATIONS_DIR` to a copy of it.
 
 ## MCP client configuration
 

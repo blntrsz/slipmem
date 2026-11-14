@@ -12,12 +12,15 @@
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "db:check": "drizzle-kit check",
     "web": "bun run --cwd packages/web start",
     "web:build": "bun run --cwd packages/web build",
     "web:serve": "bun run --cwd packages/web serve"
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
+    "drizzle-kit": "1.0.0-rc.5",
     "typescript": "^7.0.2"
   },
   "packageManager": "bun@1.4.4"

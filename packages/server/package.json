@@ -11,6 +11,7 @@
     "@effect/sql-sqlite-bun": "catalog:",
     "@slipmem/core": "workspace:*",
     "@slipmem/schemas": "workspace:*",
+    "drizzle-orm": "catalog:",
     "effect": "catalog:"
   }
 }

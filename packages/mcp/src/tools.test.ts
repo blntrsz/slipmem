@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite"
 import { expect, test } from "bun:test"
 import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
@@ -142,6 +143,66 @@ test("supports permanent and literature notes", async () => {
       expect(literatureList.structuredContent).toEqual({ notes: [literature.structuredContent] })
     }),
   )
+})
+
+test("adopts a populated database created by the old bootstrap", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "slipmem-mcp-legacy-"))
+  const databasePath = join(directory, "notes.db")
+  const legacy = new Database(databasePath)
+
+  try {
+    legacy.exec(`
+      CREATE TABLE fleeting_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+      );
+    `)
+    legacy
+      .query(
+        "INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run("legacy", "Old note", "from before migrations", 1, 2)
+  } finally {
+    legacy.close()
+  }
+
+  try {
+    const notes = await runWithClient(
+      (client) =>
+        Effect.gen(function* () {
+          const result = yield* client.callTool({
+            name: "list_fleeting_notes",
+            arguments: {},
+          })
+          return (result.structuredContent as { notes: ReadonlyArray<Note> }).notes
+        }),
+      databasePath,
+    )
+
+    expect(notes).toHaveLength(1)
+    expect(notes[0]).toMatchObject({ id: "legacy", title: "Old note" })
+
+    const db = new Database(databasePath)
+    try {
+      expect(
+        db
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
+          )
+          .all()
+          .map((row) => row.name),
+      ).toEqual(
+        ["__drizzle_migrations", "fleeting_note", "literature_note", "permanent_note"].sort(),
+      )
+    } finally {
+      db.close()
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
 })
 
 test("persists notes in a SQLite file across server runs", async () => {

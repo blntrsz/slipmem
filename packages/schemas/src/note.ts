@@ -42,3 +42,16 @@ export type Info = typeof Info.Type
 // operation has a schema and filters can be added without changing signatures.
 export interface ListInput extends Schema.Schema.Type<typeof ListInput> {}
 export const ListInput = Schema.Struct({}).annotate({ identifier: "Note.ListInput" })
+
+export interface ListTitlesInput extends Schema.Schema.Type<typeof ListTitlesInput> {}
+export const ListTitlesInput = Schema.Struct({}).annotate({ identifier: "Note.ListTitlesInput" })
+
+// Title results are intentionally lighter than Info: they carry enough to
+// identify a note and render a list without loading its content. The kind is
+// needed because ids are only guaranteed to be unique within their own table.
+export interface TitleInfo extends Schema.Schema.Type<typeof TitleInfo> {}
+export const TitleInfo = Schema.Struct({
+  id: Schema.String,
+  type: Kind,
+  title: Schema.String,
+}).annotate({ identifier: "Note.TitleInfo" })
