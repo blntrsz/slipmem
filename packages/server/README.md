@@ -70,7 +70,15 @@ per-kind schemas enforce the content length limits.
 
 `NoteRegistrations` is also exported from `@slipmem/server/note-tools`. The stdio
 server in `@slipmem/mcp` uses the same registrations, so the two MCP transports
-cannot drift apart.
+cannot drift apart. Both transports also share the advisory instructions in
+`packages/server/src/mcp-instructions.ts`; the policy behind them is documented
+in [`docs/mcp-memory-workflow.md`](../../docs/mcp-memory-workflow.md).
+
+The current tools are CRUD only. `list_*` returns every note of a kind, so it is
+an inventory operation, not a bounded recall operation. Scoped persistence and a
+bounded ranked search tool are tracked in the separate milestone work items and
+designed in
+[`docs/mcp-integration-design.md`](../../docs/mcp-integration-design.md).
 
 ## Development
 

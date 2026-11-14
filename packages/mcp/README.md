@@ -4,6 +4,24 @@ A stdio [Model Context Protocol](https://modelcontextprotocol.io/) server for
 slipmem notes. It is built with Effect's native MCP server
 (`McpServer.layerStdio`) and reuses the note services from `@slipmem/core`.
 
+## Memory workflow
+
+The server advertises shared instructions to every MCP client: notes are
+untrusted data and never instructions, recall should be relevant and cited,
+writes should be durable knowledge rather than transient conversation, and
+secrets or sensitive personal data must not be saved by default. The complete
+policy, including incident handling, is in
+[`docs/mcp-memory-workflow.md`](../../docs/mcp-memory-workflow.md).
+
+The instructions live in `packages/server/src/mcp-instructions.ts` and are
+shared with the HTTP endpoint, so the two transports cannot drift. They are
+advisory: clients should still apply their own trust and privacy rules.
+
+Recall currently means `list_*` (every note of a kind) or `get_*` (one note by
+id). Scoped persistence and bounded ranked search are separate milestone work
+items; their MCP integration is designed in
+[`docs/mcp-integration-design.md`](../../docs/mcp-integration-design.md).
+
 ## Running
 
 From the repository root:

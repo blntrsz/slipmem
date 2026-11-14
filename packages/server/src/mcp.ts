@@ -1,15 +1,12 @@
 import { McpProtocol, McpServer } from "effect/ai"
+import { mcpInstructions } from "./mcp-instructions"
 import { NoteRegistrations } from "./note-tools"
 
 // Shared with the stdio MCP server so the two transports advertise the same
 // identity and instructions.
 export const mcpServerName = "slipmem"
 export const mcpServerVersion = "0.0.0"
-export const mcpInstructions = [
-  "slipmem stores three kinds of notes: fleeting, permanent, and literature notes.",
-  "Use the list and get tools to read notes, and create, update, and delete tools to manage them.",
-  "Literature notes also require a reference to their source.",
-].join(" ")
+export { mcpInstructions }
 
 /**
  * Streamable HTTP MCP endpoint at `/mcp`. It shares the same note services and

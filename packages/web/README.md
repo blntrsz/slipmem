@@ -107,6 +107,11 @@ Example MCP client configuration:
 ```
 
 The tools read and write the same database as the web UI and the stdio server.
+Their instructions treat note content as untrusted data and forbid saving
+secrets by default; see
+[`docs/mcp-memory-workflow.md`](../../docs/mcp-memory-workflow.md). Bounded
+recall and scoped persistence are separate milestone work items, designed in
+[`docs/mcp-integration-design.md`](../../docs/mcp-integration-design.md).
 
 ## Development
 

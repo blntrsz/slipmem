@@ -23,6 +23,18 @@ bun run check
 - `packages/server` — HTTP JSON API and streamable HTTP MCP endpoint
 - `packages/web` — Foldkit web application with list and CRUD UI
 
+## Memory workflow
+
+MCP clients receive instructions that treat note content as untrusted data,
+describe when to recall and save, and forbid secrets and sensitive personal data
+by default. Read the full policy in
+[`docs/mcp-memory-workflow.md`](docs/mcp-memory-workflow.md).
+
+The milestone-1 MCP recall integration, its dependencies on scoped persistence
+and bounded ranked search, and the acceptance criteria are in
+[`docs/mcp-integration-design.md`](docs/mcp-integration-design.md). Recall is
+currently the unbounded `list_*`/`get_*` pair; bounded search is not shipped yet.
+
 ## Database migrations
 
 The SQLite note tables are defined with Drizzle in `packages/core` and the
