@@ -97,6 +97,129 @@ test("SQLite note service lists titles across all note kinds", async () => {
   }).pipe(Effect.provide(layer)))
 })
 
+test("SQLite note service searches all note kinds and ranks title matches first", async () => {
+  const layer = memoryLayer()
+
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* createTables
+    const sql = yield* SqliteClient.SqliteClient
+
+    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('fleeting-search', 'Alpha', 'body text', 1, 40)`
+    yield* sql`INSERT INTO literature_note (id, title, content, reference, created_at, updated_at) VALUES ('literature-search', 'Beta', 'alpha in body', 'Source', 2, 30)`
+    yield* sql`INSERT INTO permanent_note (id, title, content, created_at, updated_at) VALUES ('permanent-search', 'Gamma', 'alpha in body', 3, 20)`
+
+    const notes = yield* NoteService
+
+    expect((yield* notes.search({ query: "alpha" })).map((note) => `${note.type}:${note.id}`)).toEqual([
+      "fleeting:fleeting-search",
+      "literature:literature-search",
+      "permanent:permanent-search",
+    ])
+  }).pipe(Effect.provide(layer)))
+})
+
+test("SQLite note service restricts search to title, content, or reference", async () => {
+  const layer = memoryLayer()
+
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* createTables
+    const sql = yield* SqliteClient.SqliteClient
+
+    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('fleeting-fields', 'TitleOnly', 'plain body', 1, 1)`
+    yield* sql`INSERT INTO literature_note (id, title, content, reference, created_at, updated_at) VALUES ('literature-fields', 'Literature', 'ContentOnly', 'ReferenceOnly', 2, 2)`
+
+    const notes = yield* NoteService
+
+    expect(
+      (yield* notes.search({ query: "titleonly", fields: ["title"] })).map((note) => note.title),
+    ).toEqual(["TitleOnly"])
+    expect(yield* notes.search({ query: "titleonly", fields: ["content"] })).toEqual([])
+
+    expect(
+      (yield* notes.search({ query: "contentonly", fields: ["content"] })).map((note) => note.title),
+    ).toEqual(["Literature"])
+    expect(yield* notes.search({ query: "contentonly", fields: ["title"] })).toEqual([])
+
+    expect(
+      (yield* notes.search({ query: "referenceonly" })).map((note) => note.title),
+    ).toEqual(["Literature"])
+    expect(
+      yield* notes.search({ query: "referenceonly", fields: ["title", "content"] }),
+    ).toEqual([])
+
+    expect(yield* notes.search({ query: "titleonly", fields: [] })).toEqual([])
+  }).pipe(Effect.provide(layer)))
+})
+
+test("SQLite note service requires every query term to match", async () => {
+  const layer = memoryLayer()
+
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* createTables
+    const sql = yield* SqliteClient.SqliteClient
+
+    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('fleeting-and', 'Alpha', 'Beta', 1, 1)`
+    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('fleeting-other', 'Alpha', 'Gamma', 1, 2)`
+    yield* sql`INSERT INTO literature_note (id, title, content, reference, created_at, updated_at) VALUES ('literature-and', 'Alpha', 'Body', 'Beta', 1, 3)`
+
+    const notes = yield* NoteService
+
+    expect(
+      (yield* notes.search({ query: "alpha beta" })).map((note) => `${note.id}`),
+    ).toEqual(["literature-and", "fleeting-and"])
+    expect(
+      (yield* notes.search({ query: "alpha alpha" })).map((note) => `${note.id}`),
+    ).toEqual(["literature-and", "fleeting-other", "fleeting-and"])
+    expect(yield* notes.search({ query: "alpha delta" })).toEqual([])
+  }).pipe(Effect.provide(layer)))
+})
+
+test("SQLite note service filters search by kind and bounds results", async () => {
+  const layer = memoryLayer()
+
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* createTables
+    const sql = yield* SqliteClient.SqliteClient
+
+    for (let index = 0; index < 12; index += 1) {
+      yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES (${`fleeting-bound-${index}`}, ${`Bound ${index}`}, 'shared body', 1, ${index})`
+    }
+    yield* sql`INSERT INTO permanent_note (id, title, content, created_at, updated_at) VALUES ('permanent-bound', 'Bound permanent', 'shared body', 1, 20)`
+
+    const notes = yield* NoteService
+
+    const defaults = yield* notes.search({ query: "bound" })
+    expect(defaults).toHaveLength(10)
+    expect(defaults[0] === undefined ? undefined : `${defaults[0].id}`).toBe("permanent-bound")
+
+    expect(yield* notes.search({ query: "bound", limit: 0 })).toHaveLength(1)
+    expect(yield* notes.search({ query: "bound", limit: 50 })).toHaveLength(13)
+
+    expect(
+      (yield* notes.search({ query: "bound", kinds: ["permanent"] })).map((note) => `${note.id}`),
+    ).toEqual(["permanent-bound"])
+    expect(yield* notes.search({ query: "bound", kinds: [] })).toEqual([])
+  }).pipe(Effect.provide(layer)))
+})
+
+test("SQLite note service ignores empty and punctuation-only search queries", async () => {
+  const layer = memoryLayer()
+
+  await Effect.runPromise(Effect.gen(function* () {
+    yield* createTables
+    yield* insertNotes
+
+    const notes = yield* NoteService
+
+    expect(yield* notes.search({ query: "" })).toEqual([])
+    expect(yield* notes.search({ query: "   " })).toEqual([])
+    expect(yield* notes.search({ query: "?!,.;" })).toEqual([])
+    expect(
+      (yield* notes.search({ query: "  QUOTE?! " })).map((note) => `${note.id}`),
+    ).toEqual(["literature-1"])
+  }).pipe(Effect.provide(layer)))
+})
+
 test("SQLite note service orders ties by kind and id", async () => {
   const layer = memoryLayer()
 
@@ -148,6 +271,7 @@ test("SQLite note service dies on Drizzle SQL errors", async () => {
     const exits = [
       yield* Effect.exit(notes.list({})),
       yield* Effect.exit(notes.listTitles({})),
+      yield* Effect.exit(notes.search({ query: "anything" })),
     ]
 
     for (const exit of exits) {
