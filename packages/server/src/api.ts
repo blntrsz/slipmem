@@ -1,399 +1,657 @@
+import { Markdown } from "@slipmem/schemas/markdown"
+import { Note as NoteSchema } from "@slipmem/schemas/note"
 import {
-  FleetingNoteNotFound,
-  FleetingNoteService,
-  LiteratureNoteNotFound,
-  LiteratureNoteService,
-  NoteService,
-  PermanentNoteNotFound,
-  PermanentNoteService,
+  DEFAULT_LIST_LIMIT,
+  MarkdownError,
+  MarkdownNoteRepository,
+  MarkdownSearchIndex,
+  MAX_SEARCH_QUERY_LENGTH,
+  type MarkdownNoteRepositoryShape,
+  type MarkdownSearchIndexShape,
+  type ParsedMarkdownNote,
 } from "@slipmem/core"
-import { FleetingNote } from "@slipmem/schemas/fleeting-note"
-import { LiteratureNote } from "@slipmem/schemas/literature-note"
-import { Note } from "@slipmem/schemas/note"
-import { PermanentNote } from "@slipmem/schemas/permanent-note"
-import { Array, Data, Effect, Layer, Match, Option, Order, Schema } from "effect"
+import { Data, Effect, Layer, Match, Option, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 
-// Keep the exported name for existing callers, but use the shared wire shape so
-// the web client and the API cannot drift on draft fields.
-export const NoteDraft = Note.Draft
+import { toApiNote, type ApiNote } from "./markdown"
+
+// The wire shape shared by the web client and the API. Per-kind rules
+// (content limits, literature reference) are enforced by the Markdown
+// repository, which is the same code path used by the CLI and MCP surfaces.
+export const NoteDraft = NoteSchema.Draft
 export type NoteDraft = typeof NoteDraft.Type
 
-export class InvalidNoteType extends Data.TaggedError("InvalidNoteType")<{
-  readonly type: string | undefined
+export class ApiError extends Data.TaggedError("ApiError")<{
+  readonly status: number
+  readonly code: string
+  readonly message: string
 }> {}
 
-export class InvalidNoteId extends Data.TaggedError("InvalidNoteId")<{
-  readonly kind: Note.Kind
-  readonly id: string | undefined
-}> {}
-
-export class InvalidNoteBody extends Data.TaggedError("InvalidNoteBody")<{
-  readonly reason: string
-}> {}
-
-export class NoteNotFound extends Data.TaggedError("NoteNotFound")<{
-  readonly id: string
-}> {}
-
-type ApiError =
-  | InvalidNoteType
-  | InvalidNoteId
-  | InvalidNoteBody
-  | NoteNotFound
-
-const fromFleeting = (note: FleetingNote.Info): Note.Info => ({
-  type: "fleeting",
-  ...note,
-})
-
-const fromLiterature = (note: LiteratureNote.Info): Note.Info => ({
-  type: "literature",
-  ...note,
-})
-
-const fromPermanent = (note: PermanentNote.Info): Note.Info => ({
-  type: "permanent",
-  ...note,
-})
+const fail = (status: number, code: string, message: string) =>
+  Effect.fail(new ApiError({ status, code, message }))
 
 const json = (body: unknown, status = 200) =>
-  HttpServerResponse.jsonUnsafe(body, { status })
+  HttpServerResponse.jsonUnsafe(body, {
+    status,
+    headers: {
+      "cache-control": "no-store",
+      "x-content-type-options": "nosniff",
+    },
+  })
 
-const errorResponse = (error: ApiError): HttpServerResponse.HttpServerResponse =>
-  Match.value(error).pipe(
-    Match.tag("InvalidNoteType", ({ type }) =>
-      json({ error: `Unknown note type: ${type ?? ""}` }, 400)),
-    Match.tag("InvalidNoteId", ({ id }) =>
-      json(
-        { error: id === undefined ? "Missing note id" : `Invalid note id: ${id}` },
-        400,
-      )),
-    Match.tag("InvalidNoteBody", ({ reason }) =>
-      json({ error: reason }, 400)),
-    Match.tag("NoteNotFound", ({ id }) =>
-      json({ error: `Note not found: ${id}` }, 404)),
-    Match.exhaustive,
+const errorResponse = (error: ApiError) =>
+  json(
+    { error: error.message, code: error.code },
+    error.status,
   )
 
-// Newest first, then kind and id. Ids are only unique within a note table, so
-// the tie-breaker must include both the kind and the id to keep responses
-// deterministic when timestamps collide.
-const noteOrder = Order.combine(
-  Order.mapInput(Order.flip(Order.Number), (note: Note.Info) => note.updatedAt),
-  Order.mapInput(
-    Order.String,
-    (note: Note.Info) => `${note.type}\u0000${note.id}`,
-  ),
-)
-
-const sortByUpdatedAt = (notes: ReadonlyArray<Note.Info>) =>
-  Array.sort(notes, noteOrder)
-
-const decodeKind = (value: string | undefined) =>
-  Schema.decodeUnknownEffect(Note.Kind)(value).pipe(
-    Effect.mapError(() => new InvalidNoteType({ type: value })),
+const markdownStatus = (error: MarkdownError): number =>
+  Match.value(error.code).pipe(
+    Match.when("not-found", () => 404),
+    Match.when("repository-root-missing", () => 503),
+    Match.when("repository-locked", () => 409),
+    Match.when("file-too-large", () => 413),
+    Match.when("frontmatter-too-large", () => 413),
+    Match.when("write-failed", () => 500),
+    Match.when("backup-failed", () => 500),
+    Match.when("index-error", () => 500),
+    Match.when("index-schema", () => 500),
+    Match.orElse(() => 400),
   )
 
-// The per-kind ID schemas are brands over strings. Decoding through the
-// supplied schema keeps the branded result without a throwing
-// `decodeUnknownSync` inside an Effect generator.
-const decodeNoteId = <S extends Schema.ConstraintDecoder<unknown>>(
-  kind: Note.Kind,
-  id: string | undefined,
-  schema: S,
-): Effect.Effect<S["Type"], InvalidNoteId> => {
-  if (id === undefined) {
-    return Effect.fail(new InvalidNoteId({ kind, id }))
+const fromMarkdownError = (error: MarkdownError): ApiError =>
+  new ApiError({
+    status: markdownStatus(error),
+    code: error.code,
+    message: error.field === undefined
+      ? error.message
+      : `${error.message} (${error.field})`,
+  })
+
+const route = <R>(
+  effect: Effect.Effect<HttpServerResponse.HttpServerResponse, ApiError | MarkdownError, R>,
+) =>
+  effect.pipe(
+    Effect.catchTags({
+      ApiError: (error) => Effect.succeed(errorResponse(error)),
+      MarkdownError: (error) =>
+        Effect.succeed(errorResponse(fromMarkdownError(error))),
+    }),
+  )
+
+const requestUrl = (request: HttpServerRequest.HttpServerRequest): URL =>
+  new URL(request.url, "http://localhost")
+
+const queryValue = (url: URL, key: string): string | undefined => {
+  const value = url.searchParams.get(key)
+  return value === null || value === "" ? undefined : value
+}
+
+const parseLimit = (
+  url: URL,
+): Effect.Effect<number | undefined, ApiError> => {
+  const raw = queryValue(url, "limit")
+  if (raw === undefined) {
+    return Effect.succeed(undefined)
   }
-
-  const decoded = Schema.decodeUnknownOption(schema)(id)
-  return Option.isNone(decoded)
-    ? Effect.fail(new InvalidNoteId({ kind, id }))
-    : Effect.succeed(decoded.value)
+  const value = Number(raw)
+  if (!Number.isFinite(value) || !Number.isInteger(value) || value <= 0) {
+    return fail(400, "invalid-limit", "limit must be a positive integer.")
+  }
+  return Effect.succeed(value)
 }
 
-// Validate a draft with the schema for its note kind and operation. The
-// per-kind schemas carry the content length limits and the required literature
-// reference, so HTTP callers cannot bypass validation that MCP tool inputs
-// enforce. Updates reuse the path id while validating the writable fields, so
-// a body cannot smuggle in a different note id.
-const createDraftSchema = (kind: Note.Kind) =>
-  Match.value(kind).pipe(
-    Match.when("fleeting", () => FleetingNote.CreateInput),
-    Match.when("permanent", () => PermanentNote.CreateInput),
-    Match.when("literature", () => LiteratureNote.CreateInput),
-    Match.exhaustive,
-  )
-
-const updateDraftSchema = (kind: Note.Kind) =>
-  Match.value(kind).pipe(
-    Match.when("fleeting", () => FleetingNote.UpdateInput),
-    Match.when("permanent", () => PermanentNote.UpdateInput),
-    Match.when("literature", () => LiteratureNote.UpdateInput),
-    Match.exhaustive,
-  )
-
-const withNoteId = (body: unknown, id: string): unknown =>
-  typeof body === "object" && body !== null && !Array.isArray(body)
-    ? { ...(body as Record<string, unknown>), id }
-    : body
-
-// Keep the schema's human-readable summary and its field path, flattened onto
-// one line. The path makes a missing or mistyped field actionable without
-// exposing the full stack-like issue tree in an HTTP response.
-const validationReason = (message: string): string => {
-  const [summary = "Invalid note body", ...details] = message
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-
-  return details.length > 0 ? `${summary} (${details.join(" ")})` : summary
-}
-
-const decodeDraft = (kind: Note.Kind, body: unknown, id?: string) => {
-  const result =
-    id === undefined
-      ? Schema.decodeUnknownEffect(createDraftSchema(kind))(body)
-      : Schema.decodeUnknownEffect(updateDraftSchema(kind))(
-          withNoteId(body, id),
-        )
-
-  return result.pipe(
-    Effect.mapError(
-      (error) =>
-        new InvalidNoteBody({ reason: validationReason(error.message) }),
+const parseType = (
+  value: unknown,
+): Effect.Effect<Markdown.NoteType, ApiError> =>
+  Schema.decodeUnknownEffect(Markdown.NoteType)(value).pipe(
+    Effect.mapError(() =>
+      new ApiError({
+        status: 400,
+        code: "invalid-type",
+        message: `Unknown note type: ${typeof value === "string" ? value : ""}`,
+      }),
     ),
   )
+
+const isNoteType = (value: string): value is Markdown.NoteType =>
+  (Markdown.NOTE_TYPES as ReadonlyArray<string>).includes(value)
+
+const parseNoteId = (
+  value: string | undefined,
+): Effect.Effect<string, ApiError> => {
+  if (value === undefined || !Markdown.isNoteId(value)) {
+    return fail(
+      400,
+      "invalid-id",
+      value === undefined
+        ? "Missing note id."
+        : `Invalid note id: ${value}. Note ids are the Markdown filename stem.`,
+    )
+  }
+  return Effect.succeed(value)
 }
 
-// Mutating API requests must use JSON. Browsers treat `text/plain` bodies as
-// CORS-simple, so accepting them would let another origin write notes with a
-// cross-site form-style request. JSON requires a preflight, which this API
-// does not allow.
-const isJsonContentType = (contentType: string | undefined) =>
+const requireString = (
+  body: Readonly<Record<string, unknown>>,
+  field: string,
+): Effect.Effect<string, ApiError> => {
+  const value = body[field]
+  return typeof value === "string"
+    ? Effect.succeed(value)
+    : fail(400, "invalid-body", `${field} must be a string.`)
+}
+
+const optionalString = (
+  body: Readonly<Record<string, unknown>>,
+  field: string,
+): Effect.Effect<string | undefined, ApiError> => {
+  const value = body[field]
+  if (value === undefined || value === null) {
+    return Effect.succeed(undefined)
+  }
+  return typeof value === "string"
+    ? Effect.succeed(value)
+    : fail(400, "invalid-body", `${field} must be a string.`)
+}
+
+const optionalStringArray = (
+  body: Readonly<Record<string, unknown>>,
+  field: string,
+): Effect.Effect<ReadonlyArray<string> | undefined, ApiError> => {
+  const value = body[field]
+  if (value === undefined) {
+    return Effect.succeed(undefined)
+  }
+  if (
+    !Array.isArray(value) ||
+    value.some((entry) => typeof entry !== "string")
+  ) {
+    return fail(400, "invalid-body", `${field} must be an array of strings.`)
+  }
+  return Effect.succeed(value as ReadonlyArray<string>)
+}
+
+const isJsonContentType = (contentType: string | undefined): boolean =>
   contentType?.toLowerCase().startsWith("application/json") === true
 
-const readDraft = (kind: Note.Kind, id?: string) =>
+const MAX_JSON_BODY_BYTES = Markdown.MAX_NOTE_FILE_BYTES + 64 * 1024
+
+/**
+ * Mutations are same-origin only. A missing Origin header is allowed for
+ * command-line clients such as curl; a present Origin must exactly match the
+ * request URL. No CORS headers are ever emitted, so a browser preflight cannot
+ * authorize a cross-origin write.
+ */
+const assertSameOrigin = (
+  request: HttpServerRequest.HttpServerRequest,
+): Effect.Effect<void, ApiError> => {
+  if (request.headers["sec-fetch-site"] === "cross-site") {
+    return fail(
+      403,
+      "cross-origin",
+      "Cross-origin writes are not allowed.",
+    )
+  }
+
+  const origin = request.headers["origin"]
+  if (origin === undefined) {
+    return Effect.void
+  }
+  if (origin === "null") {
+    return fail(403, "cross-origin", "Cross-origin writes are not allowed.")
+  }
+
+  let parsed: URL
+  try {
+    parsed = new URL(origin)
+  } catch {
+    return fail(403, "cross-origin", "Invalid Origin header.")
+  }
+
+  if (parsed.origin !== requestUrl(request).origin) {
+    // Effect's request URL can be path-only in an embedded fetch handler, so
+    // compare against the Host header as well when it is present.
+    const host = request.headers["host"]
+    const sameHost =
+      host !== undefined &&
+      parsed.host.toLowerCase() === host.toLowerCase() &&
+      (parsed.protocol === "http:" || parsed.protocol === "https:")
+    if (!sameHost) {
+      return fail(
+        403,
+        "cross-origin",
+        "Cross-origin writes are not allowed.",
+      )
+    }
+  }
+
+  return Effect.void
+}
+
+const readJsonBody = (
+  request: HttpServerRequest.HttpServerRequest,
+): Effect.Effect<Readonly<Record<string, unknown>>, ApiError> =>
   Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest
+    yield* assertSameOrigin(request)
+
     if (!isJsonContentType(request.headers["content-type"])) {
-      return yield* Effect.fail(
-        new InvalidNoteBody({ reason: "Expected an application/json body" }),
+      return yield* fail(
+        415,
+        "invalid-content-type",
+        "Mutating requests require an application/json body.",
       )
     }
 
+    const declaredLength = Number(request.headers["content-length"] ?? "0")
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+      return yield* fail(413, "body-too-large", "Request body is too large.")
+    }
+
     const body = yield* request.json.pipe(
-      Effect.mapError(
-        () => new InvalidNoteBody({ reason: "Invalid note body" }),
+      Effect.mapError(() =>
+        new ApiError({
+          status: 400,
+          code: "invalid-body",
+          message: "Invalid JSON body.",
+        }),
       ),
     )
-    return yield* decodeDraft(kind, body, id)
+
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return yield* fail(400, "invalid-body", "Expected a JSON object.")
+    }
+
+    return body as Readonly<Record<string, unknown>>
   })
 
-interface NoteOperations {
-  readonly create: (draft: NoteDraft) => Effect.Effect<Note.Info>
-  readonly get: (
-    id: string | undefined,
-  ) => Effect.Effect<Option.Option<Note.Info>, InvalidNoteId>
-  readonly update: (
-    id: string | undefined,
-    draft: NoteDraft,
-  ) => Effect.Effect<Note.Info, InvalidNoteId | NoteNotFound>
-  readonly remove: (
-    id: string | undefined,
-  ) => Effect.Effect<boolean, InvalidNoteId>
+const defaultActor = (): string | undefined => {
+  const actor = process.env.SLIPMEM_ACTOR?.trim()
+  return actor === undefined || actor.length === 0 ? undefined : actor
 }
 
-const makeNoteOperations = (
-  fleeting: typeof FleetingNoteService.Service,
-  permanent: typeof PermanentNoteService.Service,
-  literature: typeof LiteratureNoteService.Service,
-): Readonly<Record<Note.Kind, NoteOperations>> => ({
-  fleeting: {
-    create: (draft) =>
-      fleeting.create({ title: draft.title, content: draft.content }).pipe(
-        Effect.map(fromFleeting),
-      ),
-    get: (id) =>
-      Effect.gen(function* () {
-        const note = yield* fleeting.get({ id: yield* decodeNoteId("fleeting", id, FleetingNote.ID) })
-        return Option.map(note, fromFleeting)
-      }),
-    update: (id, draft) =>
-      Effect.gen(function* () {
-        const decodedId = yield* decodeNoteId("fleeting", id, FleetingNote.ID)
-        const note = yield* fleeting.update({
-          id: decodedId,
-          title: draft.title,
-          content: draft.content,
-        }).pipe(
-          Effect.catchTag("FleetingNoteNotFound", (error: FleetingNoteNotFound) =>
-            Effect.fail(new NoteNotFound({ id: error.id })),
-          ),
-        )
-        return fromFleeting(note)
-      }),
-    remove: (id) =>
-      Effect.gen(function* () {
-        return yield* fleeting.delete({ id: yield* decodeNoteId("fleeting", id, FleetingNote.ID) })
-      }),
-  },
-  permanent: {
-    create: (draft) =>
-      permanent.create({ title: draft.title, content: draft.content }).pipe(
-        Effect.map(fromPermanent),
-      ),
-    get: (id) =>
-      Effect.gen(function* () {
-        const note = yield* permanent.get({ id: yield* decodeNoteId("permanent", id, PermanentNote.ID) })
-        return Option.map(note, fromPermanent)
-      }),
-    update: (id, draft) =>
-      Effect.gen(function* () {
-        const decodedId = yield* decodeNoteId("permanent", id, PermanentNote.ID)
-        const note = yield* permanent.update({
-          id: decodedId,
-          title: draft.title,
-          content: draft.content,
-        }).pipe(
-          Effect.catchTag("PermanentNoteNotFound", (error: PermanentNoteNotFound) =>
-            Effect.fail(new NoteNotFound({ id: error.id })),
-          ),
-        )
-        return fromPermanent(note)
-      }),
-    remove: (id) =>
-      Effect.gen(function* () {
-        return yield* permanent.delete({ id: yield* decodeNoteId("permanent", id, PermanentNote.ID) })
-      }),
-  },
-  literature: {
-    create: (draft) =>
-      literature.create({
-        title: draft.title,
-        content: draft.content,
-        reference: draft.reference ?? "",
-      }).pipe(Effect.map(fromLiterature)),
-    get: (id) =>
-      Effect.gen(function* () {
-        const note = yield* literature.get({ id: yield* decodeNoteId("literature", id, LiteratureNote.ID) })
-        return Option.map(note, fromLiterature)
-      }),
-    update: (id, draft) =>
-      Effect.gen(function* () {
-        const decodedId = yield* decodeNoteId("literature", id, LiteratureNote.ID)
-        const note = yield* literature.update({
-          id: decodedId,
-          title: draft.title,
-          content: draft.content,
-          reference: draft.reference ?? "",
-        }).pipe(
-          Effect.catchTag("LiteratureNoteNotFound", (error: LiteratureNoteNotFound) =>
-            Effect.fail(new NoteNotFound({ id: error.id })),
-          ),
-        )
-        return fromLiterature(note)
-      }),
-    remove: (id) =>
-      Effect.gen(function* () {
-        return yield* literature.delete({ id: yield* decodeNoteId("literature", id, LiteratureNote.ID) })
-      }),
-  },
+const webProvenance = (): Markdown.Provenance => ({
+  source: "web",
+  ...(defaultActor() === undefined ? {} : { actor: defaultActor() }),
 })
 
-const route = <E extends ApiError, R>(
-  effect: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+interface CreateBody {
+  readonly type: Markdown.NoteType
+  readonly title: string
+  readonly content: string
+  readonly reference: string | undefined
+  readonly topics: ReadonlyArray<string> | undefined
+}
+
+const readCreateBody = (
+  body: Readonly<Record<string, unknown>>,
+  forcedType?: Markdown.NoteType,
+): Effect.Effect<CreateBody, ApiError> =>
+  Effect.gen(function* () {
+    const type =
+      forcedType === undefined
+        ? yield* parseType(body.type)
+        : forcedType
+    const title = yield* requireString(body, "title")
+    const content = yield* requireString(body, "content")
+    if (body.type !== undefined && type !== body.type) {
+      return yield* fail(
+        400,
+        "invalid-type",
+        `The body type must match the route type (${forcedType}).`,
+      )
+    }
+    const reference = yield* optionalString(body, "reference")
+    const topics = yield* optionalStringArray(body, "topics")
+
+    return { type, title, content, reference, topics }
+  })
+
+interface UpdateBody {
+  readonly type: Markdown.NoteType | undefined
+  readonly title: string | undefined
+  readonly content: string | undefined
+  readonly reference: string | null | undefined
+  readonly topics: ReadonlyArray<string> | undefined
+}
+
+const readUpdateBody = (
+  body: Readonly<Record<string, unknown>>,
+): Effect.Effect<UpdateBody, ApiError> =>
+  Effect.gen(function* () {
+    const type =
+      body.type === undefined ? undefined : yield* parseType(body.type)
+    const title =
+      body.title === undefined ? undefined : yield* requireString(body, "title")
+    const content =
+      body.content === undefined
+        ? undefined
+        : yield* requireString(body, "content")
+    const reference =
+      body.reference === null
+        ? null
+        : yield* optionalString(body, "reference")
+    const topics = yield* optionalStringArray(body, "topics")
+
+    return { type, title, content, reference, topics }
+  })
+
+const noteNotFound = (id: string): ApiError =>
+  new ApiError({
+    status: 404,
+    code: "not-found",
+    message: `Note not found: ${id}`,
+  })
+
+const getNoteOfType = (
+  repository: MarkdownNoteRepositoryShape,
+  id: string,
+  type: Markdown.NoteType,
+): Effect.Effect<ParsedMarkdownNote, ApiError | MarkdownError> =>
+  repository.get(id).pipe(
+    Effect.flatMap((maybeNote) =>
+      Option.match(maybeNote, {
+        onNone: () => Effect.fail(noteNotFound(id)),
+        onSome: (note) =>
+          note.metadata.type === type
+            ? Effect.succeed(note)
+            : Effect.fail(noteNotFound(id)),
+      }),
+    ),
+  )
+
+const getNote = (
+  repository: MarkdownNoteRepositoryShape,
+  id: string,
+): Effect.Effect<ParsedMarkdownNote, ApiError | MarkdownError> =>
+  repository.get(id).pipe(
+    Effect.flatMap((maybeNote) =>
+      Option.match(maybeNote, {
+        onNone: () => Effect.fail(noteNotFound(id)),
+        onSome: Effect.succeed,
+      }),
+    ),
+  )
+
+const listNotes = (
+  repository: MarkdownNoteRepositoryShape,
+  filters: {
+    readonly type?: Markdown.NoteType
+    readonly topic?: string
+    readonly limit?: number
+  },
 ) =>
-  effect.pipe(
-    Effect.catch((error) => Effect.succeed(errorResponse(error))),
+  repository.listNotes(filters).pipe(
+    Effect.map((notes) => notes.map(toApiNote)),
   )
 
 /**
- * JSON routes for the three note kinds. The aggregate list reads through
- * `NoteService`; writes stay on the per-kind services because each kind has its
- * own input schema.
+ * Canonical ID-based JSON API and the type-route compatibility adapters.
  *
- * The note services are read while the layer is constructed and closed over by
- * the handlers. That keeps the route requirements to `HttpRouter`, so the same
- * routes work in a server handler and in tests.
+ * List and detail reads always scan the Markdown repository, so a note changed
+ * by the CLI, an external editor, or MCP is visible on the next request.
+ * Search and topics refresh the disposable index before reading it.
  */
-export const NoteRoutes = Layer.unwrap(
+export const MarkdownApiRoutes = Layer.unwrap(
   Effect.gen(function* () {
-    const fleeting = yield* FleetingNoteService
-    const permanent = yield* PermanentNoteService
-    const literature = yield* LiteratureNoteService
-    const notes = yield* NoteService
-    const operations = makeNoteOperations(fleeting, permanent, literature)
+    const repository = yield* MarkdownNoteRepository
+    const index = yield* MarkdownSearchIndex
 
-    const listNotes = route(
-      Effect.gen(function* () {
-        const allNotes = yield* notes.list({})
-        return json({ notes: sortByUpdatedAt(allNotes) })
-      }),
-    )
+    const health = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const url = requestUrl(request)
+          void url
+          const status = yield* index.status()
+          return json({
+            ok: true,
+            service: "slipmem",
+            noteRoot: repository.root,
+            index: {
+              mode: status.mode,
+              path: status.path,
+              noteCount: status.noteCount,
+            },
+          })
+        }),
+      )
 
-    const listNotesByKind = route(
-      Effect.gen(function* () {
-        const params = yield* HttpRouter.params
-        const kind = yield* decodeKind(params.type)
+    const list = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const url = requestUrl(request)
+          const typeValue = queryValue(url, "type")
+          const type =
+            typeValue === undefined
+              ? undefined
+              : yield* parseType(typeValue)
+          const topic = queryValue(url, "topic")
+          const limit = yield* parseLimit(url)
+          const notes = yield* listNotes(repository, { type, topic, limit })
+          return json({ notes })
+        }),
+      )
 
-        const allNotes = yield* notes.list({})
-        const matchingNotes = Array.filter(
-          allNotes,
-          (note) => note.type === kind,
-        )
+    const get = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          void request
+          const params = yield* HttpRouter.params
+          const segment = params.id
+          if (segment !== undefined && isNoteType(segment)) {
+            const notes = yield* listNotes(repository, {
+              type: segment,
+              limit: DEFAULT_LIST_LIMIT,
+            })
+            return json({ notes })
+          }
+          const id = yield* parseNoteId(segment)
+          const note = yield* getNote(repository, id)
+          return json({ note: toApiNote(note) })
+        }),
+      )
 
-        return json({ notes: sortByUpdatedAt(matchingNotes) })
-      }),
-    )
+    const getByType = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          void request
+          const params = yield* HttpRouter.params
+          const type = yield* parseType(params.type)
+          const id = yield* parseNoteId(params.id)
+          const note = yield* getNoteOfType(repository, id, type)
+          return json({ note: toApiNote(note) })
+        }),
+      )
 
-    const getNote = route(
-      Effect.gen(function* () {
-        const params = yield* HttpRouter.params
-        const kind = yield* decodeKind(params.type)
-        const note = yield* operations[kind].get(params.id)
-        return json({ note: Option.getOrNull(note) })
-      }),
-    )
+    const create = (
+      request: HttpServerRequest.HttpServerRequest,
+      forcedType?: Markdown.NoteType,
+    ) =>
+      route(
+        Effect.gen(function* () {
+          const body = yield* readJsonBody(request)
+          const input = yield* readCreateBody(body, forcedType)
+          const note = yield* repository.create({
+            type: input.type,
+            title: input.title,
+            content: input.content,
+            ...(input.reference === undefined ? {} : { reference: input.reference }),
+            ...(input.topics === undefined ? {} : { topics: input.topics }),
+            provenance: webProvenance(),
+          })
+          return json({ note: toApiNote(note) }, 201)
+        }),
+      )
 
-    const createNote = route(
-      Effect.gen(function* () {
-        const params = yield* HttpRouter.params
-        const kind = yield* decodeKind(params.type)
-        const draft = yield* readDraft(kind)
-        const note = yield* operations[kind].create(draft)
-        return json(note, 201)
-      }),
-    )
+    const createByType = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const params = yield* HttpRouter.params
+          const type = yield* parseType(params.type)
+          return yield* create(request, type)
+        }),
+      )
 
-    const updateNote = route(
-      Effect.gen(function* () {
-        const params = yield* HttpRouter.params
-        const kind = yield* decodeKind(params.type)
-        const draft = yield* readDraft(kind, params.id)
-        const note = yield* operations[kind].update(params.id, draft)
-        return json(note)
-      }),
-    )
+    const update = (
+      request: HttpServerRequest.HttpServerRequest,
+      id: string,
+      type?: Markdown.NoteType,
+    ) =>
+      route(
+        Effect.gen(function* () {
+          if (type !== undefined) {
+            // Compatibility routes must not mutate a note through the wrong
+            // type name.
+            yield* getNoteOfType(repository, id, type)
+          }
+          const body = yield* readJsonBody(request)
+          const input = yield* readUpdateBody(body)
+          const note = yield* repository.update({
+            id,
+            ...(input.type === undefined ? {} : { type: input.type }),
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.content === undefined ? {} : { content: input.content }),
+            ...(input.reference === undefined
+              ? {}
+              : { reference: input.reference }),
+            ...(input.topics === undefined ? {} : { topics: input.topics }),
+            provenance: webProvenance(),
+          })
+          return json({ note: toApiNote(note) })
+        }),
+      )
 
-    const deleteNote = route(
-      Effect.gen(function* () {
-        const params = yield* HttpRouter.params
-        const kind = yield* decodeKind(params.type)
-        const deleted = yield* operations[kind].remove(params.id)
-        return json({ deleted })
-      }),
-    )
+    const updateCanonical = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const params = yield* HttpRouter.params
+          const id = yield* parseNoteId(params.id)
+          return yield* update(request, id)
+        }),
+      )
+
+    const updateByType = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const params = yield* HttpRouter.params
+          const type = yield* parseType(params.type)
+          const id = yield* parseNoteId(params.id)
+          return yield* update(request, id, type)
+        }),
+      )
+
+    const remove = (
+      request: HttpServerRequest.HttpServerRequest,
+      id: string,
+      type?: Markdown.NoteType,
+    ) =>
+      route(
+        Effect.gen(function* () {
+          yield* assertSameOrigin(request)
+          if (type !== undefined) {
+            yield* getNoteOfType(repository, id, type)
+          } else {
+            yield* getNote(repository, id)
+          }
+          const deleted = yield* repository.delete(id)
+          const status = yield* index.refresh()
+          return json({
+            deleted: true,
+            id: deleted.id,
+            backupPath: deleted.backupPath,
+            index: status,
+          })
+        }),
+      )
+
+    const removeCanonical = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const params = yield* HttpRouter.params
+          const id = yield* parseNoteId(params.id)
+          return yield* remove(request, id)
+        }),
+      )
+
+    const removeByType = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const params = yield* HttpRouter.params
+          const type = yield* parseType(params.type)
+          const id = yield* parseNoteId(params.id)
+          return yield* remove(request, id, type)
+        }),
+      )
+
+    const search = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const url = requestUrl(request)
+          const query = queryValue(url, "q")
+          if (query === undefined) {
+            return yield* fail(400, "missing-query", "Search requires a non-empty q parameter.")
+          }
+          if (query.length > MAX_SEARCH_QUERY_LENGTH) {
+            return yield* fail(
+              400,
+              "query-too-long",
+              `Search queries must be ${MAX_SEARCH_QUERY_LENGTH} characters or fewer.`,
+            )
+          }
+          const typeValue = queryValue(url, "type")
+          const type =
+            typeValue === undefined ? undefined : yield* parseType(typeValue)
+          const topic = queryValue(url, "topic")
+          const limit = yield* parseLimit(url)
+          yield* index.refresh()
+          const hits = yield* index.search({
+            query,
+            ...(type === undefined ? {} : { kinds: [type] }),
+            ...(topic === undefined ? {} : { topic }),
+            ...(limit === undefined ? {} : { limit }),
+          })
+          return json({
+            query,
+            results: hits.map((hit) => ({
+              note: hit.note,
+              id: hit.id,
+              path: hit.path,
+              score: hit.score,
+            })),
+          })
+        }),
+      )
+
+    const topics = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const url = requestUrl(request)
+          const query = queryValue(url, "q")
+          const limit = yield* parseLimit(url)
+          yield* index.refresh()
+          const items = yield* index.listTopics({
+            ...(query === undefined ? {} : { query }),
+            ...(limit === undefined ? {} : { limit }),
+          })
+          return json({ topics: items })
+        }),
+      )
 
     return Layer.mergeAll(
-      HttpRouter.add("GET", "/api/health", json({ ok: true, service: "slipmem" })),
-      HttpRouter.add("GET", "/api/notes", listNotes),
-      HttpRouter.add("GET", "/api/notes/:type", listNotesByKind),
-      HttpRouter.add("GET", "/api/notes/:type/:id", getNote),
-      HttpRouter.add("POST", "/api/notes/:type", createNote),
-      HttpRouter.add("PUT", "/api/notes/:type/:id", updateNote),
-      HttpRouter.add("DELETE", "/api/notes/:type/:id", deleteNote),
+      HttpRouter.add("GET", "/api/health", health),
+      HttpRouter.add("GET", "/api/notes", list),
+      HttpRouter.add("POST", "/api/notes", create),
+      HttpRouter.add("GET", "/api/notes/:id", get),
+      HttpRouter.add("PUT", "/api/notes/:id", updateCanonical),
+      HttpRouter.add("DELETE", "/api/notes/:id", removeCanonical),
+      // Compatibility adapters for the pre-cutover type routes. They resolve
+      // through the same ID-based repository and never create type folders.
+      HttpRouter.add("GET", "/api/notes/:type/:id", getByType),
+      HttpRouter.add("POST", "/api/notes/:type", createByType),
+      HttpRouter.add("PUT", "/api/notes/:type/:id", updateByType),
+      HttpRouter.add("DELETE", "/api/notes/:type/:id", removeByType),
+      HttpRouter.add("GET", "/api/search", search),
+      HttpRouter.add("GET", "/api/topics", topics),
     )
   }),
 )

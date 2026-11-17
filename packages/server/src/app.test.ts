@@ -1,414 +1,451 @@
 import { expect, test } from "bun:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import {
+  initializeNoteRoot,
+  makeMarkdownNoteRepository,
+} from "@slipmem/core"
+import { Effect } from "effect"
+import { existsSync } from "node:fs"
+import { mkdtemp, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+
 import { makeApiHandler } from "./app"
 
-interface Note {
+interface ApiNoteResponse {
   readonly id: string
   readonly type: "fleeting" | "literature" | "permanent"
   readonly title: string
   readonly content: string
   readonly reference?: string
+  readonly topics: ReadonlyArray<string>
+  readonly path: string
+  readonly createdAt: number
+  readonly updatedAt: number
 }
 
-const jsonRequest = (
+const ORIGIN = "http://127.0.0.1:3000"
+
+const request = (
   path: string,
-  method: string,
+  method = "GET",
   body?: unknown,
-  headers?: Readonly<Record<string, string>>,
+  headers: Readonly<Record<string, string>> = {},
 ) =>
-  new Request(`http://localhost${path}`, {
+  new Request(`${ORIGIN}${path}`, {
     method,
     headers: {
-      "content-type": "application/json",
+      host: "127.0.0.1:3000",
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
       ...headers,
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 
-const readNotes = async (response: Response): Promise<ReadonlyArray<Note>> => {
-  const body = (await response.json()) as { readonly notes: ReadonlyArray<Note> }
+interface TestRoot {
+  readonly directory: string
+  readonly root: string
+  readonly cacheDir: string
+}
+
+const makeRoot = async (): Promise<TestRoot> => {
+  const directory = await mkdtemp(join(tmpdir(), "slipmem-api-"))
+  const root = join(directory, ".slipmem")
+  await Effect.runPromise(initializeNoteRoot(root))
+  return { directory, root, cacheDir: join(directory, "cache") }
+}
+
+const withApi = async <A>(
+  run: (api: ReturnType<typeof makeApiHandler>, root: TestRoot) => Promise<A>,
+): Promise<A> => {
+  const root = await makeRoot()
+  const api = makeApiHandler(root.root, {
+    cacheDir: root.cacheDir,
+    disableLogger: true,
+  })
+  try {
+    return await run(api, root)
+  } finally {
+    await api.dispose()
+    await rm(root.directory, { recursive: true, force: true })
+  }
+}
+
+const readNote = async (response: Response): Promise<ApiNoteResponse> => {
+  const body = (await response.json()) as { readonly note: ApiNoteResponse }
+  return body.note
+}
+
+const readNotes = async (response: Response): Promise<ReadonlyArray<ApiNoteResponse>> => {
+  const body = (await response.json()) as {
+    readonly notes: ReadonlyArray<ApiNoteResponse>
+  }
   return body.notes
 }
 
-test("JSON API creates, lists, updates, and deletes every note kind", async () => {
-  const api = makeApiHandler(":memory:", { disableLogger: true })
+test("health reports the Markdown note root and index mode", async () => {
+  await withApi(async (api, root) => {
+    const response = await api.handler(request("/api/health"))
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      readonly ok: boolean
+      readonly noteRoot: string
+      readonly index: { readonly mode: string }
+    }
+    expect(body.ok).toBe(true)
+    expect(body.noteRoot).toBe(root.root)
+    expect(["fts5", "linear"]).toContain(body.index.mode)
+  })
+})
 
-  try {
-    const fleetingResponse = await api.handler(
-      jsonRequest("/api/notes/fleeting", "POST", {
-        title: "Fleeting",
-        content: "quick thought",
+test("canonical ID routes create, read, update, list, and delete flat Markdown notes", async () => {
+  await withApi(async (api, root) => {
+    const createdResponse = await api.handler(
+      request("/api/notes", "POST", {
+        type: "fleeting",
+        title: "Quick thought",
+        content: "Capture it before it disappears.",
+        topics: ["Agent Memory"],
       }),
     )
-    expect(fleetingResponse.status).toBe(201)
-    const fleeting = (await fleetingResponse.json()) as Note
-    expect(fleeting).toMatchObject({
+    expect(createdResponse.status).toBe(201)
+    const created = await readNote(createdResponse)
+    expect(created).toMatchObject({
       type: "fleeting",
-      title: "Fleeting",
-      content: "quick thought",
+      title: "Quick thought",
+      content: "Capture it before it disappears.",
+      topics: ["agent-memory"],
+    })
+    expect(created.id).toMatch(/^\d{14}-[a-z0-9]+(?:-[a-z0-9]+)*$/)
+
+    // The only file is a direct child of the note root; there is no type
+    // directory or hidden content database.
+    const entries = await readdir(root.root)
+    expect(entries).toContain(`${created.id}.md`)
+    expect(entries).not.toContain("fleeting")
+
+    const getResponse = await api.handler(request(`/api/notes/${created.id}`))
+    expect(getResponse.status).toBe(200)
+    expect(await readNote(getResponse)).toMatchObject({
+      id: created.id,
+      title: "Quick thought",
     })
 
-    const literatureResponse = await api.handler(
-      jsonRequest("/api/notes/literature", "POST", {
-        title: "Literature",
-        content: "a quote",
-        reference: "Book, chapter 2",
+    const updatedResponse = await api.handler(
+      request(`/api/notes/${created.id}`, "PUT", {
+        title: "Updated thought",
+        content: "Changed safely.",
       }),
     )
-    expect(literatureResponse.status).toBe(201)
-    const literature = (await literatureResponse.json()) as Note
-    expect(literature).toMatchObject({
-      type: "literature",
-      title: "Literature",
-      content: "a quote",
-      reference: "Book, chapter 2",
+    expect(updatedResponse.status).toBe(200)
+    const updated = await readNote(updatedResponse)
+    expect(updated).toMatchObject({
+      id: created.id,
+      type: "fleeting",
+      title: "Updated thought",
+      content: "Changed safely.",
     })
+    expect(updated.updatedAt).toBeGreaterThanOrEqual(created.updatedAt)
 
-    const permanentResponse = await api.handler(
-      jsonRequest("/api/notes/permanent", "POST", {
-        title: "Permanent",
-        content: "a lasting idea",
+    const listResponse = await api.handler(request("/api/notes?type=fleeting&limit=5"))
+    expect(listResponse.status).toBe(200)
+    expect(await readNotes(listResponse)).toHaveLength(1)
+
+    const deleteResponse = await api.handler(
+      request(`/api/notes/${created.id}`, "DELETE"),
+    )
+    expect(deleteResponse.status).toBe(200)
+    const deleted = (await deleteResponse.json()) as {
+      readonly deleted: boolean
+      readonly backupPath: string
+    }
+    expect(deleted.deleted).toBe(true)
+    expect(deleted.backupPath.startsWith(root.root)).toBe(false)
+    expect(existsSync(join(root.root, `${created.id}.md`))).toBe(false)
+
+    const afterDelete = await api.handler(request(`/api/notes/${created.id}`))
+    expect(afterDelete.status).toBe(404)
+  })
+})
+
+test("legacy type routes are thin adapters over the same ID repository", async () => {
+  await withApi(async (api) => {
+    const createdResponse = await api.handler(
+      request("/api/notes/permanent", "POST", {
+        title: "A durable idea",
+        content: "Write it down properly.",
       }),
     )
-    expect(permanentResponse.status).toBe(201)
-    const permanent = (await permanentResponse.json()) as Note
-    expect(permanent.type).toBe("permanent")
+    expect(createdResponse.status).toBe(201)
+    const created = await readNote(createdResponse)
+    expect(created.type).toBe("permanent")
 
-    const allResponse = await api.handler(
-      new Request("http://localhost/api/notes"),
-    )
-    expect(allResponse.status).toBe(200)
-    expect(await readNotes(allResponse)).toHaveLength(3)
+    const listResponse = await api.handler(request("/api/notes/permanent"))
+    expect(await readNotes(listResponse)).toEqual([
+      expect.objectContaining({ id: created.id }),
+    ])
 
-    const fleetingListResponse = await api.handler(
-      new Request("http://localhost/api/notes/fleeting"),
+    const getResponse = await api.handler(
+      request(`/api/notes/permanent/${created.id}`),
     )
-    expect(await readNotes(fleetingListResponse)).toEqual([fleeting])
+    expect(await readNote(getResponse)).toMatchObject({ id: created.id })
+
+    const wrongTypeResponse = await api.handler(
+      request(`/api/notes/fleeting/${created.id}`),
+    )
+    expect(wrongTypeResponse.status).toBe(404)
 
     const updateResponse = await api.handler(
-      jsonRequest(`/api/notes/fleeting/${fleeting.id}`, "PUT", {
-        title: "Updated",
-        content: "changed",
+      request(`/api/notes/permanent/${created.id}`, "PUT", {
+        title: "Still a durable idea",
+        content: "Reconsidered.",
       }),
     )
     expect(updateResponse.status).toBe(200)
-    expect(await updateResponse.json()).toMatchObject({
-      id: fleeting.id,
-      title: "Updated",
-      content: "changed",
+    expect(await readNote(updateResponse)).toMatchObject({
+      id: created.id,
+      type: "permanent",
+      title: "Still a durable idea",
     })
 
-    const missingUpdateResponse = await api.handler(
-      jsonRequest("/api/notes/fleeting/missing", "PUT", {
-        title: "Missing",
-        content: "missing",
-      }),
-    )
-    expect(missingUpdateResponse.status).toBe(404)
-
     const deleteResponse = await api.handler(
-      new Request(`http://localhost/api/notes/permanent/${permanent.id}`, {
-        method: "DELETE",
-      }),
+      request(`/api/notes/permanent/${created.id}`, "DELETE"),
     )
     expect(deleteResponse.status).toBe(200)
-    expect(await deleteResponse.json()).toEqual({ deleted: true })
 
-    const remainingResponse = await api.handler(
-      new Request("http://localhost/api/notes"),
+    const canonicalStillGone = await api.handler(
+      request(`/api/notes/${created.id}`),
     )
-    expect((await readNotes(remainingResponse)).map((note) => note.id)).not.toContain(
-      permanent.id,
-    )
-  } finally {
-    await api.dispose()
-  }
+    expect(canonicalStillGone.status).toBe(404)
+  })
 })
 
-test("JSON API rejects unknown note types and malformed bodies", async () => {
-  const api = makeApiHandler(":memory:", { disableLogger: true })
-
-  try {
-    const unknownTypeResponse = await api.handler(
-      new Request("http://localhost/api/notes/unknown"),
-    )
-    expect(unknownTypeResponse.status).toBe(400)
-
-    const invalidBodyResponse = await api.handler(
-      jsonRequest("/api/notes/fleeting", "POST", { title: "Missing content" }),
-    )
-    expect(invalidBodyResponse.status).toBe(400)
-
-    const tooLongResponse = await api.handler(
-      jsonRequest("/api/notes/fleeting", "POST", {
-        title: "Too long",
-        content: "a".repeat(1001),
+test("canonical writes enforce type, content, reference, id, and limit rules", async () => {
+  await withApi(async (api) => {
+    const unknownType = await api.handler(
+      request("/api/notes", "POST", {
+        type: "scoped",
+        title: "Nope",
+        content: "Nope",
       }),
     )
-    expect(tooLongResponse.status).toBe(400)
+    expect(unknownType.status).toBe(400)
 
-    const missingReferenceResponse = await api.handler(
-      jsonRequest("/api/notes/literature", "POST", {
+    const missingTitle = await api.handler(
+      request("/api/notes", "POST", { type: "fleeting", content: "body" }),
+    )
+    expect(missingTitle.status).toBe(400)
+
+    const missingReference = await api.handler(
+      request("/api/notes", "POST", {
+        type: "literature",
         title: "No source",
-        content: "a quote",
+        content: "A quote",
       }),
     )
-    expect(missingReferenceResponse.status).toBe(400)
-
-    const nonJsonResponse = await api.handler(
-      jsonRequest(
-        "/api/notes/fleeting",
-        "POST",
-        { title: "Not JSON", content: "body" },
-        { "content-type": "text/plain" },
-      ),
+    expect(missingReference.status).toBe(400)
+    expect(((await missingReference.json()) as { code: string }).code).toBe(
+      "missing-reference",
     )
-    expect(nonJsonResponse.status).toBe(400)
-  } finally {
-    await api.dispose()
-  }
-})
 
-test("JSON API rejects empty required text", async () => {
-  const api = makeApiHandler(":memory:", { disableLogger: true })
-
-  try {
-    const emptyTitleResponse = await api.handler(
-      jsonRequest("/api/notes/fleeting", "POST", {
-        title: "   ",
-        content: "body",
-      }),
-    )
-    expect(emptyTitleResponse.status).toBe(400)
-
-    const emptyContentResponse = await api.handler(
-      jsonRequest("/api/notes/permanent", "POST", {
-        title: "Title",
-        content: "",
-      }),
-    )
-    expect(emptyContentResponse.status).toBe(400)
-
-    const missingReferenceResponse = await api.handler(
-      jsonRequest("/api/notes/literature", "POST", {
-        title: "Source",
-        content: "Quote",
-        reference: "  ",
-      }),
-    )
-    expect(missingReferenceResponse.status).toBe(400)
-
-    const emptyReference = (await missingReferenceResponse.json()) as {
-      readonly error: string
-    }
-    expect(emptyReference.error).toBe(
-      'Reference is required for literature notes. (at ["reference"])',
-    )
-  } finally {
-    await api.dispose()
-  }
-})
-
-test("JSON API returns the field-level validation message", async () => {
-  const api = makeApiHandler(":memory:", { disableLogger: true })
-
-  try {
     const tooLong = await api.handler(
-      jsonRequest("/api/notes/fleeting", "POST", {
+      request("/api/notes", "POST", {
+        type: "fleeting",
         title: "Too long",
         content: "a".repeat(1001),
       }),
     )
     expect(tooLong.status).toBe(400)
-    expect(await tooLong.json()).toEqual({
-      error: 'Content must be 1000 characters or fewer. (at ["content"])',
-    })
-
-    const updateWithoutReference = await api.handler(
-      jsonRequest("/api/notes/literature/missing", "PUT", {
-        title: "Source",
-        content: "Quote",
-      }),
+    expect(((await tooLong.json()) as { code: string }).code).toBe(
+      "content-too-long",
     )
-    expect(updateWithoutReference.status).toBe(400)
-    expect(await updateWithoutReference.json()).toEqual({
-      error: 'Missing key (at ["reference"])',
-    })
-  } finally {
-    await api.dispose()
-  }
+
+    const traversal = await api.handler(
+      request("/api/notes/..%2F..%2Fetc%2Fpasswd"),
+    )
+    expect(traversal.status).toBe(400)
+
+    const badLimit = await api.handler(request("/api/notes?limit=all"))
+    expect(badLimit.status).toBe(400)
+
+    const emptySearch = await api.handler(request("/api/search"))
+    expect(emptySearch.status).toBe(400)
+  })
 })
 
-test("JSON API reports typed validation and not-found errors", async () => {
-  const api = makeApiHandler(":memory:", { disableLogger: true })
-
-  try {
-    const unknownType = await api.handler(
-      new Request("http://localhost/api/notes/unknown"),
-    )
-    expect(unknownType.status).toBe(400)
-    expect(await unknownType.json()).toEqual({
-      error: "Unknown note type: unknown",
-    })
-
-    const malformed = await api.handler(
-      new Request("http://localhost/api/notes/fleeting", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{",
-      }),
-    )
-    expect(malformed.status).toBe(400)
-    expect(await malformed.json()).toEqual({ error: "Invalid note body" })
-
-    const missing = await api.handler(
-      jsonRequest("/api/notes/fleeting/missing", "PUT", {
-        title: "Missing",
-        content: "missing",
-      }),
-    )
-    expect(missing.status).toBe(404)
-    expect(await missing.json()).toEqual({
-      error: "Note not found: missing",
-    })
-  } finally {
-    await api.dispose()
-  }
-})
-
-test("notes persist across API handler restarts", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "slipmem-web-"))
-  const databasePath = join(directory, "notes.db")
-
-  try {
-    const first = makeApiHandler(databasePath, { disableLogger: true })
-    const created = (await (
-      await first.handler(
-        jsonRequest("/api/notes/literature", "POST", {
-          title: "Persisted",
-          content: "stays after restart",
-          reference: "Notebook",
-        }),
-      )
-    ).json()) as Note
-    await first.dispose()
-
-    const second = makeApiHandler(databasePath, { disableLogger: true })
-    const notes = await readNotes(
-      await second.handler(new Request("http://localhost/api/notes")),
-    )
-    await second.dispose()
-
-    expect(notes).toHaveLength(1)
-    expect(notes[0]).toMatchObject({
-      id: created.id,
-      type: "literature",
-      title: "Persisted",
-      reference: "Notebook",
-    })
-  } finally {
-    await rm(directory, { recursive: true, force: true })
-  }
-})
-
-const initializeMcp = async (api: ReturnType<typeof makeApiHandler>) => {
-  const response = await api.handler(
-    jsonRequest(
-      "/mcp",
-      "POST",
-      {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "initialize",
-        params: {
-          protocolVersion: "2025-11-25",
-          capabilities: {},
-          clientInfo: { name: "slipmem-test", version: "0.0.0" },
-        },
-      },
-      { accept: "application/json, text/event-stream" },
-    ),
-  )
-
-  expect(response.status).toBe(200)
-  const sessionId = response.headers.get("mcp-session-id")
-  expect(sessionId).toBeTruthy()
-  expect(await response.text()).toContain("slipmem")
-
-  return sessionId!
-}
-
-const mcpToolCall = (
-  sessionId: string,
-  id: number,
-  name: string,
-  args: unknown,
-) =>
-  jsonRequest(
-    "/mcp",
-    "POST",
-    {
-      jsonrpc: "2.0",
-      id,
-      method: "tools/call",
-      params: { name, arguments: args },
-    },
-    {
-      accept: "application/json, text/event-stream",
-      "mcp-session-id": sessionId,
-      "mcp-protocol-version": "2025-11-25",
-    },
-  )
-
-test("MCP endpoint initializes over streamable HTTP", async () => {
-  const api = makeApiHandler(":memory:", { disableLogger: true })
-
-  try {
-    await initializeMcp(api)
-  } finally {
-    await api.dispose()
-  }
-})
-
-test("MCP tools over HTTP share the JSON API database", async () => {
-  const api = makeApiHandler(":memory:", { disableLogger: true })
-
-  try {
-    const sessionId = await initializeMcp(api)
-
-    const createdResponse = await api.handler(
-      mcpToolCall(sessionId, 2, "create_permanent_note", {
-        title: "From MCP",
-        content: "same database",
-      }),
-    )
-    expect(createdResponse.status).toBe(200)
-    const createdBody = (await createdResponse.json()) as {
-      readonly result: {
-        readonly structuredContent: {
-          readonly id: string
-          readonly title: string
-        }
-      }
-    }
-    expect(createdBody.result.structuredContent).toMatchObject({
-      title: "From MCP",
-      content: "same database",
-    })
-
-    const notes = await readNotes(
-      await api.handler(new Request("http://localhost/api/notes/permanent")),
-    )
-    expect(notes).toEqual([
-      expect.objectContaining({
-        id: createdBody.result.structuredContent.id,
+test("search and topics refresh the disposable index and stay bounded", async () => {
+  await withApi(async (api) => {
+    const created = await api.handler(
+      request("/api/notes", "POST", {
         type: "permanent",
-        title: "From MCP",
+        title: "Bounded recall",
+        content: "Every recall operation has a hard maximum.",
+        topics: ["retrieval", "agent-memory"],
+      }),
+    )
+    expect(created.status).toBe(201)
+    const note = await readNote(created)
+
+    const searchResponse = await api.handler(
+      request("/api/search?q=recall&limit=3"),
+    )
+    expect(searchResponse.status).toBe(200)
+    const searchBody = (await searchResponse.json()) as {
+      readonly results: ReadonlyArray<{
+        readonly id: string
+        readonly note: { readonly title: string }
+      }>
+    }
+    expect(searchBody.results).toHaveLength(1)
+    expect(searchBody.results[0]).toMatchObject({
+      id: note.id,
+      note: { title: "Bounded recall" },
+    })
+
+    const filtered = await api.handler(
+      request("/api/search?q=recall&type=literature"),
+    )
+    expect(
+      ((await filtered.json()) as { readonly results: ReadonlyArray<unknown> })
+        .results,
+    ).toHaveLength(0)
+
+    const topicsResponse = await api.handler(request("/api/topics?limit=10"))
+    expect(topicsResponse.status).toBe(200)
+    const topics = (await topicsResponse.json()) as {
+      readonly topics: ReadonlyArray<{ topic: string; noteCount: number }>
+    }
+    expect(topics.topics).toEqual([
+      { topic: "agent-memory", noteCount: 1 },
+      { topic: "retrieval", noteCount: 1 },
+    ])
+  })
+})
+
+test("mutations are same-origin only and reject non-JSON bodies", async () => {
+  await withApi(async (api) => {
+    const crossOrigin = await api.handler(
+      request(
+        "/api/notes",
+        "POST",
+        { type: "fleeting", title: "Cross", content: "origin" },
+        { origin: "https://evil.example" },
+      ),
+    )
+    expect(crossOrigin.status).toBe(403)
+    expect(crossOrigin.headers.get("access-control-allow-origin")).toBeNull()
+
+    const crossSite = await api.handler(
+      request(
+        "/api/notes",
+        "POST",
+        { type: "fleeting", title: "Cross", content: "site" },
+        { "sec-fetch-site": "cross-site" },
+      ),
+    )
+    expect(crossSite.status).toBe(403)
+
+    const plainText = await api.handler(
+      request(
+        "/api/notes",
+        "POST",
+        { type: "fleeting", title: "Plain", content: "text" },
+        { "content-type": "text/plain" },
+      ),
+    )
+    expect(plainText.status).toBe(415)
+
+    const sameOrigin = await api.handler(
+      request(
+        "/api/notes",
+        "POST",
+        { type: "fleeting", title: "Same origin", content: "allowed" },
+        { origin: ORIGIN },
+      ),
+    )
+    expect(sameOrigin.status).toBe(201)
+
+    const deleteCrossOrigin = await api.handler(
+      request(
+        `/api/notes/${(await readNote(sameOrigin)).id}`,
+        "DELETE",
+        undefined,
+        { origin: "https://evil.example" },
+      ),
+    )
+    expect(deleteCrossOrigin.status).toBe(403)
+  })
+})
+
+test("files written by another surface are visible without restart", async () => {
+  await withApi(async (api, root) => {
+    const repository = await Effect.runPromise(
+      makeMarkdownNoteRepository({
+        root: root.root,
+        now: () => Date.UTC(2026, 10, 17, 20, 0, 0),
+      }),
+    )
+    const external = await Effect.runPromise(
+      repository.create({
+        type: "literature",
+        title: "External capture",
+        content: "Written outside the HTTP process.",
+        reference: "Notebook, page 4",
+        topics: ["external"],
+      }),
+    )
+
+    const listResponse = await api.handler(request("/api/notes"))
+    expect(await readNotes(listResponse)).toEqual([
+      expect.objectContaining({
+        id: external.id,
+        title: "External capture",
+        reference: "Notebook, page 4",
       }),
     ])
+
+    const searchResponse = await api.handler(
+      request("/api/search?q=outside"),
+    )
+    const results = (await searchResponse.json()) as {
+      readonly results: ReadonlyArray<{ readonly id: string }>
+    }
+    expect(results.results.map((result) => result.id)).toContain(external.id)
+  })
+})
+
+test("a second handler over the same root sees the same notes", async () => {
+  const root = await makeRoot()
+  try {
+    const first = makeApiHandler(root.root, {
+      cacheDir: root.cacheDir,
+      disableLogger: true,
+    })
+    const created = await readNote(
+      await first.handler(
+        request("/api/notes", "POST", {
+          type: "permanent",
+          title: "Persisted",
+          content: "Survives a process restart.",
+        }),
+      ),
+    )
+    await first.dispose()
+
+    const second = makeApiHandler(root.root, {
+      cacheDir: root.cacheDir,
+      disableLogger: true,
+    })
+    try {
+      const notes = await readNotes(
+        await second.handler(request("/api/notes")),
+      )
+      expect(notes).toEqual([
+        expect.objectContaining({ id: created.id, title: "Persisted" }),
+      ])
+    } finally {
+      await second.dispose()
+    }
   } finally {
-    await api.dispose()
+    await rm(root.directory, { recursive: true, force: true })
   }
 })

@@ -1,6 +1,17 @@
-export { makeApiHandler, makeAppLayer } from "./app"
-export { NoteDraft } from "./api"
-export { resolveDatabasePath } from "./config"
+export { makeApiHandler, makeAppLayer, type ApiHandlerOptions, type AppLayerOptions } from "./app"
+export { ApiError, NoteDraft } from "./api"
+export { makeMarkdownLayer, toApiNote, type ApiNote, type MarkdownLayerOptions } from "./markdown"
+export {
+  DEFAULT_HOST,
+  DEFAULT_PORT,
+  isLoopbackHost,
+  nonLoopbackWarning,
+  resolveBindConfig,
+  resolveDatabasePath,
+  resolveNoteRootPath,
+  type BindConfig,
+  type NoteRootPathOptions,
+} from "./config"
 export {
   mcpInstructions,
   mcpServerName,
