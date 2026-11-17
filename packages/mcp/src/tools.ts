@@ -30,6 +30,7 @@ import {
   ListNotesInput,
   ListTopicsInput,
   ListTopicsResult,
+  MAX_TOPIC_EXAMPLES,
   NoteListResult,
   NoteResult,
   PendingApprovalResult,
@@ -294,22 +295,24 @@ const submitDelete = (
   id: string,
 ): Effect.Effect<PendingApprovalResult, ToolFailure> =>
   approval.submitMcp({ operation: "delete", id }).pipe(
-    Effect.map((result) => {
-      if (result.status !== "pending_approval") {
-        // The frozen core policy never applies an MCP delete directly. If that
-        // ever changes, fail closed rather than reporting a delete that this
-        // tool contract says cannot happen.
-        throw new Error(
-          "MCP deletes must always create a pending approval proposal.",
-        )
-      }
-      return {
-        status: "pending_approval" as const,
-        proposalId: result.proposalId,
-        summary: result.summary,
-      }
-    }),
     Effect.mapError(approvalFailure),
+    Effect.flatMap((result) =>
+      result.status === "pending_approval"
+        ? Effect.succeed({
+            status: "pending_approval" as const,
+            proposalId: result.proposalId,
+            summary: result.summary,
+          })
+        : // The frozen core policy never applies an MCP delete directly. If
+          // that ever changes, fail closed rather than reporting a delete that
+          // this tool contract says cannot happen.
+          Effect.fail(
+            failure(
+              "policy-violation",
+              "MCP deletes must always create a pending approval proposal. Nothing was deleted.",
+            ),
+          ),
+    ),
   )
 
 /**
@@ -463,7 +466,7 @@ export const McpHandlersLayer = McpNoteTools.toLayer(
               }
               const summary = summaries.get(topic) ?? { count: 0, examples: [] }
               summary.count++
-              if (summary.examples.length < 3) {
+              if (summary.examples.length < MAX_TOPIC_EXAMPLES) {
                 summary.examples.push({
                   id: note.id,
                   type: note.metadata.type,

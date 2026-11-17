@@ -107,7 +107,7 @@ before searching, so an external editor change is visible without a restart.
 `WikiPage` plus rendered Markdown. It uses the core wiki service. Extractive
 mode is the default; synthesized mode requires `SLIPMEM_WIKI_SYNTHESIS` to be
 configured and fails closed otherwise. A topic with no matching notes returns
-an empty, cited-free page rather than invented content.
+an empty page with no citations and no invented content.
 
 ## Approval and write policy
 
