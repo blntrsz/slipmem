@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
 import { checkNoteRoot } from "../markdown/check.js"
 import { readNoteFile } from "../markdown/paths.js"
 import {
@@ -737,6 +737,127 @@ describe("SQLite to Markdown importer", () => {
     } finally {
       writer.close()
     }
+  })
+
+  test("marks an interrupted run and merges the remaining notes", () => {
+    const first = createDatabase(`
+      CREATE TABLE fleeting_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+      );
+      INSERT INTO fleeting_note VALUES
+        ('incremental-a', 'Incremental A', 'A body.', 1794943845000, 1794943845000);
+    `)
+    const target = join(first.directory, "notes")
+    const firstReport = importMigration({
+      databasePath: first.path,
+      noteRoot: target,
+      now: () => FIXED_NOW,
+    })
+    expect(firstReport.counts.writtenNotes).toBe(1)
+
+    const crashedRunId = "20260101000000-crashed"
+    const crashedDirectory = join(target, ".state", "migrations", crashedRunId)
+    mkdirSync(crashedDirectory, { recursive: true })
+    const crashedManifest = join(crashedDirectory, "manifest.json")
+    writeFileSync(
+      crashedManifest,
+      JSON.stringify({
+        schema: 1,
+        kind: "slipmem-migration-manifest",
+        runId: crashedRunId,
+        pid: 2_147_483_647,
+        status: "running",
+        notes: [{ status: "imported" }],
+      }),
+    )
+
+    const full = createDatabase(`
+      CREATE TABLE fleeting_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+      );
+      INSERT INTO fleeting_note VALUES
+        ('incremental-a', 'Incremental A', 'A body.', 1794943845000, 1794943845000),
+        ('incremental-b', 'Incremental B', 'B body.', 1794943900000, 1794943900000),
+        ('incremental-c', 'Incremental C', 'C body.', 1794943950000, 1794943950000);
+    `)
+
+    const report = importMigration({
+      databasePath: full.path,
+      noteRoot: target,
+      merge: true,
+      now: () => FIXED_NOW + 1000,
+    })
+
+    expect(report.status).toBe("imported")
+    expect(report.counts).toMatchObject({ writtenNotes: 2, skippedNotes: 1 })
+    expect(report.interruptedRuns).toHaveLength(1)
+    expect(report.interruptedRuns[0]).toMatchObject({
+      runId: crashedRunId,
+      marked: true,
+      notesWritten: 1,
+    })
+    expect(report.warnings.map((warning) => warning.code)).toContain(
+      "interrupted-run",
+    )
+
+    const updated = JSON.parse(readFileSync(crashedManifest, "utf8")) as Record<
+      string,
+      unknown
+    >
+    expect(updated["status"]).toBe("interrupted")
+    expect(updated["interruptedByRunId"]).toBe(
+      basename(report.runDirectory!),
+    )
+    expect(report.verification.ok).toBe(true)
+    expect(noteFiles(target)).toHaveLength(3)
+  })
+
+  test("does not mark a running manifest whose owner PID is still alive", () => {
+    const { directory, path } = createDatabase(fixtureSql("current.sql"))
+    const target = join(directory, "notes")
+    importMigration({ databasePath: path, noteRoot: target, now: () => FIXED_NOW })
+
+    const activeRunId = "20260101000000-active"
+    const activeDirectory = join(target, ".state", "migrations", activeRunId)
+    mkdirSync(activeDirectory, { recursive: true })
+    const activeManifest = join(activeDirectory, "manifest.json")
+    writeFileSync(
+      activeManifest,
+      JSON.stringify({
+        schema: 1,
+        kind: "slipmem-migration-manifest",
+        runId: activeRunId,
+        pid: process.pid,
+        status: "running",
+      }),
+    )
+
+    const report = importMigration({
+      databasePath: path,
+      noteRoot: target,
+      merge: true,
+      now: () => FIXED_NOW + 1000,
+    })
+
+    expect(report.interruptedRuns).toHaveLength(1)
+    expect(report.interruptedRuns[0]).toMatchObject({
+      runId: activeRunId,
+      marked: false,
+    })
+    expect(report.warnings.map((warning) => warning.code)).toContain(
+      "interrupted-run-active",
+    )
+    expect(
+      JSON.parse(readFileSync(activeManifest, "utf8")) as Record<string, unknown>,
+    ).toMatchObject({ status: "running" })
   })
 
   test("fails verification clearly while preserving the manifest and target files", () => {

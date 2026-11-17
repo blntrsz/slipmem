@@ -187,6 +187,15 @@ export interface MigrationImportWarning {
   readonly rowIndex?: number
 }
 
+export interface MigrationInterruptedRun {
+  readonly runId: string
+  readonly manifestPath: string
+  readonly pid: number | null
+  readonly notesWritten: number
+  /** True when this run rewrote the manifest status to `interrupted`. */
+  readonly marked: boolean
+}
+
 export interface MigrationImportCounts {
   readonly sourceRows: number
   readonly plannedNotes: number
@@ -219,6 +228,7 @@ export interface MigrationImportReport {
   readonly notes: ReadonlyArray<MigrationImportedNote>
   readonly verification: MigrationVerificationReport
   readonly counts: MigrationImportCounts
+  readonly interruptedRuns: ReadonlyArray<MigrationInterruptedRun>
   readonly warnings: ReadonlyArray<MigrationImportWarning>
   readonly error: { readonly code: MigrationImportErrorCode; readonly message: string } | null
 }
@@ -651,6 +661,162 @@ const uniqueRunId = (migrationsDirectory: string, nowMs: number): string => {
   return candidate
 }
 
+const processIsAlive = (pid: number): boolean => {
+  if (!Number.isInteger(pid) || pid <= 0) return false
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (cause) {
+    return (
+      typeof cause === "object" &&
+      cause !== null &&
+      "code" in cause &&
+      (cause as { code?: unknown }).code === "EPERM"
+    )
+  }
+}
+
+const manifestStatusOf = (value: unknown): string | null =>
+  typeof value === "object" && value !== null && "status" in value
+    ? String((value as { status: unknown }).status)
+    : null
+
+const manifestPidOf = (value: unknown): number | null => {
+  if (typeof value !== "object" || value === null || !("pid" in value)) {
+    return null
+  }
+  const pid = (value as { pid: unknown }).pid
+  return typeof pid === "number" && Number.isSafeInteger(pid) ? pid : null
+}
+
+interface InterruptedRunsReport {
+  readonly runs: ReadonlyArray<MigrationInterruptedRun>
+  readonly warnings: ReadonlyArray<MigrationImportWarning>
+}
+
+/**
+ * Finds manifests left in `running` state by an earlier process and marks them
+ * `interrupted` when their recorded owner is gone. A live owner PID is never
+ * overwritten; that is reported instead so an operator can decide.
+ *
+ * This runs only after the current run has taken the repository lock, so no
+ * other local import can be actively writing this repository.
+ */
+const markInterruptedRuns = (
+  migrationsDirectory: string,
+  currentRunId: string,
+  nowMs: number,
+): InterruptedRunsReport => {
+  const runs: Array<MigrationInterruptedRun> = []
+  const warnings: Array<MigrationImportWarning> = []
+
+  let entries
+  try {
+    entries = readdirSync(migrationsDirectory, { withFileTypes: true })
+  } catch {
+    return { runs, warnings }
+  }
+
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const manifestPath = join(
+      migrationsDirectory,
+      entry.name,
+      MIGRATION_MANIFEST_FILENAME,
+    )
+
+    let document: Record<string, unknown>
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(manifestPath, "utf8"))
+      if (
+        typeof parsed !== "object" ||
+        parsed === null ||
+        Array.isArray(parsed) ||
+        (parsed as Record<string, unknown>)["kind"] !==
+          "slipmem-migration-manifest"
+      ) {
+        continue
+      }
+      document = parsed as Record<string, unknown>
+    } catch {
+      // An unreadable manifest is not a running run; the normal validation and
+      // quarantine paths still protect note data.
+      continue
+    }
+
+    if (manifestStatusOf(document) !== "running") {
+      continue
+    }
+
+    const pid = manifestPidOf(document)
+    const active = pid !== null && processIsAlive(pid)
+    const notes = Array.isArray(document["notes"]) ? document["notes"] : []
+    const notesWritten = notes.filter(
+      (note) =>
+        typeof note === "object" &&
+        note !== null &&
+        (note as { status?: unknown }).status === "imported",
+    ).length
+    const runId =
+      typeof document["runId"] === "string" ? document["runId"] : entry.name
+
+    if (active) {
+      runs.push({
+        runId,
+        manifestPath,
+        pid,
+        notesWritten,
+        marked: false,
+      })
+      warnings.push({
+        code: "interrupted-run-active",
+        message: `Migration run ${runId} still records a running manifest owned by live PID ${pid}; it was not marked interrupted. Inspect ${manifestPath} before retrying.`,
+      })
+      continue
+    }
+
+    try {
+      writeStateText(
+        manifestPath,
+        jsonText({
+          ...document,
+          status: "interrupted",
+          interruptedAt: timestampOf(nowMs),
+          interruptedByRunId: currentRunId,
+        }),
+        true,
+      )
+      runs.push({
+        runId,
+        manifestPath,
+        pid,
+        notesWritten,
+        marked: true,
+      })
+      warnings.push({
+        code: "interrupted-run",
+        message: `Migration run ${runId} was interrupted before it finished (${notesWritten} note(s) recorded as imported). Its manifest is now marked interrupted; merge mode can safely add the remaining notes.`,
+      })
+    } catch (cause) {
+      runs.push({
+        runId,
+        manifestPath,
+        pid,
+        notesWritten,
+        marked: false,
+      })
+      warnings.push({
+        code: "interrupted-mark-failed",
+        message: `Migration run ${runId} looks interrupted, but its manifest could not be marked: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }.`,
+      })
+    }
+  }
+
+  return { runs, warnings }
+}
+
 const sanitizeFilenamePart = (value: string): string => {
   const sanitized = value.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 80)
   return sanitized.length === 0 ? "no-id" : sanitized
@@ -738,6 +904,7 @@ const manifestDocument = (input: ManifestInput): Record<string, unknown> => ({
   schema: MIGRATION_IMPORT_SCHEMA,
   kind: "slipmem-migration-manifest",
   runId: input.runId,
+  pid: process.pid,
   createdAt: input.createdAt,
   status: input.status,
   root: input.root,
@@ -770,6 +937,7 @@ interface ImportContext {
   sourceCheck: MigrationSourceCheck
   warnings: ReadonlyArray<MigrationImportWarning>
   counts: MigrationImportCounts
+  interruptedRuns: ReadonlyArray<MigrationInterruptedRun>
   error: { readonly code: MigrationImportErrorCode; readonly message: string } | null
 }
 
@@ -801,6 +969,7 @@ const buildReport = (
   notes: context.notes,
   verification: context.verification,
   counts: context.counts,
+  interruptedRuns: context.interruptedRuns,
   warnings: context.warnings,
   error: context.error,
 })
@@ -907,6 +1076,7 @@ export const importMigration = (
       [...bodyWarnings(plan), ...inspectionMergeWarning(initialRoot, merge)],
       emptyQuarantine(),
     ),
+    interruptedRuns: [],
     error: null,
   }
 
@@ -1004,6 +1174,7 @@ export const importMigration = (
       MIGRATION_STATE_SUBDIRECTORY,
     )
     const runId = uniqueRunId(migrationsDirectory, nowMs)
+    const interrupted = markInterruptedRuns(migrationsDirectory, runId, now())
     const runDirectory = ensureStateSubdirectory(
       root,
       MIGRATION_STATE_SUBDIRECTORY,
@@ -1012,7 +1183,10 @@ export const importMigration = (
     const manifestPath = join(runDirectory, MIGRATION_MANIFEST_FILENAME)
 
     let quarantine = emptyQuarantine()
-    let warnings: Array<MigrationImportWarning> = [...bodyWarnings(lockedPlan)]
+    let warnings: Array<MigrationImportWarning> = [
+      ...bodyWarnings(lockedPlan),
+      ...interrupted.warnings,
+    ]
     let noteResults: Array<MigrationImportedNote> = []
     context = {
       ...context,
@@ -1023,6 +1197,7 @@ export const importMigration = (
       warnings,
       sourceCheck,
       quarantine,
+      interruptedRuns: interrupted.runs,
       verification: emptyVerification(
         lockedPlan.notes.length,
         takenFilenames.size,
