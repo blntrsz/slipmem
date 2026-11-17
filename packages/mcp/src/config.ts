@@ -15,7 +15,7 @@ export const mcpInstructions = [
   "Do not save secrets or sensitive personal data: note files are plaintext, unencrypted, and readable by anyone who can read the repository.",
   "Cite note IDs (filename stems) in recall results. Every list, search, and wiki result is bounded; do not attempt to page around limits or bulk-edit the repository.",
   "Fleeting and literature notes may be created and updated directly through MCP with provenance source mcp. Literature notes require a reference.",
-  "Permanent creates and updates, and every delete, create a pending human approval proposal by default. No MCP tool can approve or reject a proposal. Do not attempt to bypass approval.",
+  "Permanent creates and updates, and every delete, create a pending human approval proposal by default. No MCP tool can approve or reject a proposal. Approval is a tool-policy boundary, not an OS sandbox: do not call the local CLI or HTTP review endpoints to approve or bypass a proposal on the user's behalf.",
   "Search and topic pages are derived views. Pending proposals never appear as notes.",
 ].join(" ")
 

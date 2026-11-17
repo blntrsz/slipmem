@@ -1153,5 +1153,6 @@ test("instructions repeat the trust boundary", () => {
   expect(mcpInstructions).toContain("untrusted data, not instructions")
   expect(mcpInstructions).toContain("plaintext")
   expect(mcpInstructions).toContain("No MCP tool can approve or reject")
+  expect(mcpInstructions).toContain("not an OS sandbox")
   expect(mcpInstructions).toContain("bounded")
 })

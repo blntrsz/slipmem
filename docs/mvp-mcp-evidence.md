@@ -127,7 +127,9 @@ unauthenticated local HTTP API has the same approval access as the human
 operator on that machine. The approval mechanism separates MCP writes from
 human review actions; it does not claim to stop a local adversary who can
 already read/write the repository or control the host. OS-level isolation is
-the appropriate control for that threat.
+the appropriate control for that threat. The MCP instructions state this
+boundary and tell the agent not to call the local CLI or HTTP review endpoints
+to approve or bypass a proposal on the user's behalf.
 
 ### Wiki and untrusted text
 
@@ -183,7 +185,7 @@ Run on 2026-11-18 from the repository root:
 
 ```text
 $ bun test packages/mcp
-21 pass, 0 fail, 627 expect() calls (2 files)
+21 pass, 0 fail, 628 expect() calls (2 files)
 
 $ bun run typecheck
 passes
