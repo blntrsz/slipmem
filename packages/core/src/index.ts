@@ -47,3 +47,31 @@ export { SQLitePermanentNoteService } from "./permanent-note/sqlite-permanent-no
 
 export { NoteService } from "./note/note.service"
 export { SQLiteNoteService } from "./note/SQLite-note.service"
+
+export {
+  DEFAULT_MIGRATION_SCOPE,
+  IMPORT_PROVENANCE_SOURCE,
+  MIGRATION_PLAN_SCHEMA,
+  MigrationSourceError,
+  NOTE_TABLE_NAMES,
+  planMigration,
+  type MigrationFilenameCollision,
+  type MigrationIssueCode,
+  type MigrationIssueProblem,
+  type MigrationIssueSeverity,
+  type MigrationNotePreservation,
+  type MigrationPlan,
+  type MigrationPlanCounts,
+  type MigrationPlanIssue,
+  type MigrationPlanOptions,
+  type MigrationRowSource,
+  type MigrationSourceErrorCode,
+  type MigrationSourceInfo,
+  type MigrationSourceShape,
+  type MigrationSourceTable,
+  type MigrationTableShape,
+  type NoteTableName,
+  type PlannedMigrationNote,
+  type PreservedValue,
+  type SqliteValue,
+} from "./migration/migration-plan"
