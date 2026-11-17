@@ -192,11 +192,16 @@ export const renderWikiMarkdown = ({
 
   for (const section of sections) {
     lines.push("", `## ${section.heading}`, "", section.markdown)
-    const citations = section.citations
-      .map((citation) => `Source: [[${citation.noteId}]] (\`${citation.path}\`)`)
-      .join("\n")
-    if (citations.length > 0) {
-      lines.push("", citations)
+    // Extractive section Markdown is only the quoted excerpt, so the renderer
+    // adds its adjacent citation. Synthesized section Markdown already carries
+    // one citation after every sentence; adding a second block would duplicate.
+    if (mode === "extractive") {
+      const citations = section.citations
+        .map((citation) => `Source: [[${citation.noteId}]] (\`${citation.path}\`)`)
+        .join("\n")
+      if (citations.length > 0) {
+        lines.push("", citations)
+      }
     }
   }
 

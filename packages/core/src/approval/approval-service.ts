@@ -630,7 +630,14 @@ export const makeApprovalService = (
         const proposals: ApprovalReviewItem[] = []
 
         for (const proposal of scan.proposals) {
-          const current = yield* readNote(proposal.noteId)
+          const current = yield* readNote(proposal.noteId).pipe(
+            // A single unreadable note must not hide the rest of the review
+            // queue. It is reported as stale; apply still fails closed.
+            Effect.match({
+              onFailure: () => null,
+              onSuccess: (note) => note,
+            }),
+          )
           const currentHash = current?.contentHash ?? null
           const stale =
             proposal.operation === "create"
