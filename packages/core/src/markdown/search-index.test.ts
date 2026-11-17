@@ -328,6 +328,111 @@ describe("disposable FTS search index", () => {
     }
   })
 
+  test("refreshes an external edit that preserves size and mtime", async () => {
+    const fixture = setup()
+    const seeded = await seed(fixture)
+    try {
+      await Effect.runPromise(seeded.index.rebuild())
+      const notePath = join(fixture.root, `${seeded.ids.permanent}.md`)
+      const before = statSync(notePath)
+      const original = readFileSync(notePath, "utf8")
+      expect(original).toContain("server-side limit")
+      writeFileSync(
+        notePath,
+        original.replace("server-side limit", "server-wide limit"),
+      )
+      // Restore the exact timestamps so a stat-only refresh cannot notice.
+      utimesSync(notePath, before.atime, before.mtime)
+
+      const refreshed = await Effect.runPromise(seeded.index.refresh())
+      expect(refreshed.updated).toBe(1)
+      expect(refreshed.unchanged).toBe(2)
+
+      const changed = await Effect.runPromise(
+        seeded.index.search({ query: "wide", fields: ["content"] }),
+      )
+      expect(changed.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
+      const old = await Effect.runPromise(
+        seeded.index.search({ query: "side", fields: ["content"] }),
+      )
+      expect(old.map((hit) => hit.id)).not.toContain(seeded.ids.permanent)
+    } finally {
+      await Effect.runPromise(seeded.index.close())
+      cleanup(fixture)
+    }
+  })
+
+  test("rebuilds stale FTS rows after a linear-fallback refresh", async () => {
+    const fixture = setup()
+    const seeded = await seed(fixture)
+    try {
+      await Effect.runPromise(seeded.index.rebuild())
+      await Effect.runPromise(seeded.index.close())
+
+      const linear = await searchIndex(fixture, true)
+      expect(linear.mode).toBe("linear")
+      const notePath = join(fixture.root, `${seeded.ids.permanent}.md`)
+      writeFileSync(
+        notePath,
+        readFileSync(notePath, "utf8").replace(
+          "server-side limit",
+          "linear-only external marker",
+        ),
+      )
+      const stats = await Effect.runPromise(linear.refresh())
+      expect(stats.mode).toBe("linear")
+      expect(stats.updated).toBe(1)
+      await Effect.runPromise(linear.close())
+
+      // FTS row counts still match notes, but the text is stale. Reopening in
+      // normal mode must rebuild rather than trust the count.
+      const reopened = await searchIndex(fixture)
+      try {
+        const hits = await Effect.runPromise(
+          reopened.search({ query: "external", fields: ["content"] }),
+        )
+        expect(hits.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
+        const old = await Effect.runPromise(
+          reopened.search({ query: "side", fields: ["content"] }),
+        )
+        expect(old.map((hit) => hit.id)).not.toContain(seeded.ids.permanent)
+      } finally {
+        await Effect.runPromise(reopened.close())
+      }
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("repairs FTS text drift even when the fts meta flag says healthy", async () => {
+    const fixture = setup()
+    const seeded = await seed(fixture)
+    try {
+      await Effect.runPromise(seeded.index.rebuild())
+      await Effect.runPromise(seeded.index.close())
+
+      const dbPath = join(fixture.cache, INDEX_FILENAME)
+      const db = new Database(dbPath)
+      db.query("UPDATE notes SET body = ? WHERE id = ?").run(
+        "content-consistency marker",
+        seeded.ids.permanent,
+      )
+      db.close()
+
+      const reopened = await searchIndex(fixture)
+      try {
+        const hits = await Effect.runPromise(
+          reopened.search({ query: "consistency", fields: ["content"] }),
+        )
+        expect(hits.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
+      } finally {
+        await Effect.runPromise(reopened.close())
+      }
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("the bounded linear fallback returns the same notes when FTS5 is unavailable", async () => {
     const fixture = setup()
     const seeded = await seed(fixture)

@@ -238,6 +238,36 @@ const openDatabase = (root: string, path: string): Database => {
   }
 }
 
+const rebuildFtsRows = (db: Database): void => {
+  db.exec("DELETE FROM notes_fts;")
+  db.exec(`
+    INSERT INTO notes_fts (id, title, body, reference, topics)
+    SELECT id, title, body, reference, topics FROM notes;
+  `)
+}
+
+/**
+ * FTS rows can drift even when the row counts match: a linear-fallback session
+ * updates `notes` without touching `notes_fts`, and an external editor can
+ * change a note whose size and mtime happen to agree with the indexed row.
+ * Compare the indexed text rather than trusting the count alone.
+ */
+const ftsNeedsRepair = (db: Database): boolean => {
+  const mismatch = db
+    .query<{ count: number }, []>(
+      `SELECT COUNT(*) AS count
+         FROM notes n
+         LEFT JOIN notes_fts f ON f.id = n.id
+        WHERE f.id IS NULL
+           OR f.title IS NOT n.title
+           OR f.body IS NOT n.body
+           OR f.reference IS NOT n.reference
+           OR f.topics IS NOT n.topics`,
+    )
+    .get()!.count
+  return mismatch > 0
+}
+
 const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS meta (
@@ -262,6 +292,9 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
 
   const version = db
     .query<{ value: string }, []>("SELECT value FROM meta WHERE key = 'schema'")
+    .get()?.value
+  const previousFts = db
+    .query<{ value: string }, []>("SELECT value FROM meta WHERE key = 'fts'")
     .get()?.value
 
   if (version !== undefined && version !== String(INDEX_SCHEMA_VERSION)) {
@@ -302,6 +335,26 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
       // FTS5 is an optional runtime capability. The notes table remains valid
       // and every search falls back to a bounded linear scan.
       ftsAvailable = false
+    }
+  }
+
+  if (ftsAvailable) {
+    // `previousFts` is "0" when the last session deliberately ran without FTS.
+    // Any rows it refreshed or added are absent from notes_fts, even if the
+    // counts happen to match; rebuild on that transition.
+    if (previousFts !== "1" || ftsNeedsRepair(db)) {
+      db.exec("DROP TABLE IF EXISTS notes_fts;")
+      db.exec(`
+        CREATE VIRTUAL TABLE notes_fts USING fts5(
+          id UNINDEXED,
+          title,
+          body,
+          reference,
+          topics,
+          tokenize = 'unicode61'
+        );
+      `)
+      rebuildFtsRows(db)
     }
   }
 
@@ -600,28 +653,8 @@ export const makeMarkdownSearchIndex = (
       if (!ftsAvailable) {
         return
       }
-
-      const noteCount = database
-        .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM notes")
-        .get()!.count
-      const ftsCount = database
-        .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM notes_fts")
-        .get()!.count
-
-      if (noteCount === ftsCount) {
-        return
-      }
-
-      database.exec("DELETE FROM notes_fts;")
-      const rows = database
-        .query<NoteRow, []>("SELECT * FROM notes")
-        .all()
-      for (const row of rows) {
-        database
-          .query<never, [string, string, string, string | null, string]>(
-            "INSERT INTO notes_fts (id, title, body, reference, topics) VALUES (?1, ?2, ?3, ?4, ?5)",
-          )
-          .run(row.id, row.title, row.body, row.reference, row.topics)
+      if (ftsNeedsRepair(database)) {
+        rebuildFtsRows(database)
       }
     }
 
@@ -661,16 +694,11 @@ export const makeMarkdownSearchIndex = (
 
           seen.add(id)
           const previous = existing.get(id)
-          if (
-            previous !== undefined &&
-            previous.path === entry.path &&
-            previous.mtime_ms === entry.stats.mtimeMs &&
-            previous.size === entry.stats.size
-          ) {
-            unchanged++
-            continue
-          }
 
+          // Always read the file. Size+mtime equality is not evidence of
+          // unchanged content: an external editor can write the same number of
+          // bytes within the same timestamp tick. The content hash is the
+          // strongest local truth available and keeps TRUTH-03 honest.
           const result = yield* readNoteFile(root, id).pipe(
             Effect.match({
               onFailure: () => ({ note: null }),
@@ -685,6 +713,15 @@ export const makeMarkdownSearchIndex = (
                 database.transaction(() => deleteRow(id))(),
               )
             }
+            continue
+          }
+
+          if (
+            previous !== undefined &&
+            previous.path === entry.path &&
+            previous.content_hash === result.note.contentHash
+          ) {
+            unchanged++
             continue
           }
 
