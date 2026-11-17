@@ -18,7 +18,7 @@ bun run check
 
 ```sh
 bun run slipmem -- init
-bun run slipmem -- new --type fleeting --title "First thought"
+bun run slipmem -- new --type fleeting --title "First thought" --content "Capture it"
 bun run slipmem -- list
 bun run slipmem -- search thought
 bun run web

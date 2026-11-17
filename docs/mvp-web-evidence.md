@@ -161,7 +161,7 @@ bundles. Final handoff run:
 ```text
 bun run lint          pass
 bun run typecheck     pass (root and packages/web)
-bun test              272 pass, 0 fail, 1949 assertions, 34 files
+bun test              292 pass, 0 fail, 2030 assertions, 34 files
 bun run web:build     pass (client and SSR bundles)
 ```
 
