@@ -82,10 +82,32 @@
         "status": 200,
         "body": {
           "topic": "mcp",
+          "generatedAt": "2026-11-17T21:05:00Z",
           "mode": "extractive",
           "noteCount": 1,
-          "sections": [{ "heading": "Recall", "citations": [{ "noteId": "20261117201500-mcp-recall-must-cite-sources" }] }],
-          "markdown": "# Topic: mcp\n"
+          "sources": [
+            {
+              "id": "20261117201500-mcp-recall-must-cite-sources",
+              "path": ".slipmem/20261117201500-mcp-recall-must-cite-sources.md",
+              "type": "literature",
+              "title": "MCP recall must cite sources",
+              "updatedAt": "2026-11-17T20:16:00Z"
+            }
+          ],
+          "sections": [
+            {
+              "heading": "Recall",
+              "markdown": "> Every recall result should identify the note file and ID behind it.",
+              "citations": [
+                {
+                  "noteId": "20261117201500-mcp-recall-must-cite-sources",
+                  "path": ".slipmem/20261117201500-mcp-recall-must-cite-sources.md",
+                  "excerpt": "Every recall result should identify the note file and ID behind it."
+                }
+              ]
+            }
+          ],
+          "markdown": "# Topic: mcp\n\n_Generated on 2026-11-17T21:05:00Z from 1 note. Extractive; verify sources._\n\n## Recall\n\n> Every recall result should identify the note file and ID behind it.\n\nSource: [[20261117201500-mcp-recall-must-cite-sources]]\n"
         }
       }
     },
@@ -167,9 +189,32 @@
       "arguments": { "topic": "mcp", "mode": "extractive", "limit": 10 },
       "result": {
         "topic": "mcp",
+        "generatedAt": "2026-11-17T21:05:00Z",
         "mode": "extractive",
         "noteCount": 1,
-        "citations": ["20261117201500-mcp-recall-must-cite-sources"]
+        "sources": [
+          {
+            "id": "20261117201500-mcp-recall-must-cite-sources",
+            "path": ".slipmem/20261117201500-mcp-recall-must-cite-sources.md",
+            "type": "literature",
+            "title": "MCP recall must cite sources",
+            "updatedAt": "2026-11-17T20:16:00Z"
+          }
+        ],
+        "sections": [
+          {
+            "heading": "Recall",
+            "markdown": "> Every recall result should identify the note file and ID behind it.",
+            "citations": [
+              {
+                "noteId": "20261117201500-mcp-recall-must-cite-sources",
+                "path": ".slipmem/20261117201500-mcp-recall-must-cite-sources.md",
+                "excerpt": "Every recall result should identify the note file and ID behind it."
+              }
+            ]
+          }
+        ],
+        "markdown": "# Topic: mcp\n\n_Generated on 2026-11-17T21:05:00Z from 1 note. Extractive; verify sources._\n\n## Recall\n\n> Every recall result should identify the note file and ID behind it.\n\nSource: [[20261117201500-mcp-recall-must-cite-sources]]\n"
       }
     }
   }

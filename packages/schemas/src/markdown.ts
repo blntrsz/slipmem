@@ -7,6 +7,11 @@ import { Schema } from "effect"
 // slugs, metadata, approval proposals, and structured wiki output. The
 // repository, CLI, MCP, and web surfaces must import them rather than
 // reimplementing the rules.
+//
+// The schemas in this module validate wire and metadata shapes. They are not a
+// serializer: decoding a struct drops unknown frontmatter keys, so the
+// repository parser must keep the raw unknown mapping separately and write it
+// back on render. Decoding here never replaces that round-trip guarantee.
 export const SCHEMA_VERSION = 1
 
 export const MAX_SLUG_LENGTH = 80
@@ -135,6 +140,20 @@ export const parseUtcPrefix = (prefix: string): Date | null => {
   return date
 }
 
+/**
+ * True when a canonical UTC timestamp names a real calendar instant.
+ *
+ * The regex alone accepts impossible values such as `2026-02-30T19:30:45Z` or
+ * `2026-11-17T25:00:00Z`; the schema contract rejects those.
+ */
+export const isUtcTimestamp = (value: string): boolean =>
+  UTC_TIMESTAMP_PATTERN.test(value) &&
+  parseUtcPrefix(value.replace(/[-:TZ]/g, "")) !== null
+
+/** True when a note ID starts with a real UTC timestamp prefix. */
+export const isNoteIdWithRealTimestamp = (id: string): boolean =>
+  NOTE_ID_PATTERN.test(id) && parseUtcPrefix(id.slice(0, 14)) !== null
+
 export const isNoteFilename = (filename: string): boolean =>
   NOTE_FILENAME_PATTERN.test(filename)
 
@@ -173,21 +192,36 @@ export const noteFilename = ({ title, createdAt, taken }: NoteFilenameInput): st
   }
 }
 
+const isNonBlank = (message: string) =>
+  Schema.isPattern(/\S/, { message })
+
+const NonBlankString = (message: string) => Schema.String.check(isNonBlank(message))
+
 export const NoteId = Schema.String.check(
   Schema.isPattern(NOTE_ID_PATTERN, {
     message: "Note ID must be a 14-digit UTC timestamp plus a kebab-case slug.",
   }),
+  Schema.makeFilter(
+    (value: string) => parseUtcPrefix(value.slice(0, 14)) !== null,
+    { message: "Note ID timestamp must be a real UTC date and time." },
+  ),
 ).annotate({ identifier: "Markdown.NoteId" })
 
 export const TopicSlug = Schema.String.check(
   Schema.isPattern(TOPIC_SLUG_PATTERN, {
     message: "Topics must be lowercase kebab-case slugs.",
   }),
+  Schema.isMaxLength(MAX_TOPIC_LENGTH, {
+    message: `Topics must be ${MAX_TOPIC_LENGTH} characters or fewer.`,
+  }),
 ).annotate({ identifier: "Markdown.TopicSlug" })
 
 export const Timestamp = Schema.String.check(
   Schema.isPattern(UTC_TIMESTAMP_PATTERN, {
     message: "Timestamps must be ISO 8601 UTC with whole seconds.",
+  }),
+  Schema.makeFilter((value: string) => isUtcTimestamp(value), {
+    message: "Timestamps must name a real UTC date and time.",
   }),
 ).annotate({ identifier: "Markdown.Timestamp" })
 
@@ -208,11 +242,35 @@ export const NoteMetadata = Schema.Struct({
   createdAt: Timestamp,
   updatedAt: Timestamp,
   topics: Schema.optional(Schema.Array(TopicSlug)),
-  reference: Schema.optional(Schema.String),
+  reference: Schema.optional(NonBlankString("Reference must not be blank.")),
   provenance: Schema.optional(Provenance),
   legacyId: Schema.optional(Schema.String),
   aliases: Schema.optional(Schema.Array(Schema.String)),
-}).annotate({ identifier: "Markdown.NoteMetadata" })
+}).check(
+  Schema.makeFilter(
+    (metadata: {
+      readonly type: NoteType
+      readonly createdAt: string
+      readonly updatedAt: string
+      readonly reference?: string
+    }) => {
+      const issues: Array<{ readonly path: ReadonlyArray<PropertyKey>; readonly issue: string }> = []
+      if (metadata.updatedAt < metadata.createdAt) {
+        issues.push({
+          path: ["updatedAt"],
+          issue: "updatedAt must not be earlier than createdAt.",
+        })
+      }
+      if (metadata.type === "literature" && metadata.reference === undefined) {
+        issues.push({
+          path: ["reference"],
+          issue: "Literature notes require a non-whitespace reference.",
+        })
+      }
+      return issues
+    },
+  ),
+).annotate({ identifier: "Markdown.NoteMetadata" })
 
 export const ApprovalOperation = Schema.Literals([
   "create",
@@ -222,24 +280,62 @@ export const ApprovalOperation = Schema.Literals([
 ])
 export type ApprovalOperation = typeof ApprovalOperation.Type
 
-export interface ApprovalProposal extends Schema.Schema.Type<typeof ApprovalProposal> {}
-export const ApprovalProposal = Schema.Struct({
-  id: Schema.String.check(
-    Schema.isPattern(/\S/, { message: "Proposal ID is required." }),
-  ),
+// A proposal always targets one note file and names its ID. `operation` then
+// decides the rest: creates carry full content, updates/reclassifications bind
+// to a base hash and full content, deletes bind to a base hash and never carry
+// replacement content.
+const approvalTarget = {
+  id: NonBlankString("Proposal ID is required."),
   createdAt: Timestamp,
   expiresAt: Timestamp,
-  operation: ApprovalOperation,
-  noteId: Schema.optional(NoteId),
-  path: Schema.optional(Schema.String),
-  baseHash: Schema.optional(Schema.String),
-  content: Schema.optional(Schema.String),
-  actor: Schema.optional(Schema.String),
+  noteId: NoteId,
+  path: NonBlankString("Proposal target path is required."),
+  actor: Schema.optional(NonBlankString("Proposal actor must not be blank.")),
   source: Schema.Literal("mcp"),
-  summary: Schema.String.check(
-    Schema.isPattern(/\S/, { message: "Proposal summary is required." }),
-  ),
-}).annotate({ identifier: "Markdown.ApprovalProposal" })
+  summary: NonBlankString("Proposal summary is required."),
+}
+
+const approvalTiming = Schema.makeFilter(
+  (proposal: { readonly createdAt: string; readonly expiresAt: string }) =>
+    proposal.expiresAt < proposal.createdAt
+      ? "Proposal expiry must not be earlier than its creation time."
+      : undefined,
+)
+
+const CreateApprovalProposal = Schema.Struct({
+  ...approvalTarget,
+  operation: Schema.Literal("create"),
+  baseHash: Schema.optional(NonBlankString("Base hash must not be blank.")),
+  content: NonBlankString("Created note content is required."),
+}).check(approvalTiming)
+
+const UpdateApprovalProposal = Schema.Struct({
+  ...approvalTarget,
+  operation: Schema.Literal("update"),
+  baseHash: NonBlankString("Update proposals require a base content hash."),
+  content: NonBlankString("Update proposals require full note content."),
+}).check(approvalTiming)
+
+const DeleteApprovalProposal = Schema.Struct({
+  ...approvalTarget,
+  operation: Schema.Literal("delete"),
+  baseHash: NonBlankString("Delete proposals require a base content hash."),
+}).check(approvalTiming)
+
+const ReclassifyApprovalProposal = Schema.Struct({
+  ...approvalTarget,
+  operation: Schema.Literal("reclassify"),
+  baseHash: NonBlankString("Reclassify proposals require a base content hash."),
+  content: NonBlankString("Reclassify proposals require full note content."),
+}).check(approvalTiming)
+
+export type ApprovalProposal = Schema.Schema.Type<typeof ApprovalProposal>
+export const ApprovalProposal = Schema.Union([
+  CreateApprovalProposal,
+  UpdateApprovalProposal,
+  DeleteApprovalProposal,
+  ReclassifyApprovalProposal,
+]).annotate({ identifier: "Markdown.ApprovalProposal" })
 
 export const WikiMode = Schema.Literals(["extractive", "synthesized"])
 export type WikiMode = typeof WikiMode.Type
@@ -247,7 +343,14 @@ export type WikiMode = typeof WikiMode.Type
 export interface WikiInput extends Schema.Schema.Type<typeof WikiInput> {}
 export const WikiInput = Schema.Struct({
   topic: TopicSlug,
-  limit: Schema.optional(Schema.Int),
+  limit: Schema.optional(
+    Schema.Int.check(
+      Schema.isBetween(
+        { minimum: 1, maximum: MAX_WIKI_LIMIT },
+        { message: `Wiki limit must be between 1 and ${MAX_WIKI_LIMIT}.` },
+      ),
+    ),
+  ),
   mode: Schema.optional(WikiMode),
   includeFleeting: Schema.optional(Schema.Boolean),
 }).annotate({ identifier: "Markdown.WikiInput" })
@@ -255,23 +358,30 @@ export const WikiInput = Schema.Struct({
 export interface WikiCitation extends Schema.Schema.Type<typeof WikiCitation> {}
 export const WikiCitation = Schema.Struct({
   noteId: NoteId,
-  path: Schema.String,
-  excerpt: Schema.optional(Schema.String),
+  path: NonBlankString("Citation path is required."),
+  excerpt: Schema.optional(NonBlankString("Citation excerpt must not be blank.")),
 }).annotate({ identifier: "Markdown.WikiCitation" })
 
+// Every factual section must cite at least one note. Headings and prose are
+// required so a section cannot be an empty citation container or uncited
+// filler.
 export interface WikiSection extends Schema.Schema.Type<typeof WikiSection> {}
 export const WikiSection = Schema.Struct({
-  heading: Schema.String,
-  markdown: Schema.String,
-  citations: Schema.Array(WikiCitation),
+  heading: NonBlankString("Section heading is required."),
+  markdown: NonBlankString("Section markdown is required."),
+  citations: Schema.Array(WikiCitation).check(
+    Schema.isMinLength(1, {
+      message: "Every wiki section must cite at least one note.",
+    }),
+  ),
 }).annotate({ identifier: "Markdown.WikiSection" })
 
 export interface WikiSource extends Schema.Schema.Type<typeof WikiSource> {}
 export const WikiSource = Schema.Struct({
   id: NoteId,
-  path: Schema.String,
+  path: NonBlankString("Source path is required."),
   type: NoteType,
-  title: Schema.String,
+  title: NonBlankString("Source title is required."),
   updatedAt: Timestamp,
 }).annotate({ identifier: "Markdown.WikiSource" })
 
@@ -282,7 +392,12 @@ export const WikiPage = Schema.Struct({
   topic: TopicSlug,
   generatedAt: Timestamp,
   mode: WikiMode,
-  noteCount: Schema.Int,
+  noteCount: Schema.Int.check(
+    Schema.isBetween(
+      { minimum: 0, maximum: MAX_WIKI_LIMIT },
+      { message: `Wiki note count must be between 0 and ${MAX_WIKI_LIMIT}.` },
+    ),
+  ),
   sources: Schema.Array(WikiSource),
   sections: Schema.Array(WikiSection),
   markdown: Schema.String,

@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite"
 import { describe, expect, test } from "bun:test"
 import { Markdown } from "@slipmem/schemas/markdown"
+import { Schema } from "effect"
 import { readdirSync, readFileSync } from "node:fs"
 import { basename, join } from "node:path"
 
@@ -54,7 +55,18 @@ interface MigrationManifest {
 interface AcceptanceExamples {
   readonly schema: number
   readonly cli: Readonly<Record<string, unknown>>
-  readonly api: Readonly<Record<string, { readonly request: { readonly method: string; readonly path: string } }>>
+  readonly api: Readonly<
+    Record<
+      string,
+      {
+        readonly request: { readonly method: string; readonly path: string }
+        readonly response?: {
+          readonly status: number
+          readonly body: unknown
+        }
+      }
+    >
+  >
   readonly mcp: Readonly<
     Record<
       string,
@@ -344,5 +356,30 @@ describe("Phase 0 acceptance payload fixtures", () => {
     )
     expect(acceptanceExamples.mcp.deleteAny!.result.status).toBe("pending_approval")
     expect(Object.keys(acceptanceExamples.mcp)).not.toContain("approve_proposal")
+  })
+
+  test("wiki payloads decode as structured wiki pages", () => {
+    const apiWiki = acceptanceExamples.api.wiki!.response!.body
+    const mcpWiki = acceptanceExamples.mcp.wiki!.result
+
+    expect(Schema.decodeUnknownOption(Markdown.WikiPage)(apiWiki)._tag).toBe(
+      "Some",
+    )
+    expect(Schema.decodeUnknownOption(Markdown.WikiPage)(mcpWiki)._tag).toBe(
+      "Some",
+    )
+
+    // The same schema rejects an uncited section, so the acceptance example is
+    // not passing merely because the page schema is permissive.
+    const page = Schema.decodeUnknownSync(Markdown.WikiPage)(apiWiki)
+    expect(page.sections.every((section) => section.citations.length > 0)).toBe(
+      true,
+    )
+    expect(
+      Schema.decodeUnknownOption(Markdown.WikiPage)({
+        ...page,
+        sections: [{ heading: "Recall", markdown: "text", citations: [] }],
+      })._tag,
+    ).toBe("None")
   })
 })

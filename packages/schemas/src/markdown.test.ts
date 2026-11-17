@@ -7,6 +7,15 @@ const decodes = (
   input: unknown,
 ): boolean => Schema.decodeUnknownOption(schema)(input)._tag === "Some"
 
+const omit = (
+  input: Readonly<Record<string, unknown>>,
+  key: string,
+): Record<string, unknown> => {
+  const next = { ...input }
+  delete next[key]
+  return next
+}
+
 describe("note slugs and filenames", () => {
   test("normalizes titles to lowercase ASCII kebab-case", () => {
     expect(Markdown.slugifyTitle("Agent memory is bounded")).toBe(
@@ -102,6 +111,46 @@ describe("topic slug normalization", () => {
     expect(Markdown.isTopicSlug("")).toBe(false)
     expect(Markdown.isTopicSlug("a".repeat(65))).toBe(false)
   })
+
+  test("TopicSlug rejects values beyond the 64-character limit", () => {
+    expect(decodes(Markdown.TopicSlug, "a".repeat(64))).toBe(true)
+    expect(decodes(Markdown.TopicSlug, "a".repeat(65))).toBe(false)
+    expect(decodes(Markdown.TopicSlug, `${"a".repeat(31)}-${"b".repeat(32)}`)).toBe(
+      true,
+    )
+  })
+})
+
+describe("UTC timestamp and note ID schemas", () => {
+  test("Timestamp accepts canonical whole-second UTC instants", () => {
+    expect(decodes(Markdown.Timestamp, "2026-11-17T19:30:45Z")).toBe(true)
+    expect(decodes(Markdown.Timestamp, "2024-02-29T00:00:00Z")).toBe(true)
+  })
+
+  test("Timestamp rejects impossible calendar dates and times", () => {
+    expect(decodes(Markdown.Timestamp, "2026-02-30T19:30:45Z")).toBe(false)
+    expect(decodes(Markdown.Timestamp, "2026-13-01T00:00:00Z")).toBe(false)
+    expect(decodes(Markdown.Timestamp, "2026-11-17T24:00:00Z")).toBe(false)
+    expect(decodes(Markdown.Timestamp, "2026-11-17T19:60:00Z")).toBe(false)
+    expect(decodes(Markdown.Timestamp, "2026-11-17T19:30:60Z")).toBe(false)
+    expect(decodes(Markdown.Timestamp, "2026-11-17T19:30:45.000Z")).toBe(false)
+    expect(decodes(Markdown.Timestamp, "2026-11-17T19:30:45")).toBe(false)
+  })
+
+  test("NoteId rejects an impossible timestamp prefix", () => {
+    expect(
+      decodes(Markdown.NoteId, "20261117193045-agent-memory-is-bounded"),
+    ).toBe(true)
+    expect(
+      decodes(Markdown.NoteId, "20260230193045-agent-memory-is-bounded"),
+    ).toBe(false)
+    expect(
+      decodes(Markdown.NoteId, "20261301193045-agent-memory-is-bounded"),
+    ).toBe(false)
+    expect(Markdown.isNoteIdWithRealTimestamp("20260230193045-agent-memory")).toBe(
+      false,
+    )
+  })
 })
 
 describe("Markdown contract schemas", () => {
@@ -121,6 +170,17 @@ describe("Markdown contract schemas", () => {
     expect(
       decodes(Markdown.NoteMetadata, { ...metadata, futureField: "preserved" }),
     ).toBe(true)
+
+    // Decoding validates but does not preserve unknown keys; the repository
+    // parser keeps the raw mapping and re-emits it on render.
+    const decoded = Schema.decodeUnknownOption(Markdown.NoteMetadata)({
+      ...metadata,
+      futureField: "preserved",
+    })
+    expect(decoded._tag).toBe("Some")
+    if (decoded._tag === "Some") {
+      expect("futureField" in decoded.value).toBe(false)
+    }
   })
 
   test("rejects invalid note metadata", () => {
@@ -140,6 +200,53 @@ describe("Markdown contract schemas", () => {
     ).toBe(false)
     expect(
       decodes(Markdown.NoteMetadata, { ...metadata, topics: ["Agent Memory"] }),
+    ).toBe(false)
+    expect(
+      decodes(Markdown.NoteMetadata, {
+        ...metadata,
+        createdAt: "2026-02-30T19:30:45Z",
+      }),
+    ).toBe(false)
+    expect(
+      decodes(Markdown.NoteMetadata, {
+        ...metadata,
+        id: "20260230193045-agent-memory-is-bounded",
+      }),
+    ).toBe(false)
+  })
+
+  test("requires updatedAt to be at least createdAt", () => {
+    expect(
+      decodes(Markdown.NoteMetadata, {
+        ...metadata,
+        updatedAt: "2026-11-17T19:30:44Z",
+      }),
+    ).toBe(false)
+    expect(
+      decodes(Markdown.NoteMetadata, {
+        ...metadata,
+        updatedAt: metadata.createdAt,
+      }),
+    ).toBe(true)
+  })
+
+  test("requires a non-blank reference for literature notes only", () => {
+    const literature = {
+      ...metadata,
+      type: "literature" as const,
+      reference: "https://example.com/source",
+    }
+
+    expect(decodes(Markdown.NoteMetadata, literature)).toBe(true)
+
+    const withoutReference: { reference?: string } = { ...literature }
+    delete withoutReference.reference
+    expect(decodes(Markdown.NoteMetadata, withoutReference)).toBe(false)
+    expect(
+      decodes(Markdown.NoteMetadata, { ...literature, reference: "   " }),
+    ).toBe(false)
+    expect(
+      decodes(Markdown.NoteMetadata, { ...metadata, reference: "   " }),
     ).toBe(false)
   })
 
@@ -176,12 +283,93 @@ describe("Markdown contract schemas", () => {
 
     expect(decodes(Markdown.WikiPage, page)).toBe(true)
     expect(decodes(Markdown.WikiPage, { ...page, mode: "invented" })).toBe(false)
+  })
+
+  test("rejects uncited sections and blank citation targets", () => {
+    const section = {
+      heading: "Bounded recall",
+      markdown: "> Every recall operation is bounded.",
+      citations: [
+        {
+          noteId: "20261117193045-agent-memory-is-bounded",
+          path: ".slipmem/20261117193045-agent-memory-is-bounded.md",
+        },
+      ],
+    }
+
+    expect(decodes(Markdown.WikiSection, section)).toBe(true)
+    expect(
+      decodes(Markdown.WikiSection, { ...section, citations: [] }),
+    ).toBe(false)
+    expect(decodes(Markdown.WikiSection, { ...section, heading: "   " })).toBe(
+      false,
+    )
+    expect(decodes(Markdown.WikiSection, { ...section, markdown: "" })).toBe(false)
+    expect(
+      decodes(Markdown.WikiSection, {
+        ...section,
+        citations: [{ ...section.citations[0], path: "  " }],
+      }),
+    ).toBe(false)
+  })
+
+  test("bounds wiki page counts and source fields", () => {
+    const page = {
+      topic: "agent-memory",
+      generatedAt: "2026-11-17T20:10:00Z",
+      mode: "extractive",
+      noteCount: 0,
+      sources: [],
+      sections: [],
+      markdown: "# Topic: agent-memory\n",
+    }
+
+    expect(decodes(Markdown.WikiPage, page)).toBe(true)
+    expect(decodes(Markdown.WikiPage, { ...page, noteCount: -1 })).toBe(false)
     expect(
       decodes(Markdown.WikiPage, {
         ...page,
-        sections: [{ heading: "No source", markdown: "text", citations: [] }],
+        noteCount: Markdown.MAX_WIKI_LIMIT + 1,
+      }),
+    ).toBe(false)
+    expect(decodes(Markdown.WikiPage, { ...page, noteCount: 1.5 })).toBe(false)
+    expect(
+      decodes(Markdown.WikiPage, {
+        ...page,
+        sources: [
+          {
+            id: "20261117193045-agent-memory-is-bounded",
+            path: "",
+            type: "permanent",
+            title: "Agent memory is bounded",
+            updatedAt: "2026-11-17T19:35:02Z",
+          },
+        ],
+      }),
+    ).toBe(false)
+  })
+
+  test("WikiInput bounds the note limit", () => {
+    expect(decodes(Markdown.WikiInput, { topic: "agent-memory" })).toBe(true)
+    expect(decodes(Markdown.WikiInput, { topic: "agent-memory", limit: 1 })).toBe(
+      true,
+    )
+    expect(
+      decodes(Markdown.WikiInput, {
+        topic: "agent-memory",
+        limit: Markdown.MAX_WIKI_LIMIT,
       }),
     ).toBe(true)
+    expect(decodes(Markdown.WikiInput, { topic: "agent-memory", limit: 0 })).toBe(
+      false,
+    )
+    expect(
+      decodes(Markdown.WikiInput, {
+        topic: "agent-memory",
+        limit: Markdown.MAX_WIKI_LIMIT + 1,
+      }),
+    ).toBe(false)
+    expect(decodes(Markdown.WikiInput, { topic: "a".repeat(65) })).toBe(false)
   })
 
   test("decodes MCP approval proposals and rejects self-approval sources", () => {
@@ -205,5 +393,75 @@ describe("Markdown contract schemas", () => {
     expect(
       decodes(Markdown.ApprovalProposal, { ...proposal, operation: "approve" }),
     ).toBe(false)
+  })
+
+  test("requires operation-specific proposal fields", () => {
+    const target = {
+      id: "proposal-1",
+      createdAt: "2026-11-17T20:10:00Z",
+      expiresAt: "2026-11-24T20:10:00Z",
+      noteId: "20261117193045-agent-memory-is-bounded",
+      path: ".slipmem/20261117193045-agent-memory-is-bounded.md",
+      actor: "agent",
+      source: "mcp",
+      summary: "Change a permanent note.",
+    }
+
+    const create = {
+      ...target,
+      operation: "create",
+      content: "---\n",
+    }
+    const update = {
+      ...target,
+      operation: "update",
+      baseHash: "abc123",
+      content: "---\n",
+    }
+    const remove = {
+      ...target,
+      operation: "delete",
+      baseHash: "abc123",
+    }
+    const reclassify = {
+      ...target,
+      operation: "reclassify",
+      baseHash: "abc123",
+      content: "---\n",
+    }
+
+    expect(decodes(Markdown.ApprovalProposal, create)).toBe(true)
+    expect(decodes(Markdown.ApprovalProposal, update)).toBe(true)
+    expect(decodes(Markdown.ApprovalProposal, remove)).toBe(true)
+    expect(decodes(Markdown.ApprovalProposal, reclassify)).toBe(true)
+
+    expect(decodes(Markdown.ApprovalProposal, omit(create, "content"))).toBe(false)
+    expect(decodes(Markdown.ApprovalProposal, omit(create, "noteId"))).toBe(false)
+    expect(decodes(Markdown.ApprovalProposal, omit(create, "path"))).toBe(false)
+    expect(decodes(Markdown.ApprovalProposal, omit(update, "baseHash"))).toBe(
+      false,
+    )
+    expect(decodes(Markdown.ApprovalProposal, omit(update, "content"))).toBe(false)
+    expect(decodes(Markdown.ApprovalProposal, omit(remove, "baseHash"))).toBe(
+      false,
+    )
+    expect(decodes(Markdown.ApprovalProposal, omit(reclassify, "content"))).toBe(
+      false,
+    )
+    expect(
+      decodes(Markdown.ApprovalProposal, {
+        ...create,
+        expiresAt: "2026-11-17T20:09:59Z",
+      }),
+    ).toBe(false)
+    expect(
+      decodes(Markdown.ApprovalProposal, {
+        ...create,
+        createdAt: "2026-02-30T20:10:00Z",
+      }),
+    ).toBe(false)
+    expect(decodes(Markdown.ApprovalProposal, { ...create, summary: "  " })).toBe(
+      false,
+    )
   })
 })
