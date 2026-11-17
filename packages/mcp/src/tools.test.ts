@@ -1,10 +1,20 @@
 import { createTestNote, makeDisposableRoot, makeTestClock, removeDisposableRoot } from "./test-helpers"
 import { mcpInstructions } from "./config"
 import { makeMarkdownServicesLayer } from "./layer"
+import {
+  boundedExcerpt,
+  boundedListLimit,
+  boundedTopicLimit,
+  boundedWikiLimit,
+} from "./schemas"
 import { McpNoteRegistrations } from "./tools"
+import { makeMarkdownNoteRepository, type MarkdownNoteRepositoryShape } from "@slipmem/core"
+import { makeApprovalService } from "@slipmem/core/approval"
 import { expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { McpProtocol, McpTest } from "effect/ai"
+import { readdir, readFile } from "node:fs/promises"
+import { join } from "node:path"
 
 interface Note {
   readonly id: string
@@ -24,10 +34,15 @@ interface SearchHit {
   readonly path: string
 }
 
-const makeClient = (root: string, cacheDir: string, now: () => number) =>
+const makeClient = (
+  root: string,
+  cacheDir: string,
+  now: () => number,
+  env: Readonly<Record<string, string | undefined>> = {},
+) =>
   McpTest.makeClient(
     McpNoteRegistrations.pipe(
-      Layer.provide(makeMarkdownServicesLayer({ root, cacheDir, now })),
+      Layer.provide(makeMarkdownServicesLayer({ root, cacheDir, now, env })),
     ),
     { protocols: [McpProtocol.v2025_11_25] },
   )
@@ -37,15 +52,50 @@ const withClient = <A>(
   cacheDir: string,
   now: () => number,
   run: (client: McpTest.Client) => Effect.Effect<A, any>,
+  env: Readonly<Record<string, string | undefined>> = {},
 ): Promise<A> =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const client = yield* makeClient(root, cacheDir, now)
+        const client = yield* makeClient(root, cacheDir, now, env)
         return yield* run(client)
       }),
     ) as Effect.Effect<A>,
   )
+
+interface StoredProposal {
+  readonly id: string
+  readonly operation: string
+  readonly noteId: string
+  readonly path: string
+  readonly summary: string
+  readonly source: string
+  readonly actor?: string
+  readonly baseHash?: string
+  readonly content?: string
+}
+
+const pendingProposals = async (root: string): Promise<ReadonlyArray<StoredProposal>> => {
+  try {
+    const directory = join(root, ".state", "pending")
+    const names = (await readdir(directory)).filter((name) => name.endsWith(".json"))
+    return await Promise.all(
+      names.sort().map(async (name) =>
+        JSON.parse(await readFile(join(directory, name), "utf8")) as StoredProposal,
+      ),
+    )
+  } catch {
+    return []
+  }
+}
+
+const testRepository = (root: string, now: () => number): Promise<MarkdownNoteRepositoryShape> =>
+  Effect.runPromise(makeMarkdownNoteRepository({ root, now }))
+
+const readStoredNote = async (
+  repository: MarkdownNoteRepositoryShape,
+  id: string,
+) => Option.getOrNull(await Effect.runPromise(repository.get(id)))
 
 test("exposes the bounded read surface", async () => {
   const disposable = await makeDisposableRoot()
@@ -58,14 +108,26 @@ test("exposes the bounded read surface", async () => {
     expect(tools.tools.map((tool) => tool.name)).toEqual([
       "list_fleeting_notes",
       "get_fleeting_note",
+      "create_fleeting_note",
+      "update_fleeting_note",
+      "delete_fleeting_note",
       "list_permanent_notes",
       "get_permanent_note",
+      "create_permanent_note",
+      "update_permanent_note",
+      "delete_permanent_note",
       "list_literature_notes",
       "get_literature_note",
+      "create_literature_note",
+      "update_literature_note",
+      "delete_literature_note",
       "search_notes",
       "list_topics",
       "build_topic_wiki",
     ])
+    expect(tools.tools.some((tool) => /approve|reject|apply/.test(tool.name))).toBe(
+      false,
+    )
   } finally {
     await removeDisposableRoot(disposable)
   }
@@ -478,11 +540,394 @@ test("build_topic_wiki is extractive, cited, bounded, and excludes fleeting by d
 
     expect(synthesized.isError).toBe(true)
     expect((synthesized.content[0] as { text: string }).text).toContain(
-      "Synthesized wiki pages require",
+      "Synthesized mode requires",
     )
   } finally {
     await removeDisposableRoot(disposable)
   }
+})
+
+test("fleeting and literature writes are direct and carry mcp provenance", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const [fleeting, literature] = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        Effect.gen(function* () {
+          return yield* Effect.all([
+            client.callTool({
+              name: "create_fleeting_note",
+              arguments: {
+                title: "Inbox",
+                content: "A quick thought.",
+                topics: ["inbox"],
+              },
+            }),
+            client.callTool({
+              name: "create_literature_note",
+              arguments: {
+                title: "Source",
+                content: "A cited claim.",
+                reference: "https://example.com/source",
+              },
+            }),
+          ])
+        }),
+    )
+
+    const fleetingNote = fleeting.structuredContent as Note
+    const literatureNote = literature.structuredContent as Note
+    expect(fleetingNote).toEqual(
+      expect.objectContaining({ type: "fleeting", title: "Inbox" }),
+    )
+    expect(literatureNote).toEqual(
+      expect.objectContaining({
+        type: "literature",
+        reference: "https://example.com/source",
+      }),
+    )
+    expect(await pendingProposals(disposable.root)).toEqual([])
+
+    const repository = await testRepository(disposable.root, clock.now)
+    const fleetingStored = await readStoredNote(repository, fleetingNote.id)
+    const literatureStored = await readStoredNote(repository, literatureNote.id)
+    expect(fleetingStored).not.toBeNull()
+    expect(literatureStored).not.toBeNull()
+    if (fleetingStored === null || literatureStored === null) {
+      throw new Error("expected both direct notes to exist")
+    }
+    expect(fleetingStored.metadata.provenance).toEqual({ source: "mcp" })
+    expect(literatureStored.metadata.provenance).toEqual({ source: "mcp" })
+    expect(literatureStored.metadata.reference).toBe("https://example.com/source")
+
+    const updated = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({
+          name: "update_fleeting_note",
+          arguments: {
+            id: fleetingNote.id,
+            title: "Inbox updated",
+            content: "Still direct.",
+          },
+        }),
+    )
+    expect(updated.structuredContent).toEqual(
+      expect.objectContaining({
+        id: fleetingNote.id,
+        title: "Inbox updated",
+        content: "Still direct.",
+      }),
+    )
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("permanent creates are pending, write no note, and can only be applied by a human service", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const created = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({
+          name: "create_permanent_note",
+          arguments: {
+            title: "Agent memory is bounded",
+            content: "Every recall operation has a limit.",
+            topics: ["agent-memory"],
+          },
+        }),
+    )
+
+    const pending = created.structuredContent as {
+      readonly status: string
+      readonly proposalId: string
+      readonly summary: string
+    }
+    expect(pending.status).toBe("pending_approval")
+    expect(pending.summary).toContain("Create permanent note")
+
+    const proposals = await pendingProposals(disposable.root)
+    expect(proposals).toHaveLength(1)
+    expect(proposals[0]).toEqual(
+      expect.objectContaining({
+        id: pending.proposalId,
+        operation: "create",
+        source: "mcp",
+        noteId: expect.stringMatching(/^\d{14}-/),
+      }),
+    )
+    expect(proposals[0]!.content).toContain("type: permanent")
+    expect(proposals[0]!.content).toContain("source: mcp")
+
+    const notesBefore = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({ name: "list_permanent_notes", arguments: {} }),
+    )
+    expect(
+      (notesBefore.structuredContent as { notes: ReadonlyArray<Note> }).notes,
+    ).toEqual([])
+
+    const repository = await testRepository(disposable.root, clock.now)
+    const approval = await Effect.runPromise(
+      makeApprovalService(repository, { now: clock.now, env: {} }),
+    )
+    const applied = await Effect.runPromise(approval.apply(pending.proposalId))
+    expect(applied).toEqual(
+      expect.objectContaining({
+        status: "applied",
+        operation: "create",
+        noteId: proposals[0]!.noteId,
+      }),
+    )
+    expect(await pendingProposals(disposable.root)).toEqual([])
+
+    const notesAfter = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({ name: "list_permanent_notes", arguments: {} }),
+    )
+    expect(
+      (notesAfter.structuredContent as { notes: ReadonlyArray<Note> }).notes,
+    ).toEqual([expect.objectContaining({ id: proposals[0]!.noteId })])
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("every MCP delete is pending and leaves the note in place", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const permanent = await createTestNote(
+      disposable.root,
+      {
+        type: "permanent",
+        title: "Keep me",
+        content: "This note must survive an MCP delete.",
+      },
+      clock.now,
+    )
+
+    const deleted = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({
+          name: "delete_permanent_note",
+          arguments: { id: permanent.id },
+        }),
+    )
+
+    const pending = deleted.structuredContent as {
+      readonly status: string
+      readonly proposalId: string
+    }
+    expect(pending.status).toBe("pending_approval")
+    expect(pending.proposalId.length).toBeGreaterThan(0)
+
+    const proposals = await pendingProposals(disposable.root)
+    expect(proposals).toEqual([
+      expect.objectContaining({
+        id: pending.proposalId,
+        operation: "delete",
+        noteId: permanent.id,
+        source: "mcp",
+      }),
+    ])
+
+    const repository = await testRepository(disposable.root, clock.now)
+    const stillThere = await readStoredNote(repository, permanent.id)
+    expect(stillThere?.info.title).toBe("Keep me")
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("a stale permanent update proposal cannot overwrite a changed note", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const permanent = await createTestNote(
+      disposable.root,
+      {
+        type: "permanent",
+        title: "Stable title",
+        content: "Original content.",
+      },
+      clock.now,
+    )
+    clock.advance()
+
+    const proposed = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({
+          name: "update_permanent_note",
+          arguments: {
+            id: permanent.id,
+            title: "Proposed title",
+            content: "Proposed content.",
+          },
+        }),
+    )
+    const pending = proposed.structuredContent as {
+      readonly status: string
+      readonly proposalId: string
+    }
+    expect(pending.status).toBe("pending_approval")
+
+    const repository = await testRepository(disposable.root, clock.now)
+    clock.advance()
+    await Effect.runPromise(
+      repository.update({
+        id: permanent.id,
+        title: "Changed externally",
+        content: "Changed before approval.",
+      }),
+    )
+
+    const approval = await Effect.runPromise(
+      makeApprovalService(repository, { now: clock.now, env: {} }),
+    )
+    const failure = await Effect.runPromise(
+      Effect.flip(approval.apply(pending.proposalId)),
+    )
+    expect(failure.code).toBe("stale-base")
+
+    const stored = await readStoredNote(repository, permanent.id)
+    expect(stored?.metadata.title).toBe("Changed externally")
+    expect(stored?.body).toBe("Changed before approval.")
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("the documented direct policy records mcp-direct provenance but still never deletes directly", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const direct = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({
+          name: "create_permanent_note",
+          arguments: { title: "Direct permanent", content: "Unsafe opt-in." },
+        }),
+      { SLIPMEM_MCP_WRITE_POLICY: "direct" },
+    )
+    const note = direct.structuredContent as Note
+    expect(note).toEqual(
+      expect.objectContaining({ type: "permanent", title: "Direct permanent" }),
+    )
+
+    const repository = await testRepository(disposable.root, clock.now)
+    const stored = await readStoredNote(repository, String(note.id))
+    expect(stored?.metadata.provenance).toEqual({ source: "mcp-direct" })
+
+    const deleted = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({
+          name: "delete_permanent_note",
+          arguments: { id: note.id },
+        }),
+      { SLIPMEM_MCP_WRITE_POLICY: "direct" },
+    )
+    expect(deleted.structuredContent).toEqual(
+      expect.objectContaining({ status: "pending_approval" }),
+    )
+    expect(String((await readStoredNote(repository, note.id))?.info.id)).toBe(
+      note.id,
+    )
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("per-kind writes and deletes reject cross-kind IDs without proposing", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const permanent = await createTestNote(
+      disposable.root,
+      {
+        type: "permanent",
+        title: "Permanent only",
+        content: "Not a fleeting note.",
+      },
+      clock.now,
+    )
+
+    const [update, remove] = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        Effect.gen(function* () {
+          return yield* Effect.all([
+            client.callTool({
+              name: "update_fleeting_note",
+              arguments: { id: permanent.id, title: "Wrong kind" },
+            }),
+            client.callTool({
+              name: "delete_fleeting_note",
+              arguments: { id: permanent.id },
+            }),
+          ])
+        }),
+    )
+
+    expect(update.isError).toBe(true)
+    expect(remove.isError).toBe(true)
+    expect(
+      (update.content[0] as { text: string }).text,
+    ).toContain("fleeting note not found")
+    expect(await pendingProposals(disposable.root)).toEqual([])
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("server bounds are the contract defaults even before a request", () => {
+  expect(boundedListLimit(undefined)).toBe(10)
+  expect(boundedListLimit(1)).toBe(1)
+  expect(boundedListLimit(50)).toBe(50)
+  expect(boundedListLimit(10_000)).toBe(50)
+  expect(boundedListLimit(-5)).toBe(1)
+  expect(boundedTopicLimit(undefined)).toBe(50)
+  expect(boundedTopicLimit(10_000)).toBe(200)
+  expect(boundedWikiLimit(undefined)).toBe(10)
+  expect(boundedWikiLimit(10_000)).toBe(25)
+  expect(boundedExcerpt("a".repeat(400)).length).toBe(240)
+  expect(boundedExcerpt("  spaced \n text  ")).toBe("spaced text")
 })
 
 test("instructions repeat the trust boundary", () => {

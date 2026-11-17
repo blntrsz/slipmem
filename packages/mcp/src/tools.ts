@@ -1,29 +1,46 @@
 import {
   MarkdownNoteRepository,
   MarkdownSearchIndex,
+  WikiService,
 } from "@slipmem/core"
+import {
+  type ApprovalError,
+  type ApprovalServiceShape,
+  type McpWriteResult,
+} from "@slipmem/core/approval"
+import type { WikiError } from "@slipmem/core/wiki"
 import type { Note } from "@slipmem/schemas/note"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { Effect, Layer, Option } from "effect"
 import { McpServer, Tool, Toolkit } from "effect/ai"
-import { failure, toolFailure } from "./errors"
+import { McpApprovalService } from "./approval"
+import { failure, noteNotFound, toolFailure } from "./errors"
 import {
   boundedExcerpt,
   boundedListLimit,
   boundedTopicLimit,
   boundedWikiLimit,
   BuildTopicWikiInput,
+  CreateFleetingInput,
+  CreateLiteratureInput,
+  CreatePermanentInput,
+  DeleteNoteInput,
+  DeleteNoteResult,
   GetNoteInput,
   ListNotesInput,
   ListTopicsInput,
   ListTopicsResult,
   NoteListResult,
   NoteResult,
+  PendingApprovalResult,
   SearchNotesInput,
   SearchNotesResult,
   ToolFailure,
+  UpdateFleetingInput,
+  UpdateLiteratureInput,
+  UpdatePermanentInput,
+  WriteNoteResult,
 } from "./schemas"
-import { buildExtractiveWiki } from "./wiki"
 
 const readOnlyTool = <T extends Tool.Any>(tool: T): T =>
   tool
@@ -104,13 +121,99 @@ const BuildTopicWiki = readOnlyTool(Tool.make("build_topic_wiki", {
   failure: ToolFailure,
 }))
 
+const localTool = <T extends Tool.Any>(tool: T): T =>
+  tool
+    .annotate(Tool.OpenWorld, false)
+    .annotate(Tool.Destructive, false) as T
+
+const CreateFleetingNote = localTool(Tool.make("create_fleeting_note", {
+  description:
+    "Create a fleeting note directly with provenance source mcp. Fleeting notes are a low-trust inbox.",
+  parameters: CreateFleetingInput,
+  success: WriteNoteResult,
+  failure: ToolFailure,
+}))
+
+const UpdateFleetingNote = localTool(Tool.make("update_fleeting_note", {
+  description:
+    "Update a fleeting note directly with provenance source mcp. Cross-kind IDs are not found.",
+  parameters: UpdateFleetingInput,
+  success: WriteNoteResult,
+  failure: ToolFailure,
+}))
+
+const DeleteFleetingNote = localTool(Tool.make("delete_fleeting_note", {
+  description:
+    "Delete a fleeting note. This creates a pending human approval proposal; nothing is deleted by MCP.",
+  parameters: DeleteNoteInput,
+  success: DeleteNoteResult,
+  failure: ToolFailure,
+})).annotate(Tool.Destructive, true)
+
+const CreatePermanentNote = localTool(Tool.make("create_permanent_note", {
+  description:
+    "Create a permanent note. By default this creates a pending human approval proposal and writes no note file; no MCP tool can approve it.",
+  parameters: CreatePermanentInput,
+  success: WriteNoteResult,
+  failure: ToolFailure,
+}))
+
+const UpdatePermanentNote = localTool(Tool.make("update_permanent_note", {
+  description:
+    "Update a permanent note. By default this creates a pending human approval proposal and writes no note file; cross-kind IDs are not found.",
+  parameters: UpdatePermanentInput,
+  success: WriteNoteResult,
+  failure: ToolFailure,
+}))
+
+const DeletePermanentNote = localTool(Tool.make("delete_permanent_note", {
+  description:
+    "Delete a permanent note. This creates a pending human approval proposal; nothing is deleted by MCP.",
+  parameters: DeleteNoteInput,
+  success: DeleteNoteResult,
+  failure: ToolFailure,
+})).annotate(Tool.Destructive, true)
+
+const CreateLiteratureNote = localTool(Tool.make("create_literature_note", {
+  description:
+    "Create a literature note directly with provenance source mcp. A non-blank source reference is required.",
+  parameters: CreateLiteratureInput,
+  success: WriteNoteResult,
+  failure: ToolFailure,
+}))
+
+const UpdateLiteratureNote = localTool(Tool.make("update_literature_note", {
+  description:
+    "Update a literature note directly with provenance source mcp. A non-blank source reference remains required; cross-kind IDs are not found.",
+  parameters: UpdateLiteratureInput,
+  success: WriteNoteResult,
+  failure: ToolFailure,
+}))
+
+const DeleteLiteratureNote = localTool(Tool.make("delete_literature_note", {
+  description:
+    "Delete a literature note. This creates a pending human approval proposal; nothing is deleted by MCP.",
+  parameters: DeleteNoteInput,
+  success: DeleteNoteResult,
+  failure: ToolFailure,
+})).annotate(Tool.Destructive, true)
+
 export const McpNoteTools = Toolkit.make(
   ListFleetingNotes,
   GetFleetingNote,
+  CreateFleetingNote,
+  UpdateFleetingNote,
+  DeleteFleetingNote,
   ListPermanentNotes,
   GetPermanentNote,
+  CreatePermanentNote,
+  UpdatePermanentNote,
+  DeletePermanentNote,
   ListLiteratureNotes,
   GetLiteratureNote,
+  CreateLiteratureNote,
+  UpdateLiteratureNote,
+  DeleteLiteratureNote,
   SearchNotes,
   ListTopics,
   BuildTopicWiki,
@@ -142,14 +245,84 @@ const listOfKind = (
       Effect.mapError(toolFailure),
     )
 
+const approvalFailure = (error: ApprovalError): ToolFailure =>
+  failure(error.code, error.message)
+
+const wikiFailure = (error: WikiError): ToolFailure =>
+  failure(error.code, error.message)
+
 /**
- * Read handlers only need the Markdown repository and its disposable index.
- * Write handlers are layered on the same services in the next increment.
+ * Per-kind tools must not act on another kind's note. A cross-kind ID is
+ * reported as not found, matching the get tools, rather than turning an update
+ * into an implicit reclassification.
  */
-export const McpReadHandlersLayer = McpNoteTools.toLayer(
+const requireNoteOfKind = (
+  repository: MarkdownNoteRepository["Service"],
+  id: string,
+  type: Markdown.NoteType,
+): Effect.Effect<void, ToolFailure> =>
+  repository.getInfo(id).pipe(
+    Effect.mapError(toolFailure),
+    Effect.flatMap((info) =>
+      Option.isSome(info) && info.value.type === type
+        ? Effect.void
+        : Effect.fail(noteNotFound(`${type} note`, id)),
+    ),
+  )
+
+/** Collapses the core result into the public MCP create/update shape. */
+const toWriteResult = (result: McpWriteResult): WriteNoteResult =>
+  result.status === "direct"
+    ? result.note.info
+    : {
+        status: "pending_approval",
+        proposalId: result.proposalId,
+        summary: result.summary,
+      }
+
+const submit = (
+  approval: ApprovalServiceShape,
+  input: Parameters<ApprovalServiceShape["submitMcp"]>[0],
+): Effect.Effect<WriteNoteResult, ToolFailure> =>
+  approval.submitMcp(input).pipe(
+    Effect.map(toWriteResult),
+    Effect.mapError(approvalFailure),
+  )
+
+const submitDelete = (
+  approval: ApprovalServiceShape,
+  id: string,
+): Effect.Effect<PendingApprovalResult, ToolFailure> =>
+  approval.submitMcp({ operation: "delete", id }).pipe(
+    Effect.map((result) => {
+      if (result.status !== "pending_approval") {
+        // The frozen core policy never applies an MCP delete directly. If that
+        // ever changes, fail closed rather than reporting a delete that this
+        // tool contract says cannot happen.
+        throw new Error(
+          "MCP deletes must always create a pending approval proposal.",
+        )
+      }
+      return {
+        status: "pending_approval" as const,
+        proposalId: result.proposalId,
+        summary: result.summary,
+      }
+    }),
+    Effect.mapError(approvalFailure),
+  )
+
+/**
+ * Read and write handlers share the Markdown repository, its disposable index,
+ * and the core approval service. There is no approval tool: writes submit to
+ * the same policy-enforced service the human review surfaces read from.
+ */
+export const McpHandlersLayer = McpNoteTools.toLayer(
   Effect.gen(function* () {
     const repository = yield* MarkdownNoteRepository
     const index = yield* MarkdownSearchIndex
+    const approval = yield* McpApprovalService
+    const wiki = yield* WikiService
 
     return McpNoteTools.of({
       list_fleeting_notes: (input) => listOfKind(repository, "fleeting", input),
@@ -157,16 +330,92 @@ export const McpReadHandlersLayer = McpNoteTools.toLayer(
         getInfoOfKind(repository, input.id, "fleeting").pipe(
           Effect.map((note) => ({ note: Option.getOrNull(note) })),
         ),
+      create_fleeting_note: (input) =>
+        submit(approval, {
+          operation: "create",
+          type: "fleeting",
+          title: input.title,
+          content: input.content,
+          ...(input.topics === undefined ? {} : { topics: input.topics }),
+        }),
+      update_fleeting_note: (input) =>
+        Effect.gen(function* () {
+          yield* requireNoteOfKind(repository, input.id, "fleeting")
+          return yield* submit(approval, {
+            operation: "update",
+            id: input.id,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.content === undefined ? {} : { content: input.content }),
+            ...(input.topics === undefined ? {} : { topics: input.topics }),
+          })
+        }),
+      delete_fleeting_note: (input) =>
+        Effect.gen(function* () {
+          yield* requireNoteOfKind(repository, input.id, "fleeting")
+          return yield* submitDelete(approval, input.id)
+        }),
       list_permanent_notes: (input) => listOfKind(repository, "permanent", input),
       get_permanent_note: (input) =>
         getInfoOfKind(repository, input.id, "permanent").pipe(
           Effect.map((note) => ({ note: Option.getOrNull(note) })),
         ),
+      create_permanent_note: (input) =>
+        submit(approval, {
+          operation: "create",
+          type: "permanent",
+          title: input.title,
+          content: input.content,
+          ...(input.topics === undefined ? {} : { topics: input.topics }),
+        }),
+      update_permanent_note: (input) =>
+        Effect.gen(function* () {
+          yield* requireNoteOfKind(repository, input.id, "permanent")
+          return yield* submit(approval, {
+            operation: "update",
+            id: input.id,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.content === undefined ? {} : { content: input.content }),
+            ...(input.topics === undefined ? {} : { topics: input.topics }),
+          })
+        }),
+      delete_permanent_note: (input) =>
+        Effect.gen(function* () {
+          yield* requireNoteOfKind(repository, input.id, "permanent")
+          return yield* submitDelete(approval, input.id)
+        }),
       list_literature_notes: (input) => listOfKind(repository, "literature", input),
       get_literature_note: (input) =>
         getInfoOfKind(repository, input.id, "literature").pipe(
           Effect.map((note) => ({ note: Option.getOrNull(note) })),
         ),
+      create_literature_note: (input) =>
+        submit(approval, {
+          operation: "create",
+          type: "literature",
+          title: input.title,
+          content: input.content,
+          reference: input.reference,
+          ...(input.topics === undefined ? {} : { topics: input.topics }),
+        }),
+      update_literature_note: (input) =>
+        Effect.gen(function* () {
+          yield* requireNoteOfKind(repository, input.id, "literature")
+          return yield* submit(approval, {
+            operation: "update",
+            id: input.id,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.content === undefined ? {} : { content: input.content }),
+            ...(input.reference === undefined
+              ? {}
+              : { reference: input.reference }),
+            ...(input.topics === undefined ? {} : { topics: input.topics }),
+          })
+        }),
+      delete_literature_note: (input) =>
+        Effect.gen(function* () {
+          yield* requireNoteOfKind(repository, input.id, "literature")
+          return yield* submitDelete(approval, input.id)
+        }),
       search_notes: (input) =>
         Effect.gen(function* () {
           const limit = boundedListLimit(input.limit)
@@ -241,42 +490,25 @@ export const McpReadHandlersLayer = McpNoteTools.toLayer(
           return { topics }
         }),
       build_topic_wiki: (input) =>
-        Effect.gen(function* () {
-          const topic = Markdown.slugifyTopic(input.topic)
-          if (topic === "") {
-            return yield* Effect.fail(
-              failure(
-                "invalid-topic",
-                `Topic '${input.topic}' does not normalize to a usable slug.`,
-              ),
-            )
-          }
-          if (input.mode === "synthesized") {
-            return yield* Effect.fail(
-              failure(
-                "wiki-synthesis-unavailable",
-                "Synthesized wiki pages require a configured core wiki synthesizer. Use mode: extractive, or configure SLIPMEM_WIKI_SYNTHESIS.",
-              ),
-            )
-          }
-
-          const scan = yield* repository.scan().pipe(Effect.mapError(toolFailure))
-          return buildExtractiveWiki({
-            topic,
-            notes: scan.notes,
+        wiki
+          .build({
+            topic: input.topic,
             limit: boundedWikiLimit(input.limit),
-            includeFleeting: input.includeFleeting === true,
-            generatedAt: Date.now(),
+            ...(input.mode === undefined ? {} : { mode: input.mode }),
+            ...(input.includeFleeting === undefined
+              ? {}
+              : { includeFleeting: input.includeFleeting }),
           })
-        }),
+          .pipe(Effect.mapError(wikiFailure)),
     })
   }),
 )
 
 /**
  * The registration layer every transport uses. It requires the Markdown
- * repository and index; a caller satisfies those once per note root.
+ * repository, index, and approval service; a caller satisfies those once per
+ * note root.
  */
 export const McpNoteRegistrations = McpServer.toolkit(McpNoteTools).pipe(
-  Layer.provide(McpReadHandlersLayer),
+  Layer.provide(McpHandlersLayer),
 )

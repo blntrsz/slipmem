@@ -99,20 +99,16 @@ export const PendingApprovalResult = Schema.Struct({
   status: Schema.Literal("pending_approval"),
   proposalId: Schema.String,
   summary: Schema.String,
-  expiresAt: Markdown.Timestamp,
 }).annotate({ identifier: "Mcp.PendingApprovalResult" })
+export type PendingApprovalResult = Schema.Schema.Type<typeof PendingApprovalResult>
 
 export const WriteNoteResult = Schema.Union([Note.Info, PendingApprovalResult])
   .annotate({ identifier: "Mcp.WriteNoteResult" })
+export type WriteNoteResult = Schema.Schema.Type<typeof WriteNoteResult>
 
-export const DeleteNoteResult = Schema.Union([
-  Schema.Struct({
-    status: Schema.Literal("deleted"),
-    id: Schema.String,
-    backupPath: Schema.String,
-  }),
-  PendingApprovalResult,
-]).annotate({ identifier: "Mcp.DeleteNoteResult" })
+export const DeleteNoteResult = PendingApprovalResult
+  .annotate({ identifier: "Mcp.DeleteNoteResult" })
+export type DeleteNoteResult = Schema.Schema.Type<typeof DeleteNoteResult>
 
 export const SearchHit = Schema.Struct({
   id: Schema.String,

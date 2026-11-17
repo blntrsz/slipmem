@@ -1,5 +1,4 @@
 import { resolveNoteRoot } from "@slipmem/core"
-import type { Markdown } from "@slipmem/schemas/markdown"
 import { Effect } from "effect"
 
 export const mcpServerName = "slipmem"
@@ -47,16 +46,10 @@ export const resolveMcpActor = (
 }
 
 /**
- * Provenance for a direct MCP write. The approved-proposal path records the
- * same source on the note it eventually writes.
+ * Provenance is written by the core approval service, which records `source:
+ * mcp` for direct writes and `source: mcp-direct` only under the explicit
+ * unsafe policy. MCP does not reimplement that decision.
  */
-export const mcpProvenance = (
-  actor: string | undefined,
-  source: Markdown.Provenance["source"] = "mcp",
-): Markdown.Provenance => ({
-  source,
-  ...(actor === undefined || actor.trim() === "" ? {} : { actor: actor.trim() }),
-})
 
 /** Resolves the note root or reports the actionable initialization error. */
 export const resolveRootProgram = (
