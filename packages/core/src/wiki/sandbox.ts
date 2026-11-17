@@ -94,7 +94,9 @@ export const bubblewrapArgs = (
     : null
   const hidden = (input.hidePaths ?? []).filter(
     (path) =>
-      absoluteCommand === null || !isPathInside(absoluteCommand, path),
+      path.length > 0 &&
+      path !== "/" &&
+      (absoluteCommand === null || !isPathInside(absoluteCommand, path)),
   )
 
   return [
