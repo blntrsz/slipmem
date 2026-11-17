@@ -79,7 +79,20 @@ export const statNoteFile = (
       return null
     }
 
-    const stats = lstatSync(path)
+    let stats: ReturnType<typeof lstatSync>
+    try {
+      stats = lstatSync(path)
+    } catch (cause) {
+      return yield* Effect.fail(
+        pathError(
+          root,
+          "not-found",
+          path,
+          `Could not inspect the note path: ${cause instanceof Error ? cause.message : String(cause)}`,
+        ),
+      )
+    }
+
     if (stats.isSymbolicLink()) {
       return yield* Effect.fail(
         pathError(root, "symlink", path, "Symlinked note files are not allowed."),
@@ -93,15 +106,26 @@ export const statNoteFile = (
 
     // A realpath check catches a symlinked intermediate directory even though
     // the note filename itself passed the direct-child check.
-    const realRoot = realpathSync(root)
-    const realFile = realpathSync(path)
-    if (!isPathInside(realFile, realRoot)) {
+    try {
+      const realRoot = realpathSync(root)
+      const realFile = realpathSync(path)
+      if (!isPathInside(realFile, realRoot)) {
+        return yield* Effect.fail(
+          pathError(
+            root,
+            "symlink",
+            path,
+            "The note path resolves outside the note root.",
+          ),
+        )
+      }
+    } catch (cause) {
       return yield* Effect.fail(
         pathError(
           root,
-          "symlink",
+          "not-found",
           path,
-          "The note path resolves outside the note root.",
+          `Could not resolve the note path: ${cause instanceof Error ? cause.message : String(cause)}`,
         ),
       )
     }
