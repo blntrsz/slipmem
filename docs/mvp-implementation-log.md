@@ -263,6 +263,16 @@ Interfaces ready for the next worker:
   `snapshot`, `status`)
 - `MarkdownNoteService` implementing the existing `NoteService` contract
 
+Post-gate refinements in `f54fdac`, `3fbac5c`, `aa7a405`, and `77b92fe` align
+list limits with the recall contract, return typed errors on note-path races,
+export root constants used by surface wiring, and let create/update preserve
+migration compatibility metadata. Focused verification after those changes:
+`bun test packages/core/src/markdown` **70 pass, 0 fail, 538 assertions**; a
+scoped `tsc` over `packages/core/src` plus `packages/schemas/src` passes. Full
+check re-runs at the actual handoff were blocked by unrelated, uncommitted
+approval/MCP/server/CLI work from other workers; the last green full gate was
+`7904945`.
+
 
 ## 4. Incremental commit strategy
 
