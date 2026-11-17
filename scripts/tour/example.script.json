@@ -1,0 +1,13 @@
+{
+  "url": "http://localhost:3000/",
+  "output": "output/example.webm",
+  "width": 1440,
+  "height": 900,
+  "steps": [
+    { "wait": 800 },
+    {
+      "caption": "Replace this scaffold example with steps for the implemented UI.",
+      "hold": 2500
+    }
+  ]
+}
