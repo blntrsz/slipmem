@@ -1,4 +1,4 @@
-import { MarkdownError, WikiError } from "@slipmem/core"
+import { ApprovalError, MarkdownError, WikiError } from "@slipmem/core"
 import { Effect } from "effect"
 import {
   GLOBAL_OPTIONS,
@@ -6,12 +6,15 @@ import {
   type ParsedArguments,
 } from "./args.js"
 import type { CommandDefinition } from "./commands/command.js"
+import { approveCommand } from "./commands/approve.js"
 import { checkCommand } from "./commands/check.js"
 import { editCommand } from "./commands/edit.js"
 import { initCommand } from "./commands/init.js"
 import { listCommand } from "./commands/list.js"
 import { migrateCommand } from "./commands/migrate.js"
 import { newCommand } from "./commands/new.js"
+import { rejectCommand } from "./commands/reject.js"
+import { reviewCommand } from "./commands/review.js"
 import { searchCommand } from "./commands/search.js"
 import { showCommand } from "./commands/show.js"
 import { topicsCommand } from "./commands/topics.js"
@@ -37,6 +40,9 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   checkCommand,
   wikiCommand,
   migrateCommand,
+  reviewCommand,
+  approveCommand,
+  rejectCommand,
 ]
 
 const commandByName = (
@@ -116,6 +122,18 @@ const reportFailure = (
       },
     }
   } else if (error instanceof WikiError) {
+    code = 1
+    envelope = {
+      ok: false,
+      error: {
+        kind: "validation",
+        code: error.code,
+        message: error.message,
+        ...(error.path === undefined ? {} : { path: error.path }),
+        ...(error.field === undefined ? {} : { field: error.field }),
+      },
+    }
+  } else if (error instanceof ApprovalError) {
     code = 1
     envelope = {
       ok: false,
