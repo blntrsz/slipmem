@@ -41,7 +41,8 @@
         "slipmem-mcp": "./src/main.ts",
       },
       "dependencies": {
-        "@slipmem/server": "workspace:*",
+        "@slipmem/core": "workspace:*",
+        "@slipmem/schemas": "workspace:*",
         "effect": "catalog:",
       },
     },

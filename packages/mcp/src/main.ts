@@ -1,15 +1,24 @@
-import { resolveDatabasePath } from "@slipmem/server"
-import { Cause, Exit, Layer, Runtime } from "effect"
+import { Cause, Effect, Exit, Layer, Runtime } from "effect"
+import { resolveRootProgram } from "./config"
 import { makeServerLayer } from "./server"
 
-// The web server owns the default path and directory creation, so both
-// transports resolve SLIPMEM_DB_PATH the same way.
-const databasePath = resolveDatabasePath()
+// Resolve the Markdown root before building any service. There is no implicit
+// repository creation: an operator runs `slipmem init` or sets SLIPMEM_DIR.
+const rootExit = Effect.runSyncExit(resolveRootProgram())
 
-// Interrupt the main fiber on a signal so `Layer.launch` can close the SQLite
-// connection and flush the MCP transport before the process exits. This is the
-// same runner pattern Effect's platform packages install for `runMain`; using
-// it here keeps shutdown behavior without adding a platform dependency.
+if (Exit.isFailure(rootExit)) {
+  const error = Cause.squash(rootExit.cause)
+  process.stderr.write(
+    `${error instanceof Error ? error.message : String(error)}\n`,
+  )
+  process.exit(1)
+}
+
+// Interrupt the main fiber on a signal so `Layer.launch` can close the
+// disposable search index and flush the MCP transport before the process
+// exits. This is the same runner pattern Effect's platform packages install for
+// `runMain`; using it here keeps shutdown behavior without adding a platform
+// dependency.
 const runMain = Runtime.makeRunMain(({ fiber, teardown }) => {
   let receivedSignal = false
 
@@ -46,6 +55,6 @@ const runMain = Runtime.makeRunMain(({ fiber, teardown }) => {
 })
 
 runMain(
-  Layer.launch(makeServerLayer(databasePath)),
+  Layer.launch(makeServerLayer({ root: rootExit.value })),
   { disableErrorReporting: true },
 )
