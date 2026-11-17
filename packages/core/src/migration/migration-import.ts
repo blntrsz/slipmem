@@ -11,7 +11,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs"
-import { join, resolve } from "node:path"
+import { basename, join, resolve } from "node:path"
 import { atomicWriteFile } from "../markdown/atomic.js"
 import { MarkdownError } from "../markdown/errors.js"
 import {
@@ -35,6 +35,7 @@ import {
   planMigration,
   type MigrationPlan,
   type MigrationPlanIssue,
+  type MigrationRowSource,
   type PlannedMigrationNote,
   type PreservedValue,
   type SqliteValue,
@@ -124,7 +125,10 @@ export interface MigrationBackupReport {
 export interface MigrationImportedNote {
   readonly legacyId: string
   readonly type: Markdown.NoteType
+  readonly source: MigrationRowSource
   readonly filename: string
+  /** The planned name when it differs because an existing note was reused. */
+  readonly plannedFilename?: string
   readonly targetPath: string
   readonly status: MigrationImportedNoteStatus
   readonly sourceRowHash: string
@@ -568,6 +572,7 @@ const emptyVerification = (
 const baseNote = (note: PlannedMigrationNote): MigrationImportedNote => ({
   legacyId: note.legacyId,
   type: note.type,
+  source: note.source,
   filename: note.filename,
   targetPath: note.targetPath,
   status: "planned",
@@ -979,23 +984,44 @@ const importCounts = (
   notes: ReadonlyArray<MigrationImportedNote>,
   warnings: ReadonlyArray<MigrationImportWarning>,
   quarantine: MigrationQuarantineReport,
-): MigrationImportCounts => ({
-  sourceRows: plan.counts.sourceRows,
-  plannedNotes: plan.notes.length,
-  writtenNotes: notes.filter((note) => note.status === "imported").length,
-  skippedNotes: notes.filter(
-    (note) =>
-      note.status === "skipped-legacy-id" ||
-      note.status === "skipped-conflict",
-  ).length,
-  failedNotes: notes.filter((note) => note.status === "failed").length,
-  malformedRows: plan.counts.malformedRows,
-  quarantinedRows: quarantine.count,
-  collisions: plan.counts.collisions,
-  sourceErrors: plan.counts.errors,
-  sourceWarnings: plan.counts.warnings,
-  importerWarnings: warnings.length,
-})
+): MigrationImportCounts => {
+  const skippedSources = new Set(
+    notes
+      .filter(
+        (note) =>
+          note.status === "skipped-legacy-id" ||
+          note.status === "skipped-conflict",
+      )
+      .map((note) => `${note.source.table}:${note.source.rowIndex}`),
+  )
+
+  return {
+    sourceRows: plan.counts.sourceRows,
+    plannedNotes: plan.notes.length,
+    writtenNotes: notes.filter((note) => note.status === "imported").length,
+    skippedNotes: notes.filter(
+      (note) =>
+        note.status === "skipped-legacy-id" ||
+        note.status === "skipped-conflict",
+    ).length,
+    failedNotes: notes.filter((note) => note.status === "failed").length,
+    malformedRows: plan.counts.malformedRows,
+    quarantinedRows: quarantine.count,
+    // A planned collision that only exists because the same legacy row was
+    // already imported is not a collision for this run. Report the effective
+    // count so a clean merge rerun does not look like it wrote conflicting
+    // filenames. The original plan keeps its planner-level count.
+    collisions: plan.collisions.filter(
+      (collision) =>
+        !skippedSources.has(
+          `${collision.source.table}:${collision.source.rowIndex}`,
+        ),
+    ).length,
+    sourceErrors: plan.counts.errors,
+    sourceWarnings: plan.counts.warnings,
+    importerWarnings: warnings.length,
+  }
+}
 
 const emptyQuarantine = (): MigrationQuarantineReport => ({
   directory: null,
@@ -1327,6 +1353,9 @@ export const importMigration = (
       }
       noteResults.push({
         ...base,
+        filename: basename(existing.path),
+        plannedFilename: base.filename,
+        targetPath: existing.path,
         status: conflict ? "skipped-conflict" : "skipped-legacy-id",
         existingId: existing.id,
         existingPath: existing.path,

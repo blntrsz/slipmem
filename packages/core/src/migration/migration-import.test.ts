@@ -586,6 +586,13 @@ describe("SQLite to Markdown importer", () => {
     expect(second.notes.every((note) => note.status === "skipped-legacy-id")).toBe(
       true,
     )
+    expect(second.counts.collisions).toBe(0)
+    for (const note of second.notes) {
+      expect(note.targetPath).toBe(note.existingPath!)
+      expect(existsSync(note.targetPath)).toBe(true)
+      expect(note.filename).toBe(basename(note.targetPath))
+      expect(note.plannedFilename).toBeDefined()
+    }
     expect(second.verification.ok).toBe(true)
     expect(second.verification.noteCountBefore).toBe(3)
     expect(second.verification.noteCountAfter).toBe(3)
