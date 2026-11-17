@@ -4,8 +4,10 @@ import {
   lstatSync,
   mkdirSync,
   realpathSync,
+  readFileSync,
   statSync,
   writeFileSync,
+  appendFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
 import { basename, dirname, join, resolve, sep } from "node:path"
@@ -366,6 +368,50 @@ export const ensureStateSubdirectory = (
 
 export const stateDirectory = (root: string): string =>
   join(resolve(root), STATE_DIRECTORY)
+
+const gitignoreIgnoresState = (content: string): boolean =>
+  content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .some(
+      (line) =>
+        line === ".state" ||
+        line === ".state/" ||
+        line === "/.state" ||
+        line === "/.state/",
+    )
+
+export interface EnsureStateIgnoredResult {
+  readonly path: string
+  readonly created: boolean
+  readonly changed: boolean
+}
+
+/**
+ * Ensures `.gitignore` excludes `.state/` without replacing user content.
+ * `slipmem init` and an importer that creates a new note root use this; an
+ * existing user `.gitignore` is appended to, never rewritten.
+ */
+export const ensureStateIgnored = (root: string): EnsureStateIgnoredResult => {
+  const path = join(resolve(root), ".gitignore")
+  const existing = existsSync(path) ? readFileSync(path, "utf8") : null
+  if (existing !== null && gitignoreIgnoresState(existing)) {
+    return { path, created: false, changed: false }
+  }
+
+  if (existing === null) {
+    writeFileSync(path, ".state/\n", {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o644,
+    })
+    return { path, created: true, changed: true }
+  }
+
+  const prefix = existing.length === 0 || existing.endsWith("\n") ? "" : "\n"
+  appendFileSync(path, `${prefix}.state/\n`, { encoding: "utf8" })
+  return { path, created: false, changed: true }
+}
 
 const rootKey = (root: string): string =>
   createHash("sha256").update(resolve(root)).digest("hex").slice(0, 24)

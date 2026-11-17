@@ -516,9 +516,11 @@ describe("SQLite migration planning", () => {
     const plan = planMigration({ databasePath: path })
 
     expect(plan.notes).toEqual([])
-    expect(plan.counts.sourceRows).toBe(0)
-    expect(plan.counts.malformedRows).toBe(0)
-    expect(plan.counts.errors).toBe(1)
+    expect(plan.counts.sourceRows).toBe(1)
+    expect(plan.counts.malformedRows).toBe(1)
+    expect(plan.counts.errors).toBe(2)
+    expect(plan.counts.sourceByType.fleeting).toBe(1)
+    expect(plan.counts.malformedByType.fleeting).toBe(1)
     expect(plan.source.shape).toBe("unrecognized")
     expect(plan.source.tables).toEqual([
       {
@@ -528,7 +530,7 @@ describe("SQLite migration planning", () => {
         shape: "unrecognized",
       },
     ])
-    expect(plan.issues).toHaveLength(1)
+    expect(plan.issues).toHaveLength(2)
     expect(plan.issues[0]).toMatchObject({
       table: "fleeting_note",
       rowIndex: null,
@@ -542,6 +544,20 @@ describe("SQLite migration planning", () => {
       ],
     })
     expect(plan.issues[0]?.problems[0]?.message).toContain("content")
+
+    // The row itself is preserved even though the table cannot be mapped.
+    expect(plan.issues[1]).toMatchObject({
+      table: "fleeting_note",
+      rowIndex: 0,
+      legacyId: "broken",
+      severity: "error",
+      row: {
+        id: "broken",
+        title: "Broken",
+        created_at: 1,
+        updated_at: 1,
+      },
+    })
   })
 
   test("raises a typed error for a missing source", () => {

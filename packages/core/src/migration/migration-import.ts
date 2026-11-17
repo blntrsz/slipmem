@@ -27,6 +27,7 @@ import {
 import { notePath } from "../markdown/paths.js"
 import { scanMarkdownRoot } from "../markdown/repository.js"
 import {
+  ensureStateIgnored,
   ensureStateSubdirectory,
   STATE_DIRECTORY,
 } from "../markdown/root.js"
@@ -556,7 +557,8 @@ const emptyVerification = (
   verified: boolean,
 ): MigrationVerificationReport => ({
   verified,
-  ok: true,
+  // A report that has not run verification must never claim success.
+  ok: verified,
   expectedNotes,
   writtenNotes: 0,
   skippedNotes: 0,
@@ -1167,6 +1169,7 @@ export const importMigration = (
       )
     }
 
+    const rootSetupWarnings: Array<MigrationImportWarning> = []
     mkdirSync(root, { recursive: true, mode: 0o755 })
     const currentRoot = inspectRoot(root)
     if (currentRoot.nonEmpty && !merge) {
@@ -1176,6 +1179,19 @@ export const importMigration = (
         message,
         failureReport("root-not-empty", message, currentRoot),
       )
+    }
+
+    if (!initialRoot.exists) {
+      try {
+        ensureStateIgnored(root)
+      } catch (cause) {
+        rootSetupWarnings.push({
+          code: "gitignore-failed",
+          message: `The note root was created, but .gitignore could not be updated to exclude .state/: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }`,
+        })
+      }
     }
 
     const takenFilenames = noteFilenames(root)
@@ -1212,6 +1228,7 @@ export const importMigration = (
     let warnings: Array<MigrationImportWarning> = [
       ...bodyWarnings(lockedPlan),
       ...interrupted.warnings,
+      ...rootSetupWarnings,
     ]
     let noteResults: Array<MigrationImportedNote> = []
     context = {

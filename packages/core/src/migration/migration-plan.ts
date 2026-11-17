@@ -381,13 +381,6 @@ const timestampMillis = (value: SqliteValue): number | null => {
   }
 }
 
-/** Converts a SQLite INTEGER count (a bigint with safeIntegers) to a number. */
-const countValue = (value: unknown): number => {
-  if (typeof value === "bigint") return Number(value)
-  if (typeof value === "number" && Number.isFinite(value)) return value
-  return 0
-}
-
 const readProvenance = (
   value: SqliteValue,
 ): {
@@ -758,6 +751,11 @@ export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
   const taken = new Set<string>(options.takenFilenames ?? [])
   const tables: Array<MigrationSourceTable> = []
   const rows: Array<RawRow> = []
+  /** Rows from tables whose shape cannot be imported, kept for quarantine. */
+  const unrecognizedRows: Array<{
+    readonly definition: NoteTableDefinition
+    readonly row: Readonly<Record<string, SqliteValue>>
+  }> = []
   const issues: Array<MigrationPlanIssue> = []
 
   // Read from a private copy. Opening the original read-only would still create
@@ -815,16 +813,15 @@ export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
             const missing = definition.requiredColumns.filter(
               (column) => !columns.includes(column),
             )
-            const rowCount = countValue(
-              database
-                .query<{ readonly count: unknown }, []>(
-                  `SELECT COUNT(*) AS count FROM "${definition.name}"`,
-                )
-                .get()?.count,
-            )
+            const tableRows = database
+              .query<Readonly<Record<string, unknown>>, []>(
+                `SELECT * FROM "${definition.name}"`,
+              )
+              .all()
+              .map(normalizeRow)
             tables.push({
               name: definition.name,
-              rowCount,
+              rowCount: tableRows.length,
               columns,
               shape,
             })
@@ -837,11 +834,28 @@ export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
                 problem(
                   "error",
                   "missing-required-column",
-                  `"${definition.name}" is missing required column(s): ${missing.join(", ")}. The table is reported and skipped; its rows are preserved in the issue report and quarantine.`,
+                  `"${definition.name}" is missing required column(s): ${missing.join(", ")}. The table's rows are not imported; every row is preserved in the issue report and quarantine for manual review.`,
                 ),
               ],
               row: null,
             })
+            for (const [rowIndex, row] of tableRows.entries()) {
+              unrecognizedRows.push({ definition, row })
+              issues.push({
+                table: definition.name,
+                rowIndex,
+                legacyId: legacyIdFrom(row),
+                severity: "error",
+                problems: [
+                  problem(
+                    "error",
+                    "missing-required-column",
+                    `Row ${rowIndex} of "${definition.name}" cannot be mapped because the table is missing required column(s): ${missing.join(", ")}. The complete raw row is preserved for manual review and recovery.`,
+                  ),
+                ],
+                row,
+              })
+            }
             continue
           }
 
@@ -991,6 +1005,9 @@ export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
   for (const row of rows) {
     sourceByType[row.definition.type] += 1
   }
+  for (const row of unrecognizedRows) {
+    sourceByType[row.definition.type] += 1
+  }
 
   const plannedByType = typeCounts()
   for (const note of notes) {
@@ -1029,7 +1046,7 @@ export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
   }
 
   const counts: MigrationPlanCounts = {
-    sourceRows: rows.length,
+    sourceRows: rows.length + unrecognizedRows.length,
     plannedNotes: notes.length,
     malformedRows: malformedRows.size,
     issues: issues.length,

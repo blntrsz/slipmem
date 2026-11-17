@@ -115,6 +115,7 @@ describe("SQLite to Markdown importer", () => {
     expect(report.manifestPath).toBeNull()
     expect(report.quarantine.count).toBe(0)
     expect(report.verification.verified).toBe(false)
+    expect(report.verification.ok).toBe(false)
     expect(report.sourceCheck.unchanged).toBe(true)
     expect(readdirSync(directory)).toEqual(["slipmem.db"])
     expect(existsSync(target)).toBe(false)
@@ -472,6 +473,75 @@ describe("SQLite to Markdown importer", () => {
     })
   })
 
+  test("quarantines rows from a table with missing required columns", () => {
+    const { directory, path } = createDatabase(`
+      CREATE TABLE fleeting_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+      );
+      INSERT INTO fleeting_note VALUES
+        ('shape-broken', 'Incomplete row', 1794943845000, 1794943845000);
+    `)
+    const target = join(directory, "notes")
+
+    const error = caughtImport({
+      databasePath: path,
+      noteRoot: target,
+      now: () => FIXED_NOW,
+    })
+
+    expect(error.code).toBe("invalid-rows")
+    expect(error.report?.counts).toMatchObject({
+      sourceRows: 1,
+      plannedNotes: 0,
+      malformedRows: 1,
+      quarantinedRows: 1,
+    })
+    expect(error.report?.quarantine.files).toHaveLength(1)
+    const preserved = JSON.parse(
+      readFileSync(error.report!.quarantine.files[0]!.path, "utf8"),
+    ) as Record<string, unknown>
+    expect(preserved["legacyId"]).toBe("shape-broken")
+    expect(preserved["row"]).toEqual({
+      id: "shape-broken",
+      title: "Incomplete row",
+      created_at: 1794943845000,
+      updated_at: 1794943845000,
+    })
+  })
+
+  test("creates .state gitignore for a new root without overwriting user content", () => {
+    const { directory, path } = createDatabase(fixtureSql("current.sql"))
+    const freshRoot = join(directory, "fresh-notes")
+    importMigration({
+      databasePath: path,
+      noteRoot: freshRoot,
+      now: () => FIXED_NOW,
+    })
+    expect(readFileSync(join(freshRoot, ".gitignore"), "utf8")).toBe(
+      ".state/\n",
+    )
+
+    const existingRoot = join(directory, "existing-notes")
+    mkdirSync(existingRoot)
+    const userGitignore = "# keep my rules\n*.tmp\n"
+    writeFileSync(join(existingRoot, ".gitignore"), userGitignore)
+
+    importMigration({
+      databasePath: path,
+      noteRoot: existingRoot,
+      merge: true,
+      now: () => FIXED_NOW + 1000,
+    })
+
+    expect(readFileSync(join(existingRoot, ".gitignore"), "utf8")).toBe(
+      userGitignore,
+    )
+    expect(existsSync(join(existingRoot, ".state"))).toBe(true)
+  })
+
   test("refuses a non-empty root without merge and writes nothing", () => {
     const { directory, path } = createDatabase(fixtureSql("current.sql"))
     const target = join(directory, "notes")
@@ -493,6 +563,8 @@ describe("SQLite to Markdown importer", () => {
     expect(error.report?.counts.plannedNotes).toBe(3)
     expect(error.report?.backup).toBeNull()
     expect(error.report?.manifestPath).toBeNull()
+    expect(error.report?.verification.verified).toBe(false)
+    expect(error.report?.verification.ok).toBe(false)
     expect(readdirSync(target)).toEqual(["keep.txt"])
     expect(readFileSync(path).equals(before)).toBe(true)
   })
