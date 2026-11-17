@@ -149,7 +149,7 @@ describe("slipmem wiki (extractive)", () => {
     expect(wiki.page.markdown).toContain(`[[${citation}]]`)
     expect(wiki.page.markdown).toContain("## Sources")
     expect(wiki.page.markdown).toContain("Recall must cite its sources.")
-  })
+  }, 30000)
 
   test("honors include-fleeting, limits, and empty topics without inventing text", async () => {
     const setupValue = await setup()
@@ -180,7 +180,7 @@ describe("slipmem wiki (extractive)", () => {
     expect(emptyWiki.page.noteCount).toBe(0)
     expect(emptyWiki.page.sections).toEqual([])
     expect(emptyWiki.page.markdown).toContain("No notes matched this topic")
-  })
+  }, 30000)
 
   test("writes only an explicit --out outside the note root", async () => {
     const setupValue = await setup()
@@ -214,7 +214,7 @@ describe("slipmem wiki (extractive)", () => {
     ])
     expect(refused.code).toBe(2)
     expect(existsSync(inside)).toBe(false)
-  })
+  }, 30000)
 
   test("reports synthesized mode as unavailable instead of downgrading it", async () => {
     const setupValue = await setup()

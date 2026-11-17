@@ -20,6 +20,7 @@ import { searchCommand } from "./commands/search.js"
 import { showCommand } from "./commands/show.js"
 import { topicsCommand } from "./commands/topics.js"
 import { wikiCommand } from "./commands/wiki.js"
+import { mcpCommand, webCommand } from "./commands/wrappers.js"
 import type { CliContext } from "./context.js"
 import { CliMigrationError, CliUnavailableError, CliUsageError, usageError } from "./errors.js"
 import {
@@ -45,6 +46,8 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   reviewCommand,
   approveCommand,
   rejectCommand,
+  mcpCommand,
+  webCommand,
 ]
 
 const commandByName = (
