@@ -287,6 +287,15 @@ test("recall stays bounded for fifty maximum-size literature notes", async () =>
 
     const list = firstList.structuredContent as { notes: ReadonlyArray<Summary> }
     expect(list.notes).toHaveLength(50)
+    expect(Object.keys(list.notes[0]!).sort()).toEqual([
+      "createdAt",
+      "excerpt",
+      "id",
+      "path",
+      "title",
+      "type",
+      "updatedAt",
+    ])
     expect(list.notes.map((note) => note.id).sort()).toEqual(
       ids.slice().sort(),
     )
@@ -307,6 +316,16 @@ test("recall stays bounded for fifty maximum-size literature notes", async () =>
     }
     expect(search.query).toBe("Body")
     expect(search.notes).toHaveLength(50)
+    expect(Object.keys(search.notes[0]!).sort()).toEqual([
+      "createdAt",
+      "excerpt",
+      "id",
+      "path",
+      "reference",
+      "title",
+      "type",
+      "updatedAt",
+    ])
     for (const note of search.notes) {
       expect(note.title.length).toBeLessThanOrEqual(MAX_TITLE_LENGTH)
       expect(note.excerpt.length).toBeLessThanOrEqual(MAX_EXCERPT_LENGTH)
@@ -333,6 +352,15 @@ test("recall stays bounded for fifty maximum-size literature notes", async () =>
 
     const note = (detail.structuredContent as { note: Summary & { content: string } })
       .note
+    expect(Object.keys(note).sort()).toEqual([
+      "content",
+      "createdAt",
+      "id",
+      "reference",
+      "title",
+      "type",
+      "updatedAt",
+    ])
     expect(note.content).toBe(bodyFor(0))
     expect(note.title.length).toBe(MAX_TITLE_LENGTH)
     expect(note.reference?.length).toBe(MAX_REFERENCE_LENGTH)

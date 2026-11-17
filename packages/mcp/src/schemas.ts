@@ -207,11 +207,11 @@ export const boundedExcerpt = (
   maxLength: number = MAX_EXCERPT_LENGTH,
 ): string => boundedText(text, maxLength)
 
-/** Bounds a note title in every recall/detail response. */
+/** Bounds a note title in list, search, topic, and detail responses. */
 export const boundedTitle = (title: string): string =>
   boundedText(title, MAX_TITLE_LENGTH)
 
-/** Bounds a literature reference in every recall/detail response. */
+/** Bounds a literature reference in search and detail responses. */
 export const boundedReference = (reference: string): string =>
   boundedText(reference, MAX_REFERENCE_LENGTH)
 

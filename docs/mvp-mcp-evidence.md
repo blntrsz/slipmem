@@ -183,7 +183,7 @@ Run on 2026-11-18 from the repository root:
 
 ```text
 $ bun test packages/mcp
-21 pass, 0 fail, 624 expect() calls (2 files)
+21 pass, 0 fail, 627 expect() calls (2 files)
 
 $ bun run typecheck
 passes
