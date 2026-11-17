@@ -21,11 +21,11 @@ export const MarkdownNoteService = Layer.effect(
     return NoteService.of({
       list: () =>
         repository
-          .list({ limit: Markdown.MAX_SEARCH_LIMIT })
+          .list({ limit: Markdown.DEFAULT_SEARCH_LIMIT })
           .pipe(Effect.orDie),
       listTitles: () =>
         repository
-          .listTitles({ limit: Markdown.MAX_SEARCH_LIMIT })
+          .listTitles({ limit: Markdown.DEFAULT_SEARCH_LIMIT })
           .pipe(
             Effect.map((titles) =>
               titles.map(({ id, type, title }) => ({ id, type, title })),

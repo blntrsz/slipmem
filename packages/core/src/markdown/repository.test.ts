@@ -388,6 +388,29 @@ describe("Markdown repository path, symlink, size, and lock guards", () => {
     }
   })
 
+  test("bounds list to the default and hard maximum", async () => {
+    const fixture = setup()
+    try {
+      const repo = await repository(fixture)
+      for (let index = 0; index < 12; index++) {
+        await Effect.runPromise(
+          repo.create({
+            type: "fleeting",
+            title: `List note ${index}`,
+            content: `Body ${index}.`,
+          }),
+        )
+      }
+
+      const defaulted = await Effect.runPromise(repo.list())
+      expect(defaulted).toHaveLength(10)
+      const requested = await Effect.runPromise(repo.list({ limit: 999 }))
+      expect(requested).toHaveLength(12)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("filters by type and normalized topic with a bounded list", async () => {
     const fixture = setup()
     try {

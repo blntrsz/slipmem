@@ -38,7 +38,7 @@ import {
   STATE_DIRECTORY,
 } from "./root.js"
 
-export const DEFAULT_LIST_LIMIT = 50
+export const DEFAULT_LIST_LIMIT = Markdown.DEFAULT_SEARCH_LIMIT
 
 export interface ListMarkdownNotesInput {
   readonly type?: Markdown.NoteType
