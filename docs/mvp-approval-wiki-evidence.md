@@ -273,8 +273,9 @@ server can pass its own environment without mutating `process.env`.
 Commands:
 
 ```text
-bun test packages/core/src/approval   # 12 pass, 0 fail, 95 assertions
+bun test packages/core/src/approval   # 13 pass, 0 fail, 97 assertions
 bun test packages/core/src/wiki       # 13 pass, 0 fail, 130 assertions
+bun test packages/core               # 132 pass, 0 fail, 1168 assertions
 bunx tsc --noEmit                     # no approval/wiki errors
 bun run lint                          # no approval/wiki warnings or errors
 ```
@@ -291,6 +292,7 @@ Approval tests cover:
 - expiry cleanup by review and refusal to apply an expired proposal;
 - bounded proposal queue (`proposal-queue-full`);
 - tampered/poisoned proposal files reported and never applied;
+- hostile newline-heavy diffs bounded before LCS allocation;
 - unsafe direct permanent writes recording `source: mcp-direct` while deletes
   still stay pending;
 - proposals stored only under `.state/pending/`.
