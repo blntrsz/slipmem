@@ -6,6 +6,7 @@ import {
   openSync,
   readFileSync,
   unlinkSync,
+  utimesSync,
   writeSync,
 } from "node:fs"
 import { join, resolve } from "node:path"
@@ -19,11 +20,14 @@ interface LockRecord {
   readonly pid: number
   readonly createdAt: string
   readonly token: string
+  /** Linux process start time, used to detect PID reuse after a crash. */
+  readonly pidStart?: number
 }
 
 interface HeldLock {
   readonly path: string
   readonly token: string
+  readonly heartbeat: ReturnType<typeof setInterval> | null
 }
 
 // A process cannot rely on an advisory file lock between its own effects: the
@@ -76,6 +80,29 @@ const isProcessAlive = (pid: number): boolean => {
   }
 }
 
+/**
+ * Returns the Linux kernel start time for a process, or null when it is not
+ * available. Comparing this value with the record detects the common stale-lock
+ * trap where the owner died and an unrelated process later reused its PID.
+ */
+const processStartTime = (pid: number): number | null => {
+  if (process.platform !== "linux") return null
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+    const closing = stat.lastIndexOf(")")
+    if (closing === -1) return null
+    // Fields after the parenthesized command start at field 3 (state).
+    // starttime is field 22, i.e. index 19 of this slice.
+    const fields = stat.slice(closing + 1).trim().split(/\s+/)
+    const raw = fields[19]
+    if (raw === undefined) return null
+    const value = Number(raw)
+    return Number.isSafeInteger(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
 const readLock = (path: string): LockRecord | null => {
   try {
     const raw = readFileSync(path, "utf8")
@@ -91,12 +118,24 @@ const readLock = (path: string): LockRecord | null => {
       pid: parsed.pid,
       createdAt: parsed.createdAt,
       token: parsed.token,
+      ...(typeof parsed.pidStart === "number" && Number.isSafeInteger(parsed.pidStart)
+        ? { pidStart: parsed.pidStart }
+        : {}),
     }
   } catch {
     return null
   }
 }
 
+/**
+ * A lock is stale when its owner is gone, or when the recorded PID has been
+ * reused by a different process after the lock stopped being refreshed.
+ *
+ * A live owner is never evicted solely because the lock is old: a legitimate
+ * import can hold the repository for much longer than the stale threshold.
+ * The owner refreshes the lock mtime as a heartbeat, so age only matters for
+ * dead or reused owners (and for malformed lock files with no readable record).
+ */
 const lockIsStale = (path: string, staleMs: number): boolean => {
   let mtimeMs: number
   try {
@@ -105,14 +144,32 @@ const lockIsStale = (path: string, staleMs: number): boolean => {
     return true
   }
 
-  if (Date.now() - mtimeMs > staleMs) {
+  const record = readLock(path)
+  if (record === null) {
+    // A fresh malformed lock file is treated as held; it may be mid-write.
+    // Only age can recover one left behind by a process that died while
+    // creating it.
+    return Date.now() - mtimeMs > staleMs
+  }
+
+  if (!isProcessAlive(record.pid)) {
     return true
   }
 
-  const record = readLock(path)
-  // A malformed lock file that is still fresh is treated as held; an operator
-  // can remove it after inspecting the path. Waiting forever would hang tools.
-  return record !== null && !isProcessAlive(record.pid)
+  const currentStart = processStartTime(record.pid)
+  if (
+    record.pidStart !== undefined &&
+    currentStart !== null &&
+    currentStart !== record.pidStart
+  ) {
+    // The PID now belongs to an unrelated process. Only treat it as stale once
+    // the recorded owner's heartbeat has lapsed; a fresh lock may still be in
+    // the middle of being written.
+    return Date.now() - mtimeMs > staleMs
+  }
+
+  // The recorded owner is alive and is the same process. Never steal its lock.
+  return false
 }
 
 const tryCreate = (path: string, record: LockRecord): boolean => {
@@ -142,6 +199,30 @@ const tryCreate = (path: string, record: LockRecord): boolean => {
   }
 }
 
+const startHeartbeat = (
+  path: string,
+  token: string,
+  staleMs: number,
+): ReturnType<typeof setInterval> => {
+  const period = Math.max(25, Math.floor(staleMs / 3))
+  const timer = setInterval(() => {
+    const current = readLock(path)
+    if (current === null || current.token !== token) {
+      clearInterval(timer)
+      return
+    }
+    try {
+      const now = new Date()
+      utimesSync(path, now, now)
+    } catch {
+      // The lock may have been removed by an operator; the next write attempt
+      // will surface the real condition.
+    }
+  }, period)
+  timer.unref?.()
+  return timer
+}
+
 const acquireLockFile = (
   root: string,
   staleMs: number,
@@ -164,12 +245,16 @@ const acquireLockFile = (
       pid: process.pid,
       createdAt: new Date().toISOString(),
       token: randomUUID(),
+      ...(() => {
+        const pidStart = processStartTime(process.pid)
+        return pidStart === null ? {} : { pidStart }
+      })(),
     }
 
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         if (tryCreate(path, record)) {
-          return { path, token: record.token }
+          return { path, token: record.token, heartbeat: startHeartbeat(path, record.token, staleMs) }
         }
       } catch (cause) {
         return yield* Effect.fail(
@@ -203,6 +288,10 @@ const acquireLockFile = (
 
 const releaseLockFile = (lock: HeldLock): Effect.Effect<void> =>
   Effect.sync(() => {
+    if (lock.heartbeat !== null) {
+      clearInterval(lock.heartbeat)
+    }
+
     const record = readLock(lock.path)
     if (record !== null && record.token !== lock.token) {
       return
