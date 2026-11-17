@@ -38,12 +38,10 @@ Current architecture:
   setup yet.
 
 Tooling note for a future demo video: the baseline has no Playwright or `ffmpeg`
-available at the repository root. A separate, currently uncommitted
-`scripts/tour/` scaffold exists outside this commit; its README documents a
-Playwright 1.64.1 silent WebM pipeline with captions burned into the recording.
-Treat that as a candidate demo pipeline to verify and commit separately when a
-demo deliverable exists. It is not a Phase 0 dependency and this increment does
-not claim it.
+available at the repository root. The `scripts/tour/` scaffold is committed in
+`fa861b0` and its README documents a Playwright 1.64.1 silent WebM pipeline with
+captions burned into the recording. It is demo tooling only: it is not a Phase 0
+or Phase 1 dependency, and the storage increments do not modify it.
 
 ## 2. Resolved Phase 0 decisions
 
@@ -157,6 +155,44 @@ Evidence: `bun test packages/core/src/markdown/note-document.test.ts` **26 pass,
 pass, 0 fail, 726 assertions, 13 files**. The 26 new tests include six valid
 fixtures and thirteen invalid-fixture code matches.
 
+## 3.2 Phase 1b/1c - root resolution, repository CRUD, lock, backups, check
+
+This increment is filesystem-only and still does not change any surface. The
+SQLite note tables remain the runtime source of truth until the Phase 5 cutover.
+
+Added:
+
+- `packages/core/src/markdown/root.ts`: frozen root resolution (`SLIPMEM_DIR`,
+  nearest ancestor, Git root/cwd for init), idempotent `initializeNoteRoot`
+  (`.state/`, README, `.gitignore`), per-root XDG state/cache paths.
+- `packages/core/src/markdown/paths.ts`: strict direct-child ID/path validation,
+  direct lstat and realpath symlink rejection, 1 MiB read bound, root entry
+  enumeration.
+- `packages/core/src/markdown/atomic.ts`: same-directory temp file, fsync,
+  `link` for atomic create-only writes, `rename` for updates, temp cleanup on
+  failure.
+- `packages/core/src/markdown/lock.ts`: in-process per-root semaphore plus a
+  `.state/repository.lock` file with token, PID, stale-age recovery, and a
+  clear `repository-locked` error.
+- `packages/core/src/markdown/repository.ts`: `MarkdownNoteRepository` Effect
+  service and Layer with scan/list/listTitles/get/getInfo/create/update/delete,
+  filename collision suffixes, type/topic/limit filters, monotonic `updatedAt`,
+  unknown-metadata preservation, reclassification by metadata only, and
+  move-to-backup deletes outside the root.
+- `packages/core/src/markdown/check.ts`: read-only `checkNoteRoot` report for
+  filename/metadata/body errors, unexpected files, duplicate IDs, slug drift,
+  and optional index fingerprint drift.
+- Tests: `root.test.ts` and `repository.test.ts` cover resolution, init,
+  restart survival, collisions, invalid writes leaving no file, in-place update
+  with unknown keys, reclassification, backed-up delete, traversal, symlinks,
+  file size, live/stale locks, filters, check errors, and slug-drift warnings.
+
+Evidence: `bun test packages/core/src/markdown/root.test.ts
+packages/core/src/markdown/repository.test.ts` **19 pass, 0 fail, 82
+assertions**; `bun run typecheck` and `bun run lint` pass; the full suite is
+**142 pass, 0 fail, 932 assertions, 16 files**. No surface imports the new
+repository yet, so the existing SQLite runtime is unchanged.
+
 
 ## 4. Incremental commit strategy
 
@@ -207,7 +243,7 @@ Status legend: **done** = implemented and tested against the real surface;
 | Phase 0 note fixtures | Valid/invalid corpus, Unicode, collisions, long titles, every type, malformed YAML, conflicts | done | `fixtures/phase0/notes`, manifest tests |
 | Phase 0 migration fixtures | Current, legacy, empty, invalid rows | done | executable SQL + row/column tests |
 | Phase 0 examples | CLI, API, MCP payloads | done | `acceptance/examples.json` tests |
-| STOR-01..08 | Flat `.slipmem/`, filenames, frontmatter, limits, collisions, unknown keys, atomic failure | partial | Parser validates 01,03,04,05,07,08 read path; repository and `check` next |
+| STOR-01..08 | Flat `.slipmem/`, filenames, frontmatter, limits, collisions, unknown keys, atomic failure | done | Parser + `MarkdownNoteRepository` + `check`; `repository.test.ts` covers 01-08 |
 | TRUTH-01..04 | Disposable index, files-only recovery, external edits, no SQLite runtime | not started | Phase 1d, Phase 5 |
 | SURFACE-01..05 | CLI/MCP/web parity, same tool schemas, ID routes, adapters | not started | Phases 2-4 |
 | APPROVE-01..09 | Pending permanent/delete, direct fleeting/literature, stale hash, no MCP approval | partial | Proposal/wiki schemas only; Phase 3 |
