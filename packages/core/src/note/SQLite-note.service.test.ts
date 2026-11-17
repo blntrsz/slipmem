@@ -5,13 +5,17 @@ import { LiteratureNote } from "@slipmem/schemas/literature-note"
 import { PermanentNote } from "@slipmem/schemas/permanent-note"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core"
 import { Cause, Effect, Exit, Layer, Schema } from "effect"
-import { NoteDatabaseLive } from "../note-database"
+import { FleetingNoteTable } from "../fleeting-note/fleeting-note.sql"
+import { LiteratureNoteTable } from "../literature-note/literature-note.sql"
+import { NoteDatabaseLive, NoteDatabaseService } from "../note-database"
+import { PermanentNoteTable } from "../permanent-note/permanent-note.sql"
+import { migrateNoteDatabase } from "../test-support/note-database"
 import { NoteService } from "./note.service"
 import { SQLiteNoteService } from "./SQLite-note.service"
 
-const fleetingId = Schema.decodeUnknownSync(FleetingNote.ID)("fleeting-1")
-const literatureId = Schema.decodeUnknownSync(LiteratureNote.ID)("literature-1")
-const permanentId = Schema.decodeUnknownSync(PermanentNote.ID)("permanent-1")
+const fleetingId = (value: string) => Schema.decodeUnknownSync(FleetingNote.ID)(value)
+const literatureId = (value: string) => Schema.decodeUnknownSync(LiteratureNote.ID)(value)
+const permanentId = (value: string) => Schema.decodeUnknownSync(PermanentNote.ID)(value)
 
 const defects = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.filter(Cause.isDieReason).map((reason) => reason.defect) : []
@@ -21,31 +25,42 @@ const defects = (exit: Exit.Exit<unknown, unknown>) =>
 // typecheck or construct.
 const memoryLayer = () =>
   SQLiteNoteService.pipe(
-    Layer.provide(NoteDatabaseLive),
+    Layer.provideMerge(NoteDatabaseLive),
     Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
   )
 
-const createTables = Effect.gen(function* () {
-  const sql = yield* SqliteClient.SqliteClient
-
-  yield* sql`CREATE TABLE fleeting_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-  yield* sql`CREATE TABLE permanent_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-  yield* sql`CREATE TABLE literature_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, reference TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
-})
-
 const insertNotes = Effect.gen(function* () {
-  const sql = yield* SqliteClient.SqliteClient
+  const db = yield* NoteDatabaseService
 
-  yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('fleeting-1', 'Fleeting', 'quick thought', 1, 2)`
-  yield* sql`INSERT INTO literature_note (id, title, content, reference, created_at, updated_at) VALUES ('literature-1', 'Literature', 'a quote', 'Book, chapter 2', 3, 4)`
-  yield* sql`INSERT INTO permanent_note (id, title, content, created_at, updated_at) VALUES ('permanent-1', 'Permanent', 'a lasting idea', 5, 6)`
+  yield* db.insert(FleetingNoteTable).values({
+    id: fleetingId("fleeting-1"),
+    title: "Fleeting",
+    content: "quick thought",
+    createdAt: 1,
+    updatedAt: 2,
+  })
+  yield* db.insert(LiteratureNoteTable).values({
+    id: literatureId("literature-1"),
+    title: "Literature",
+    content: "a quote",
+    reference: "Book, chapter 2",
+    createdAt: 3,
+    updatedAt: 4,
+  })
+  yield* db.insert(PermanentNoteTable).values({
+    id: permanentId("permanent-1"),
+    title: "Permanent",
+    content: "a lasting idea",
+    createdAt: 5,
+    updatedAt: 6,
+  })
 })
 
 test("SQLite note service unions the three note tables into the tagged union", async () => {
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    yield* createTables
+    yield* migrateNoteDatabase
     yield* insertNotes
 
     const notes = yield* NoteService
@@ -53,7 +68,7 @@ test("SQLite note service unions the three note tables into the tagged union", a
     expect(yield* notes.list({})).toEqual([
       {
         type: "permanent",
-        id: permanentId,
+        id: permanentId("permanent-1"),
         title: "Permanent",
         content: "a lasting idea",
         createdAt: 5,
@@ -61,7 +76,7 @@ test("SQLite note service unions the three note tables into the tagged union", a
       },
       {
         type: "literature",
-        id: literatureId,
+        id: literatureId("literature-1"),
         title: "Literature",
         content: "a quote",
         reference: "Book, chapter 2",
@@ -70,7 +85,7 @@ test("SQLite note service unions the three note tables into the tagged union", a
       },
       {
         type: "fleeting",
-        id: fleetingId,
+        id: fleetingId("fleeting-1"),
         title: "Fleeting",
         content: "quick thought",
         createdAt: 1,
@@ -84,7 +99,7 @@ test("SQLite note service lists titles across all note kinds", async () => {
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    yield* createTables
+    yield* migrateNoteDatabase
     yield* insertNotes
 
     const notes = yield* NoteService
@@ -101,12 +116,31 @@ test("SQLite note service searches all note kinds and ranks title matches first"
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    yield* createTables
-    const sql = yield* SqliteClient.SqliteClient
+    yield* migrateNoteDatabase
+    const db = yield* NoteDatabaseService
 
-    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('fleeting-search', 'Alpha', 'body text', 1, 40)`
-    yield* sql`INSERT INTO literature_note (id, title, content, reference, created_at, updated_at) VALUES ('literature-search', 'Beta', 'alpha in body', 'Source', 2, 30)`
-    yield* sql`INSERT INTO permanent_note (id, title, content, created_at, updated_at) VALUES ('permanent-search', 'Gamma', 'alpha in body', 3, 20)`
+    yield* db.insert(FleetingNoteTable).values({
+      id: fleetingId("fleeting-search"),
+      title: "Alpha",
+      content: "body text",
+      createdAt: 1,
+      updatedAt: 40,
+    })
+    yield* db.insert(LiteratureNoteTable).values({
+      id: literatureId("literature-search"),
+      title: "Beta",
+      content: "alpha in body",
+      reference: "Source",
+      createdAt: 2,
+      updatedAt: 30,
+    })
+    yield* db.insert(PermanentNoteTable).values({
+      id: permanentId("permanent-search"),
+      title: "Gamma",
+      content: "alpha in body",
+      createdAt: 3,
+      updatedAt: 20,
+    })
 
     const notes = yield* NoteService
 
@@ -122,11 +156,24 @@ test("SQLite note service restricts search to title, content, or reference", asy
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    yield* createTables
-    const sql = yield* SqliteClient.SqliteClient
+    yield* migrateNoteDatabase
+    const db = yield* NoteDatabaseService
 
-    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('fleeting-fields', 'TitleOnly', 'plain body', 1, 1)`
-    yield* sql`INSERT INTO literature_note (id, title, content, reference, created_at, updated_at) VALUES ('literature-fields', 'Literature', 'ContentOnly', 'ReferenceOnly', 2, 2)`
+    yield* db.insert(FleetingNoteTable).values({
+      id: fleetingId("fleeting-fields"),
+      title: "TitleOnly",
+      content: "plain body",
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    yield* db.insert(LiteratureNoteTable).values({
+      id: literatureId("literature-fields"),
+      title: "Literature",
+      content: "ContentOnly",
+      reference: "ReferenceOnly",
+      createdAt: 2,
+      updatedAt: 2,
+    })
 
     const notes = yield* NoteService
 
@@ -155,12 +202,33 @@ test("SQLite note service requires every query term to match", async () => {
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    yield* createTables
-    const sql = yield* SqliteClient.SqliteClient
+    yield* migrateNoteDatabase
+    const db = yield* NoteDatabaseService
 
-    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('fleeting-and', 'Alpha', 'Beta', 1, 1)`
-    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('fleeting-other', 'Alpha', 'Gamma', 1, 2)`
-    yield* sql`INSERT INTO literature_note (id, title, content, reference, created_at, updated_at) VALUES ('literature-and', 'Alpha', 'Body', 'Beta', 1, 3)`
+    yield* db.insert(FleetingNoteTable).values([
+      {
+        id: fleetingId("fleeting-and"),
+        title: "Alpha",
+        content: "Beta",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: fleetingId("fleeting-other"),
+        title: "Alpha",
+        content: "Gamma",
+        createdAt: 1,
+        updatedAt: 2,
+      },
+    ])
+    yield* db.insert(LiteratureNoteTable).values({
+      id: literatureId("literature-and"),
+      title: "Alpha",
+      content: "Body",
+      reference: "Beta",
+      createdAt: 1,
+      updatedAt: 3,
+    })
 
     const notes = yield* NoteService
 
@@ -178,13 +246,25 @@ test("SQLite note service filters search by kind and bounds results", async () =
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    yield* createTables
-    const sql = yield* SqliteClient.SqliteClient
+    yield* migrateNoteDatabase
+    const db = yield* NoteDatabaseService
 
-    for (let index = 0; index < 12; index += 1) {
-      yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES (${`fleeting-bound-${index}`}, ${`Bound ${index}`}, 'shared body', 1, ${index})`
-    }
-    yield* sql`INSERT INTO permanent_note (id, title, content, created_at, updated_at) VALUES ('permanent-bound', 'Bound permanent', 'shared body', 1, 20)`
+    yield* db.insert(FleetingNoteTable).values(
+      Array.from({ length: 12 }, (_, index) => ({
+        id: fleetingId(`fleeting-bound-${index}`),
+        title: `Bound ${index}`,
+        content: "shared body",
+        createdAt: 1,
+        updatedAt: index,
+      })),
+    )
+    yield* db.insert(PermanentNoteTable).values({
+      id: permanentId("permanent-bound"),
+      title: "Bound permanent",
+      content: "shared body",
+      createdAt: 1,
+      updatedAt: 20,
+    })
 
     const notes = yield* NoteService
 
@@ -206,7 +286,7 @@ test("SQLite note service ignores empty and punctuation-only search queries", as
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    yield* createTables
+    yield* migrateNoteDatabase
     yield* insertNotes
 
     const notes = yield* NoteService
@@ -224,13 +304,40 @@ test("SQLite note service orders ties by kind and id", async () => {
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    yield* createTables
-    const sql = yield* SqliteClient.SqliteClient
+    yield* migrateNoteDatabase
+    const db = yield* NoteDatabaseService
 
-    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('b', 'B', '', 1, 10)`
-    yield* sql`INSERT INTO fleeting_note (id, title, content, created_at, updated_at) VALUES ('a', 'A', '', 1, 10)`
-    yield* sql`INSERT INTO literature_note (id, title, content, reference, created_at, updated_at) VALUES ('z', 'Z', '', 'Source', 1, 10)`
-    yield* sql`INSERT INTO permanent_note (id, title, content, created_at, updated_at) VALUES ('m', 'M', '', 1, 10)`
+    yield* db.insert(FleetingNoteTable).values([
+      {
+        id: fleetingId("b"),
+        title: "B",
+        content: "",
+        createdAt: 1,
+        updatedAt: 10,
+      },
+      {
+        id: fleetingId("a"),
+        title: "A",
+        content: "",
+        createdAt: 1,
+        updatedAt: 10,
+      },
+    ])
+    yield* db.insert(LiteratureNoteTable).values({
+      id: literatureId("z"),
+      title: "Z",
+      content: "",
+      reference: "Source",
+      createdAt: 1,
+      updatedAt: 10,
+    })
+    yield* db.insert(PermanentNoteTable).values({
+      id: permanentId("m"),
+      title: "M",
+      content: "",
+      createdAt: 1,
+      updatedAt: 10,
+    })
 
     const notes = yield* NoteService
 
@@ -253,7 +360,7 @@ test("SQLite note service returns empty lists for empty tables", async () => {
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    yield* createTables
+    yield* migrateNoteDatabase
 
     const notes = yield* NoteService
 
