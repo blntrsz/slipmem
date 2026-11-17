@@ -5,7 +5,6 @@ import {
 } from "@slipmem/core"
 import {
   type ApprovalError,
-  type ApprovalServiceShape,
   type McpWriteResult,
 } from "@slipmem/core/approval"
 import type { WikiError } from "@slipmem/core/wiki"
@@ -13,7 +12,7 @@ import type { Note } from "@slipmem/schemas/note"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { Effect, Layer, Option } from "effect"
 import { McpServer, Tool, Toolkit } from "effect/ai"
-import { McpApprovalService } from "./approval"
+import { McpApprovalService, type McpApprovalCapability } from "./approval"
 import { failure, noteNotFound, toolFailure } from "./errors"
 import {
   boundedListLimit,
@@ -342,8 +341,8 @@ const toWriteResult = (result: McpWriteResult): WriteNoteResult =>
       }
 
 const submit = (
-  approval: ApprovalServiceShape,
-  input: Parameters<ApprovalServiceShape["submitMcp"]>[0],
+  approval: McpApprovalCapability,
+  input: Parameters<McpApprovalCapability["submitMcp"]>[0],
 ): Effect.Effect<WriteNoteResult, ToolFailure> =>
   approval.submitMcp(input).pipe(
     Effect.map(toWriteResult),
@@ -351,7 +350,7 @@ const submit = (
   )
 
 const submitDelete = (
-  approval: ApprovalServiceShape,
+  approval: McpApprovalCapability,
   id: string,
 ): Effect.Effect<PendingApprovalResult, ToolFailure> =>
   approval.submitMcp({ operation: "delete", id }).pipe(

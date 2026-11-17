@@ -1,21 +1,35 @@
 import { MarkdownNoteRepository } from "@slipmem/core"
 import {
   makeApprovalService,
+  type ApprovalError,
   type ApprovalServiceShape,
+  type McpWriteInput,
+  type McpWriteResult,
 } from "@slipmem/core/approval"
 import { Context, Effect, Layer } from "effect"
 import type { McpServerOptions } from "./config"
 
 /**
+ * The only approval capability the MCP process may hold. `review`, `apply`,
+ * and `reject` remain human-surface methods and are not structurally
+ * reachable from the tool layer.
+ */
+export interface McpApprovalCapability {
+  readonly submitMcp: (
+    input: McpWriteInput,
+  ) => Effect.Effect<McpWriteResult, ApprovalError>
+}
+
+/**
  * MCP-facing wrapper around the core approval service.
  *
- * This wrapper deliberately exposes only `submitMcp` to the tool layer. The
- * approval service's `review`, `apply`, and `reject` methods stay in the human
- * CLI/web surfaces; there is no MCP tool or registration for them.
+ * The layer projects the service down to `submitMcp` at runtime as well as in
+ * the type, so a future tool cannot call a human approval method even if a
+ * type annotation is widened accidentally.
  */
 export class McpApprovalService extends Context.Service<
   McpApprovalService,
-  ApprovalServiceShape
+  McpApprovalCapability
 >()("@slipmem/mcp/ApprovalService") {}
 
 export const McpApprovalServiceLive = (
@@ -27,10 +41,14 @@ export const McpApprovalServiceLive = (
       const repository = yield* MarkdownNoteRepository
       const env = options.env ?? process.env
       const actor = env.SLIPMEM_ACTOR
-      return yield* makeApprovalService(repository, {
-        env,
-        ...(options.now === undefined ? {} : { now: options.now }),
-        ...(actor === undefined ? {} : { actor }),
-      })
+      const service: ApprovalServiceShape = yield* makeApprovalService(
+        repository,
+        {
+          env,
+          ...(options.now === undefined ? {} : { now: options.now }),
+          ...(actor === undefined ? {} : { actor }),
+        },
+      )
+      return { submitMcp: service.submitMcp }
     }).pipe(Effect.orDie),
   )

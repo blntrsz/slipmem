@@ -11,6 +11,7 @@ import {
   MAX_TITLE_LENGTH,
 } from "./schemas"
 import { McpNoteRegistrations } from "./tools"
+import { McpApprovalService } from "./approval"
 import { makeMarkdownNoteRepository, type MarkdownNoteRepositoryShape } from "@slipmem/core"
 import { makeApprovalService } from "@slipmem/core/approval"
 import { expect, test } from "bun:test"
@@ -131,6 +132,34 @@ test("exposes the bounded read surface", async () => {
     expect(tools.tools.some((tool) => /approve|reject|apply/.test(tool.name))).toBe(
       false,
     )
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("the MCP process receives only the submitMcp approval capability", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const service = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* McpApprovalService
+      }).pipe(
+        Effect.provide(
+          makeMarkdownServicesLayer({
+            root: disposable.root,
+            cacheDir: disposable.cacheDir,
+            now: clock.now,
+          }),
+        ),
+      ),
+    )
+
+    expect(Object.keys(service)).toEqual(["submitMcp"])
+    expect("review" in service).toBe(false)
+    expect("apply" in service).toBe(false)
+    expect("reject" in service).toBe(false)
   } finally {
     await removeDisposableRoot(disposable)
   }
