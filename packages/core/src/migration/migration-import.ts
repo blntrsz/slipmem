@@ -27,7 +27,7 @@ import {
 import { notePath } from "../markdown/paths.js"
 import { scanMarkdownRoot } from "../markdown/repository.js"
 import {
-  ensureStateDirectory,
+  ensureStateSubdirectory,
   STATE_DIRECTORY,
 } from "../markdown/root.js"
 import {
@@ -665,7 +665,6 @@ const writeQuarantine = ({
   directory,
   plan,
 }: QuarantineInput): MigrationQuarantineReport => {
-  mkdirSync(directory, { recursive: true, mode: 0o700 })
   const files: Array<MigrationQuarantineFile> = []
   const index: Array<Record<string, unknown>> = []
 
@@ -973,7 +972,6 @@ export const importMigration = (
     }
 
     mkdirSync(root, { recursive: true, mode: 0o755 })
-    const stateDirectory = ensureStateDirectory(root)
     const currentRoot = inspectRoot(root)
     if (currentRoot.nonEmpty && !merge) {
       const message = `The note root "${root}" gained entries before the import could start. Re-run with merge: true to add notes without overwriting existing files.`
@@ -1001,14 +999,16 @@ export const importMigration = (
       unchanged: lockedSourceMain.sha256 === lockedPlan.source.sha256,
     }
 
-    const migrationsDirectory = join(
-      stateDirectory,
+    const migrationsDirectory = ensureStateSubdirectory(
+      root,
       MIGRATION_STATE_SUBDIRECTORY,
     )
-    mkdirSync(migrationsDirectory, { recursive: true, mode: 0o700 })
     const runId = uniqueRunId(migrationsDirectory, nowMs)
-    const runDirectory = join(migrationsDirectory, runId)
-    mkdirSync(runDirectory, { recursive: true, mode: 0o700 })
+    const runDirectory = ensureStateSubdirectory(
+      root,
+      MIGRATION_STATE_SUBDIRECTORY,
+      runId,
+    )
     const manifestPath = join(runDirectory, MIGRATION_MANIFEST_FILENAME)
 
     let quarantine = emptyQuarantine()
@@ -1171,8 +1171,10 @@ export const importMigration = (
 
     // Quarantine first so invalid row text survives any later failure.
     try {
-      const quarantineDirectory = join(
-        runDirectory,
+      const quarantineDirectory = ensureStateSubdirectory(
+        root,
+        MIGRATION_STATE_SUBDIRECTORY,
+        runId,
         MIGRATION_QUARANTINE_DIRECTORY,
       )
       quarantine = writeQuarantine({

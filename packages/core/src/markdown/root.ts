@@ -101,6 +101,22 @@ export const rootSymlinkError = (path: string): MarkdownError =>
     message: `The note root '${path}' is a symbolic link. Point SLIPMEM_DIR (or the repository) at the real directory; slipmem does not follow a linked note root.`,
   })
 
+export const stateSymlinkError = (path: string): MarkdownError =>
+  markdownError({
+    area: "repository",
+    code: "symlink",
+    path,
+    message: `The local state path '${path}' is a symbolic link or resolves outside the note root. slipmem keeps locks, manifests, quarantine, and backups inside the repository; remove the link and retry.`,
+  })
+
+const stateWriteError = (path: string, message: string): MarkdownError =>
+  markdownError({
+    area: "repository",
+    code: "write-failed",
+    path,
+    message,
+  })
+
 /**
  * Rejects a note root that is itself a symlink even when it resolves to an
  * existing directory. A missing path is not this function's concern.
@@ -208,7 +224,7 @@ export const initializeNoteRoot = (
 
     try {
       mkdirSync(absoluteRoot, { recursive: true, mode: 0o755 })
-      mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+      ensureStateDirectory(absoluteRoot)
       if (!existsSync(readmePath)) {
         writeFileSync(readmePath, STARTER_README, { encoding: "utf8", flag: "wx" })
       }
@@ -219,6 +235,9 @@ export const initializeNoteRoot = (
         })
       }
     } catch (cause) {
+      if (cause instanceof MarkdownError) {
+        return yield* Effect.fail(cause)
+      }
       return yield* Effect.fail(
         markdownError({
           area: "repository",
@@ -237,11 +256,112 @@ export const initializeNoteRoot = (
     }
   })
 
-/** Creates `.state/` lazily without turning a missing root into a repository. */
+const assertStatePath = (
+  path: string,
+  root: string,
+  code: "symlink" | "write-failed",
+): void => {
+  if (isSymbolicLinkPath(path)) {
+    throw stateSymlinkError(path)
+  }
+  try {
+    if (!isPathInside(realpathSync(path), realpathSync(root))) {
+      throw stateSymlinkError(path)
+    }
+  } catch (cause) {
+    if (cause instanceof MarkdownError) throw cause
+    if (code === "symlink") throw stateSymlinkError(path)
+    throw stateWriteError(
+      path,
+      `Could not verify that the local state path stays inside the note root: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+    )
+  }
+}
+
+/**
+ * Creates `.state/` lazily without turning a missing root into a repository.
+ * A symlinked `.state/` is rejected: following it would let lock files,
+ * manifests, and quarantine data escape the repository.
+ */
 export const ensureStateDirectory = (root: string): string => {
-  const stateDir = join(resolve(root), STATE_DIRECTORY)
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+  const absoluteRoot = resolve(root)
+  const stateDir = join(absoluteRoot, STATE_DIRECTORY)
+  if (isSymbolicLinkPath(stateDir)) {
+    throw stateSymlinkError(stateDir)
+  }
+
+  try {
+    mkdirSync(stateDir, { recursive: true, mode: 0o700 })
+  } catch (cause) {
+    throw stateWriteError(
+      stateDir,
+      `Could not create ${STATE_DIRECTORY}/: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+    )
+  }
+
+  assertStatePath(stateDir, absoluteRoot, "symlink")
   return stateDir
+}
+
+/**
+ * Creates one internal state child (for example `.state/migrations/<run>/`)
+ * while rejecting a symlink at every level. Only relative, single-segment names
+ * are accepted so an internal constant cannot become a traversal.
+ */
+export const ensureStateSubdirectory = (
+  root: string,
+  ...segments: ReadonlyArray<string>
+): string => {
+  const absoluteRoot = resolve(root)
+  let current = ensureStateDirectory(absoluteRoot)
+
+  for (const segment of segments) {
+    if (
+      segment.length === 0 ||
+      segment === "." ||
+      segment === ".." ||
+      segment.includes("/") ||
+      segment.includes("\\") ||
+      segment.includes(sep)
+    ) {
+      throw stateWriteError(
+        join(current, segment),
+        `Refusing to create local state outside ${STATE_DIRECTORY}/ for segment "${segment}".`,
+      )
+    }
+
+    current = join(current, segment)
+    if (isSymbolicLinkPath(current)) {
+      throw stateSymlinkError(current)
+    }
+
+    try {
+      if (!existsSync(current)) {
+        mkdirSync(current, { recursive: false, mode: 0o700 })
+      } else if (!statSync(current).isDirectory()) {
+        throw stateWriteError(
+          current,
+          `The local state path '${current}' is not a directory.`,
+        )
+      }
+    } catch (cause) {
+      if (cause instanceof MarkdownError) throw cause
+      throw stateWriteError(
+        current,
+        `Could not create the local state directory: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      )
+    }
+
+    assertStatePath(current, absoluteRoot, "symlink")
+  }
+
+  return current
 }
 
 export const stateDirectory = (root: string): string =>
