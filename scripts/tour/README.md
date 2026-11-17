@@ -69,16 +69,49 @@ cp example.script.json tour.script.json
 bun record.mjs tour.script.json
 ```
 
-The recorder opens `url`, waits 500 ms, then runs the steps. Output defaults to
-`scripts/tour/output/`, which is gitignored.
+The recorder opens `url`, waits 500 ms, then runs the steps. `output` is
+resolved inside a dedicated output root: `scripts/tour/output/` by default,
+which is gitignored. Set `TOUR_OUTPUT_ROOT` to an absolute or
+working-directory-relative directory to use another root, for example
+`TOUR_OUTPUT_ROOT=/tmp/opencode/tour bun record.mjs tour.script.json`.
 
-- `output/<name>.webm` - silent VP9 recording at 25 fps.
-- `output/stills/` - PNGs from `screenshot` steps, plus `error.png` on failure.
-- `output/<name>.actions.json` - the executed steps and approximate timings.
+- The WebM named by `output`, relative to the output root - silent VP9 at
+  25 fps.
+- `stills/` in the WebM's directory - PNGs from `screenshot` steps, plus
+  `error.png` on failure.
+- `<name>.actions.json` next to the WebM - the executed steps and approximate
+  timings, with fill/type values redacted by default.
 
 Review the WebM and stills before encoding. The action log is driver-relative;
 the video begins slightly later than the first logged step, so use the burned-in
 captions rather than the log for frame-accurate editing.
+
+## Safety boundaries
+
+The recorder is local operator tooling, not a sandbox, but it refuses the
+dangerous cases that a mistyped script can create:
+
+- **Output containment.** `output` must be a relative `.webm` path inside the
+  output root. Absolute paths, `..` escapes, symlink escapes, and note-root
+  outputs are rejected. The output root itself must not be `/`, the home
+  directory, the tour directory or its ancestor, a `.slipmem/` directory, or
+  the note root from `SLIPMEM_DIR`.
+- **No recursive deletion outside the run.** A unique `.raw-*` directory is
+  created inside the output directory for Playwright's recording and only that
+  directory is removed afterward. A pre-existing `.raw/`, stills, or any other
+  directory is never deleted recursively.
+- **Navigation allowlist.** `url` must be `http:` or `https:`, without
+  embedded credentials. Every document navigation, including clicks and
+  redirects, must stay on an allowed origin. The recorded origin is allowed by
+  default. Add explicit origins to `allowedOrigins` in the script if the flow
+  really crosses origins. `file:`, `javascript:`, and other schemes are always
+  rejected; serve local fixtures over loopback HTTP instead.
+- **Input redaction.** `fill.value` and `type.text` are written as
+  `<redacted>` in the action log. Pass `--include-input-values` only for local
+  debugging when you are sure the log will not be shared or committed.
+
+`TOUR_OUTPUT_ROOT` and `--include-input-values` are deliberate operator
+overrides. Keep the default output root and redaction for normal runs.
 
 ## Encode
 
@@ -96,7 +129,7 @@ also ensures even dimensions, which H.264 requires.
 ```json
 {
   "url": "http://localhost:3000/",
-  "output": "output/slipmem-tour.webm",
+  "output": "slipmem-tour.webm",
   "width": 1440,
   "height": 900,
   "steps": [
@@ -108,16 +141,27 @@ also ensures even dimensions, which H.264 requires.
 }
 ```
 
-`url`, `output`, `width`, and `height` are optional; the values above are the
-defaults. All paths in the script are relative to this directory. Width and
-height must be even.
+`url`, `allowedOrigins`, `output`, `width`, and `height` are optional; the
+values above are the defaults, except that `allowedOrigins` defaults to the
+origin of `url`. Width and height must be even. `allowedOrigins` is an array of
+bare extra origins such as `["https://example.com"]`; paths, queries,
+credentials, and non-HTTP schemes are rejected.
+
+Paths have three separate bases:
+
+- The script path given on the command line is resolved from the current
+  working directory.
+- `output` is resolved inside the output root (`scripts/tour/output/` by
+  default, or `TOUR_OUTPUT_ROOT`), not relative to the script file.
+- `screenshot` names are resolved inside the output directory's `stills/`
+  folder and cannot escape it.
 
 | Step | Meaning |
 | --- | --- |
 | `{ "caption": "text" }` | Show a caption and leave it visible. |
 | `{ "caption": "text", "hold": 2500 }` | Show it for 2500 ms, then hide it. |
 | `{ "caption": null }` | Hide the current caption. |
-| `{ "goto": "/notes" }` | Navigate, resolved against `url`. Optional `waitUntil`. |
+| `{ "goto": "/notes" }` | Navigate, resolved against `url`. The target must be on an allowed origin. Optional `waitUntil`. |
 | `{ "click": "..." }` | Move the synthetic cursor to the element and click it. |
 | `{ "hover": "..." }` | Move the cursor to the element. |
 | `{ "fill": { "selector": "...", "value": "..." } }` | Replace a field value instantly. |
@@ -131,7 +175,21 @@ height must be even.
 
 Use selectors that describe the finished UI (CSS, `text=`, or Playwright
 role/name selectors). Keep captions short enough to fit one or two lines at
-1440x900.
+1440x900. `fill` and `type` values still run normally but are redacted from the
+action log.
+
+## Verify the tooling
+
+```sh
+cd scripts/tour
+bun test
+```
+
+The safety tests cover output containment, note-root rejection, symlink
+escapes, navigation allowlists, and action-log redaction. When Chromium is
+available, the recorder test also serves a local fixture page, records a short
+WebM, and checks the still, video, and redacted log end to end. It skips only
+the browser-backed test when Chromium cannot launch.
 
 ## Practical notes
 
@@ -143,5 +201,6 @@ role/name selectors). Keep captions short enough to fit one or two lines at
 - The overlay is inserted under `<html>` with inline styles so application
   re-renders do not remove it. A future strict Content-Security-Policy that
   forbids inline styles would require adjusting `overlay.js`.
-- Record the actual implemented flow only. This scaffold was verified with a
-  synthetic fixture page; no current slipmem UI was recorded.
+- Record the actual implemented flow only. The recorder is verified against the
+  synthetic fixture in `record.test.mjs`; no current slipmem UI has been
+  recorded.

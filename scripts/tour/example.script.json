@@ -1,6 +1,6 @@
 {
   "url": "http://localhost:3000/",
-  "output": "output/example.webm",
+  "output": "example.webm",
   "width": 1440,
   "height": 900,
   "steps": [

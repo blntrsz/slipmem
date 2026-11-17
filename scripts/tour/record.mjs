@@ -3,40 +3,62 @@
 // browser overlay. App-specific selectors belong in the tour script, never in
 // this driver.
 //
+// Safety defaults (see README):
+// - output stays inside scripts/tour/output, or TOUR_OUTPUT_ROOT;
+// - output may never live in a slipmem note root;
+// - navigation stays on the recorded origin unless allowedOrigins says
+//   otherwise;
+// - fill values and typed text are redacted from the action log.
+//
 // Usage:
 //   cd scripts/tour
 //   bun install
-//   bun record.mjs tour.script.json
+//   bun record.mjs [tour.script.json] [--include-input-values]
 
-import {
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises"
-import { dirname, join, resolve } from "node:path"
+import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import {
+  DEFAULT_OUTPUT_NAME,
+  DEFAULT_URL,
+  assertNavigationAllowed,
+  ensureDirectoryInside,
+  parseBaseUrl,
+  redactStepForLog,
+  resolveAllowedOrigins,
+  resolveOutputPaths,
+  resolveScreenshotPath,
+} from "./safety.mjs"
 
-const here = dirname(fileURLToPath(import.meta.url))
+const here = fileURLToPath(new URL(".", import.meta.url))
 const defaultScript = join(here, "tour.script.json")
-
-let chromium
-try {
-  ;({ chromium } = await import("playwright"))
-} catch {
-  console.error(
-    "tour: playwright is not installed. Run `bun install` in scripts/tour first.",
-  )
-  process.exit(1)
-}
+const usage =
+  "usage: bun record.mjs [script.json] [--include-input-values]"
 
 const die = (message) => {
   console.error(`tour: ${message}`)
   process.exit(1)
 }
 
-const scriptArg = process.argv[2]
+const args = process.argv.slice(2)
+const includeInputValues = args.includes("--include-input-values")
+const help = args.includes("--help") || args.includes("-h")
+if (help) {
+  console.log(usage)
+  process.exit(0)
+}
+const unknownOption = args.find(
+  (arg) => arg.startsWith("-") && arg !== "--include-input-values",
+)
+if (unknownOption !== undefined) {
+  die(`unknown option ${unknownOption}\n${usage}`)
+}
+const positional = args.filter((arg) => !arg.startsWith("-"))
+if (positional.length > 1) {
+  die(usage)
+}
+
+const scriptArg = positional[0]
 const scriptPath = scriptArg ? resolve(process.cwd(), scriptArg) : defaultScript
 
 let config
@@ -46,6 +68,13 @@ try {
   die(`cannot read ${scriptPath}: ${error.message}`)
 }
 
+if (
+  typeof config !== "object" ||
+  config === null ||
+  Array.isArray(config)
+) {
+  die(`${scriptPath} must contain a JSON object`)
+}
 if (!Array.isArray(config.steps) || config.steps.length === 0) {
   die(`${scriptPath} must contain a non-empty "steps" array`)
 }
@@ -64,19 +93,51 @@ if (width % 2 !== 0 || height % 2 !== 0) {
   die("width and height must be even for H.264 encoding")
 }
 
-const baseUrl = config.url ?? "http://localhost:3000/"
-const outputPath = resolve(
-  here,
-  config.output ?? "output/slipmem-tour.webm",
-)
-if (!outputPath.endsWith(".webm")) {
-  die('output must end with ".webm"')
+let baseUrl
+let allowedOrigins
+let paths
+try {
+  baseUrl = parseBaseUrl(config.url ?? DEFAULT_URL)
+  allowedOrigins = resolveAllowedOrigins(baseUrl, config.allowedOrigins)
+  paths = await resolveOutputPaths({
+    tourDir: here,
+    output: config.output ?? DEFAULT_OUTPUT_NAME,
+    env: process.env,
+    cwd: process.cwd(),
+  })
+} catch (error) {
+  die(error instanceof Error ? error.message : String(error))
 }
 
-const outputDir = dirname(outputPath)
-const rawDir = join(outputDir, ".raw")
-const stillsDir = join(outputDir, "stills")
-const logPath = outputPath.replace(/\.webm$/, ".actions.json")
+const { outputRootReal, outputPath, logPath } = paths
+
+let chromium
+try {
+  ;({ chromium } = await import("playwright"))
+} catch {
+  die(
+    "playwright is not installed. Run `bun install` in scripts/tour first.",
+  )
+}
+
+// Create and validate every directory we will write to, including the unique
+// temporary recording directory. Nothing outside this tree is deleted.
+const outputDir = await ensureDirectoryInside(
+  outputRootReal,
+  paths.outputDir,
+  "The output directory",
+)
+const stillsDir = await ensureDirectoryInside(
+  outputRootReal,
+  paths.stillsDir,
+  "The stills directory",
+)
+const rawDir = await mkdtemp(join(outputDir, ".raw-"))
+await ensureDirectoryInside(
+  outputRootReal,
+  rawDir,
+  "The temporary recording directory",
+)
 
 const actionKeys = [
   "caption",
@@ -106,10 +167,6 @@ const requireMillis = (value, label) => {
   return value
 }
 
-await mkdir(outputDir, { recursive: true })
-await rm(rawDir, { recursive: true, force: true })
-await mkdir(rawDir, { recursive: true })
-
 const browser = await chromium.launch({
   headless: true,
   args: ["--hide-scrollbars", "--force-color-profile=srgb"],
@@ -120,16 +177,61 @@ const context = await browser.newContext({
 })
 await context.addInitScript({ path: join(here, "overlay.js") })
 
+// Enforce the navigation allowlist for document navigations, including links
+// clicked in the page and server redirects. Subresources remain available.
+let navigationViolation = null
+await context.route("**/*", async (route) => {
+  const request = route.request()
+  if (
+    request.isNavigationRequest() &&
+    request.resourceType() === "document"
+  ) {
+    try {
+      assertNavigationAllowed(request.url(), allowedOrigins, {
+        label: "browser navigation",
+      })
+    } catch (error) {
+      navigationViolation ??= error.message
+      await route.abort("blockedbyclient").catch(() => undefined)
+      return
+    }
+  }
+  await route.continue().catch(() => undefined)
+})
+
 const page = await context.newPage()
 const video = page.video()
 const startedAt = Date.now()
 const actions = []
 
 const mark = (step, index) => {
-  const entry = { index, atMs: Date.now() - startedAt, step }
+  const entry = {
+    index,
+    atMs: Date.now() - startedAt,
+    step: redactStepForLog(step, { includeInputValues }),
+  }
   actions.push(entry)
   return entry.atMs
 }
+
+const assertNoNavigationViolation = () => {
+  if (navigationViolation !== null) {
+    throw new Error(navigationViolation)
+  }
+}
+
+const logData = (failure) => ({
+  baseUrl: baseUrl.href,
+  allowedOrigins,
+  width,
+  height,
+  durationMs: Date.now() - startedAt,
+  output: outputPath,
+  outputRoot: outputRootReal,
+  redactedInputs: !includeInputValues,
+  failure: failure?.message ?? null,
+  actions,
+})
 
 const locatorFor = (selector, label) =>
   page.locator(requireString(selector, label)).first()
@@ -174,8 +276,12 @@ const runStep = async (step, index) => {
       return
     }
     case "goto": {
-      const target = new URL(requireString(step.goto, "goto"), baseUrl).href
-      await page.goto(target, {
+      const target = assertNavigationAllowed(
+        requireString(step.goto, "goto"),
+        allowedOrigins,
+        { base: baseUrl.href, label: "goto" },
+      )
+      await page.goto(target.href, {
         waitUntil: step.waitUntil ?? "domcontentloaded",
       })
       return
@@ -265,12 +371,11 @@ const runStep = async (step, index) => {
         throw new Error("screenshot must be a name string or an object")
       }
       const name = requireString(options.name, "screenshot.name")
-      const fileName = name.endsWith(".png") ? name : `${name}.png`
-      const target = resolve(stillsDir, fileName)
-      if (!target.startsWith(`${stillsDir}/`)) {
-        throw new Error("screenshot.name must stay inside the stills directory")
-      }
-      await mkdir(dirname(target), { recursive: true })
+      const target = await resolveScreenshotPath({
+        outputRoot: outputRootReal,
+        stillsDir,
+        name,
+      })
       await page.screenshot({ path: target, fullPage: options.fullPage ?? false })
       return
     }
@@ -281,7 +386,12 @@ const runStep = async (step, index) => {
 
 let failure
 try {
-  await page.goto(baseUrl, { waitUntil: "domcontentloaded" })
+  await page.goto(baseUrl.href, { waitUntil: "domcontentloaded" }).catch((error) => {
+    if (navigationViolation !== null) {
+      throw new Error(navigationViolation)
+    }
+    throw error
+  })
   await page.waitForTimeout(500)
 
   for (const [index, step] of config.steps.entries()) {
@@ -291,30 +401,34 @@ try {
     const atMs = mark(step, index)
     process.stdout.write(`[${(atMs / 1000).toFixed(1)}s] step ${index + 1}\n`)
     await runStep(step, index)
+    assertNoNavigationViolation()
   }
 
   // Keep the last frame readable before the video ends.
   await page.waitForTimeout(400)
+  assertNoNavigationViolation()
 } catch (error) {
-  failure = error
-  console.error(`tour: ${error.message}`)
+  failure = navigationViolation !== null ? new Error(navigationViolation) : error
+  console.error(`tour: ${failure.message}`)
   await mkdir(stillsDir, { recursive: true }).catch(() => undefined)
   await page
     .screenshot({ path: join(stillsDir, "error.png") })
     .catch(() => undefined)
   await writeFile(
     logPath,
-    `${JSON.stringify({ baseUrl, width, height, actions, error: error.message }, null, 2)}\n`,
+    `${JSON.stringify(logData(failure), null, 2)}\n`,
   ).catch(() => undefined)
 }
 
 await context.close().catch(() => undefined)
 await browser.close().catch(() => undefined)
 
+let keepRaw = false
 if (video !== null) {
   const rawPath = await video.path().catch(() => null)
   if (rawPath !== null) {
     await rename(rawPath, outputPath).catch((error) => {
+      keepRaw = true
       if (!failure) {
         failure = error
       }
@@ -322,24 +436,16 @@ if (video !== null) {
     })
   }
 }
-await rm(rawDir, { recursive: true, force: true })
 
-await writeFile(
-  logPath,
-  `${JSON.stringify(
-    {
-      baseUrl,
-      width,
-      height,
-      durationMs: Date.now() - startedAt,
-      output: outputPath,
-      failure: failure?.message ?? null,
-      actions,
-    },
-    null,
-    2,
-  )}\n`,
-)
+// Only remove the unique directory this run created. A pre-existing `.raw`
+// directory, stills, or anything else is never deleted recursively.
+if (!keepRaw) {
+  await rm(rawDir, { recursive: true, force: true }).catch(() => undefined)
+} else {
+  console.error(`tour: raw recording kept in ${rawDir}`)
+}
+
+await writeFile(logPath, `${JSON.stringify(logData(failure), null, 2)}\n`)
 
 if (failure) {
   console.error(`tour: failed; partial artifacts are in ${outputDir}`)

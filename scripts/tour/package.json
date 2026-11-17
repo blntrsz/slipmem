@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "record": "bun record.mjs",
-    "encode": "./encode.sh"
+    "encode": "./encode.sh",
+    "test": "bun test"
   },
   "devDependencies": {
     "playwright": "1.64.1"
