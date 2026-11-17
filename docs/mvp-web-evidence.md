@@ -118,13 +118,13 @@ Focused gates:
 
 ```sh
 bun test packages/server/src/app.test.ts packages/server/src/config.test.ts
-# 12 pass, 0 fail, 85 assertions
+# 14 pass, 0 fail, 100 assertions
 
 bun test packages/server/src/app.test.ts \
   packages/server/src/config.test.ts \
   packages/web/src/main.test.ts \
   packages/web/src/route.test.ts
-# 32 pass, 0 fail, 160 assertions
+# 43 pass, 0 fail, 203 assertions
 ```
 
 The server acceptance tests cover:
@@ -164,7 +164,7 @@ bun test              272 pass, 0 fail, 1949 assertions, 34 files
 bun run web:build     pass (client and SSR bundles)
 ```
 
-The Phase 4-only subset was **42 pass, 0 fail, 199 assertions, 6 files** for
+The Phase 4-only subset was **43 pass, 0 fail, 203 assertions, 6 files** for
 `packages/server` and `packages/web`.
 
 ### Live production-bundle smoke test

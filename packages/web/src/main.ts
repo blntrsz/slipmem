@@ -752,40 +752,121 @@ const noteFormFromNote = (note: ApiNote): NoteForm => ({
   topics: note.topics.join(", "),
 })
 
-const reloadForRoute = (model: Model): Update.Commands<Message> | undefined =>
+const noteTypeOption = (
+  value: Option.Option<string>,
+): Option.Option<Markdown.NoteType> =>
+  Option.flatMap(value, (candidate) =>
+    Match.value(candidate).pipe(
+      Match.when("fleeting", () => Option.some("fleeting" as const)),
+      Match.when("permanent", () => Option.some("permanent" as const)),
+      Match.when("literature", () => Option.some("literature" as const)),
+      Match.orElse(() => Option.none<Markdown.NoteType>()),
+    ),
+  )
+
+/** Reloads the current route without changing its URL or filters. */
+const refreshRoute = (model: Model): UpdateReturn =>
   AppRoute.match(model.route, {
-    Home: () => [NavigateInternal({ url: homeRouter({
-      type: Option.none(),
-      topic: Option.none(),
-    }) })],
+    Home: ({ type, topic }) => {
+      const requestId = model.notesRequestId + 1
+      return {
+        model: modifyFields(model, {
+          notes: () => AsyncData.Loading(),
+          notesRequestId: () => requestId,
+        }),
+        commands: [LoadNotes({ requestId, type: noteTypeOption(type), topic })],
+      }
+    },
     Review: () => {
       const requestId = model.pendingRequestId + 1
-      return [LoadPending({ requestId })]
+      return {
+        model: modifyFields(model, {
+          pending: () => AsyncData.Loading(),
+          pendingRequestId: () => requestId,
+        }),
+        commands: [LoadPending({ requestId })],
+      }
     },
     Topics: () => {
       const requestId = model.topicsRequestId + 1
-      return [LoadTopics({ requestId })]
+      return {
+        model: modifyFields(model, {
+          topics: () => AsyncData.Loading(),
+          topicsRequestId: () => requestId,
+        }),
+        commands: [LoadTopics({ requestId })],
+      }
     },
     NoteDetail: ({ noteId }) => {
       const requestId = model.noteRequestId + 1
-      return [LoadNote({ requestId, noteId })]
+      return {
+        model: modifyFields(model, {
+          note: () => AsyncData.Loading(),
+          noteRequestId: () => requestId,
+        }),
+        commands: [LoadNote({ requestId, noteId })],
+      }
     },
     EditNote: ({ noteId }) => {
       const requestId = model.noteRequestId + 1
-      return [LoadNote({ requestId, noteId })]
+      return {
+        model: modifyFields(model, {
+          note: () => AsyncData.Loading(),
+          noteRequestId: () => requestId,
+        }),
+        commands: [LoadNote({ requestId, noteId })],
+      }
     },
     DeleteNote: ({ noteId }) => {
       const requestId = model.noteRequestId + 1
-      return [LoadNote({ requestId, noteId })]
+      return {
+        model: modifyFields(model, {
+          note: () => AsyncData.Loading(),
+          noteRequestId: () => requestId,
+        }),
+        commands: [LoadNote({ requestId, noteId })],
+      }
     },
-    NewNote: () => undefined,
-    Search: () => undefined,
-    Wiki: () => undefined,
+    Search: ({ q, type }) => {
+      const query = Option.getOrElse(q, () => "")
+      if (query.trim() === "") {
+        return { model }
+      }
+      const requestId = model.searchRequestId + 1
+      return {
+        model: modifyFields(model, {
+          search: () => AsyncData.Loading(),
+          searchRequestId: () => requestId,
+        }),
+        commands: [
+          LoadSearch({ requestId, query, type: noteTypeOption(type) }),
+        ],
+      }
+    },
+    Wiki: ({ topic, mode }) => {
+      const requestId = model.wikiRequestId + 1
+      return {
+        model: modifyFields(model, {
+          wiki: () => AsyncData.Loading(),
+          wikiRequestId: () => requestId,
+        }),
+        commands: [
+          LoadWiki({ requestId, topic, mode: wikiModeFromQuery(mode) }),
+        ],
+      }
+    },
     Health: () => {
       const requestId = model.healthRequestId + 1
-      return [LoadHealth({ requestId })]
+      return {
+        model: modifyFields(model, {
+          health: () => AsyncData.Loading(),
+          healthRequestId: () => requestId,
+        }),
+        commands: [LoadHealth({ requestId })],
+      }
     },
-    NotFound: () => undefined,
+    NewNote: () => ({ model }),
+    NotFound: () => ({ model }),
   })
 
 export const update = (model: Model, message: Message) =>
@@ -810,10 +891,7 @@ export const update = (model: Model, message: Message) =>
     CompletedNavigateInternal: () => ({ model }),
     CompletedLoadExternal: () => ({ model }),
 
-    ClickedRefresh: () => {
-      const commands = reloadForRoute(model)
-      return commands === undefined ? { model } : { model, commands }
-    },
+    ClickedRefresh: () => refreshRoute(model),
 
     ClickedNewNote: ({ type }) => ({
       model,

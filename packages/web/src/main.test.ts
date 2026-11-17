@@ -9,6 +9,7 @@ import {
   DeleteNote,
   EditorState,
   LoadNote,
+  LoadNotes,
   Message,
   Model,
   NavigateInternal,
@@ -318,6 +319,42 @@ test("delete requires the confirmation route, then removes the note from the lis
       NavigateInternal,
       Message.CompletedNavigateInternal(),
     ),
+  )
+})
+
+test("refresh reloads the current route without dropping filters", () => {
+  Story.story(
+    update,
+    Story.given(
+      baseModel(
+        AppRoute.Home({
+          type: Option.some("permanent"),
+          topic: Option.some("agent-memory"),
+        }),
+        {
+          notes: AsyncData.Success({ data: [permanent] }),
+          notesRequestId: 3,
+        },
+      ),
+    ),
+    Story.message(Message.ClickedRefresh()),
+    Story.model((model) => {
+      expect(model.notes._tag).toBe("Loading")
+      expect(model.notesRequestId).toBe(4)
+      expect(model.route).toMatchObject({
+        _tag: "Home",
+        type: Option.some("permanent"),
+        topic: Option.some("agent-memory"),
+      })
+    }),
+    Story.Command.expectHas(LoadNotes),
+    Story.Command.resolve(
+      LoadNotes,
+      Message.SucceededLoadNotes({ requestId: 4, notes: [permanent] }),
+    ),
+    Story.model((model) => {
+      expect(notesOf(model)).toHaveLength(1)
+    }),
   )
 })
 
