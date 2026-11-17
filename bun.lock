@@ -11,6 +11,18 @@
         "typescript": "^7.0.2",
       },
     },
+    "packages/cli": {
+      "name": "@slipmem/cli",
+      "version": "0.0.0",
+      "bin": {
+        "slipmem": "./src/main.ts",
+      },
+      "dependencies": {
+        "@slipmem/core": "workspace:*",
+        "@slipmem/schemas": "workspace:*",
+        "effect": "catalog:",
+      },
+    },
     "packages/core": {
       "name": "@slipmem/core",
       "version": "0.0.0",
@@ -186,6 +198,8 @@
     "@rolldown/binding-win32-x64-msvc": ["@rolldown/binding-win32-x64-msvc@1.2.19", "", { "os": "win32", "cpu": "x64" }, "sha512-y/sqRRc6d7hECzOFc5n3LSeqctmIp9mMjY1Kq4s14uLPd/LZ4z7i1zrW6fMtp2mPeuQIC4e6ULMcwQzMomqQag=="],
 
     "@rolldown/pluginutils": ["@rolldown/pluginutils@1.1.1", "", {}, "sha512-glFIJDvLNDtJhT9qrMFWLPbvS+skxgt4L0K8Ei2YtnhPysAJnsI7nyxSJxKj4ADeKX0OLjC4ntRkwpLOoS3rwA=="],
+
+    "@slipmem/cli": ["@slipmem/cli@workspace:packages/cli"],
 
     "@slipmem/core": ["@slipmem/core@workspace:packages/core"],
 

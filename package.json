@@ -16,6 +16,7 @@
     "check": "bun run lint && bun run typecheck && bun test && bun run web:build",
     "db:generate": "drizzle-kit generate",
     "db:check": "drizzle-kit check",
+    "slipmem": "bun packages/cli/src/main.ts",
     "web": "bun run --cwd packages/web start",
     "web:build": "bun run --cwd packages/web build",
     "web:serve": "bun run --cwd packages/web serve"
