@@ -35,17 +35,19 @@ The MVP makes five commitments:
 2. **Every note is portable.** Type, topics, timestamps, and provenance live in
    Markdown metadata, so the repository works with Git, an editor, a static
    site, or another tool.
-3. **Agent writes are governed.** An agent may capture fleeting notes, but
-   permanent and literature writes require explicit human approval.
+3. **Agent writes are governed.** An agent may capture fleeting and literature
+   notes directly, but only permanent note creation or changes require explicit
+   human approval.
 4. **Recall is bounded and cited.** Search and topic pages return a limited,
    inspectable set of notes with stable file citations.
 5. **The local loop is complete.** `slipmem` can initialize a repository,
    capture and curate notes, serve MCP, and run the web UI on one machine with
    no external database or hosted account.
 
-The MVP does not require an LLM to compose the topic wiki. The first version is
-extractive: it selects relevant notes and cites them verbatim. Generated prose
-can come later, behind a citation validator.
+Topic pages are synthesized on demand. The MVP supports both extractive assembly
+(selected notes quoted verbatim) and synthesized prose from a configurable model
+or agent. Every mode passes through a citation validator, so each claim remains
+traceable to a note file.
 
 ## 2. Vision
 
@@ -61,7 +63,7 @@ slipmem should be the smallest useful bridge:
 - An agent can recall relevant notes without pulling the entire repository into
   its context.
 - An agent can propose durable knowledge, but a human decides what becomes
-  curated memory.
+  permanent memory.
 - A topic page is assembled from cited notes when it is needed, rather than
   maintained as a second, drifting source of truth.
 - The same repository works locally through the CLI, MCP, and web UI, with no
@@ -83,9 +85,10 @@ under a normal Git merge.
 - An MCP stdio server and HTTP MCP endpoint with the same behavior.
 - A locally runnable Foldkit web UI for list, read, edit, search, topics,
   review, and topic pages.
-- Explicit approval before an agent creates or changes permanent or literature
-  notes, or deletes any note.
-- On-demand, topic-based, cited wiki output derived from notes.
+- Direct agent capture of fleeting and literature notes; explicit approval
+  before an agent creates or changes a permanent note, or deletes any note.
+- On-demand, topic-based wiki pages for humans and agents, synthesized from
+  notes by a configurable model or agent, with citations.
 - Migration from the current SQLite store without data loss.
 - Practical security limits for a local, unauthenticated-by-default tool.
 
@@ -95,8 +98,8 @@ under a normal Git merge.
 - Real-time multi-user editing or CRDT conflict resolution.
 - Vector search, embeddings, or an external search service.
 - Automatic conversation ingestion or background memory writes.
-- An LLM-authored wiki. The MVP may add optional synthesis only after citations
-  are mechanically verifiable.
+- A persisted wiki. Topic pages are generated on demand and never stored as a
+  second source of truth.
 - A graph database. Links and topics are metadata, not a separate graph store.
 - Replacing Git as the collaboration and backup mechanism.
 - Encrypting the note repository. The MVP must warn that local files are
@@ -111,7 +114,7 @@ under a normal Git merge.
    avoids moving files when a note is reclassified.
 3. **Stable identity.** A note's filename stem is its ID. Links, citations,
    API responses, and MCP results use that ID rather than an array position.
-4. **Humans approve curated memory.** Low-trust captures are cheap; durable
+4. **Humans approve permanent memory.** Low-trust captures are cheap; durable
    knowledge and deletions are deliberate.
 5. **Data is not authority.** Note text, titles, links, and references are
    untrusted content. They never become instructions, permissions, or shell
@@ -119,7 +122,8 @@ under a normal Git merge.
 6. **Bounded recall.** Every list, search, and wiki operation has a server-side
    default limit and a hard maximum.
 7. **Every claim is traceable.** Wiki output identifies the note file and ID
-   behind each excerpt. Unsupported synthesis is omitted in the MVP.
+   behind each excerpt or claim. Synthesized sentences without a supporting note
+   span are rejected or omitted.
 8. **Local by default.** The web and MCP HTTP surfaces bind to loopback unless
    the operator explicitly opts out. There is no implicit cloud dependency.
 9. **No silent destruction.** Writes are atomic, deletes go through approval
@@ -273,10 +277,12 @@ Type is metadata and never changes implicitly.
   contradictory. An agent can create and update them directly.
 - **Permanent** notes are distilled, self-contained knowledge. Only a human
   action or an approved proposal can create or update them.
-- **Literature** notes are permanent-quality notes tied to a source. They
-  require `reference` and use the same approval path as permanent notes.
+- **Literature** notes are source-backed notes tied to a source. They require
+  `reference` and, like fleeting notes, may be created and updated directly by
+  an agent.
 - Reclassifying a note changes the `type` field only. The filename and path stay
-  the same. Reclassification is a curated write and follows the approval policy.
+  the same. An agent may reclassify directly unless the change creates, alters,
+  or removes a permanent note; those changes require approval.
 - Deleting a note removes one file. Moves go to the operating system trash or a
   dated backup outside `.slipmem/`; the implementation must not implement an
   irreversible in-place shred by default.
@@ -334,7 +340,7 @@ Markdown files in .slipmem/
 MarkdownNoteRepository (parse, validate, write)
         |
         +--> NoteService (CRUD, list, get, search)
-        +--> WikiService (topic selection, citations)
+        +--> WikiService (topic selection, synthesis, citations)
         +--> MigrationService (SQLite -> Markdown)
         |
         v
@@ -380,7 +386,7 @@ human interface and must work without the web server or MCP.
 | `slipmem edit <id>` | Open `$EDITOR`, validate on save, write atomically. |
 | `slipmem search <query> [--type <type>] [--topic <topic>] [--limit <n>]` | Bounded ranked search with IDs and excerpts. |
 | `slipmem topics` | List topics and note counts. |
-| `slipmem wiki <topic> [--limit <n>] [--out <path>]` | Generate a cited topic page. Stdout by default. |
+| `slipmem wiki <topic> [--limit <n>] [--mode extractive\|synthesized] [--model <id> \| --agent <command>] [--out <path>]` | Generate a cited topic page, extractive or synthesized by a configured model or agent. Stdout by default. |
 | `slipmem review` | List pending approval proposals with summaries and diffs. |
 | `slipmem approve <proposal-id>` | Apply a proposal if its base version still matches. |
 | `slipmem reject <proposal-id>` | Discard a proposal without touching notes. |
@@ -401,11 +407,12 @@ a full rewrite. Add bounded read tools.
 | `list_fleeting_notes`, `list_permanent_notes`, `list_literature_notes` | Bounded list; default limit and hard maximum; IDs are filename stems. |
 | `get_*_note` | Fetch one note by ID. Missing or cross-root IDs return not found. |
 | `create_fleeting_note`, `update_fleeting_note` | Direct write with provenance `source: mcp`. |
-| `create_permanent_note`, `update_permanent_note`, `create_literature_note`, `update_literature_note` | Create a pending proposal by default; no note file changes until human approval. |
+| `create_permanent_note`, `update_permanent_note` | Create a pending proposal by default; no note file changes until human approval. |
+| `create_literature_note`, `update_literature_note` | Direct write with provenance `source: mcp`; the literature `reference` requirement still applies. |
 | `delete_*_note` | Create a pending proposal. No MCP self-approval. |
 | `search_notes` (new) | Bounded ranked search across types, with optional type and topic filters. |
 | `list_topics` (new) | Topic names with counts and bounded examples. |
-| `build_topic_wiki` (new) | On-demand extractive topic page with citations. Read-only. |
+| `build_topic_wiki` (new) | On-demand topic page with citations, extractive or synthesized by the configured model or agent. Read-only. |
 
 MCP requirements:
 
@@ -432,7 +439,7 @@ Pages:
 - `/notes/:id` - note detail and edit form.
 - `/new` - create form with type selector.
 - `/topics` - topic index.
-- `/wiki/:topic` - on-demand cited topic page.
+- `/wiki/:topic` - on-demand cited topic page, extractive or synthesized.
 - `/review` - pending proposals with diff and approve/reject actions.
 - `/health` or an equivalent local status view.
 
@@ -444,11 +451,11 @@ Canonical API:
 | `GET` | `/api/notes` | Bounded list, optional type/topic filters. |
 | `POST` | `/api/notes` | Create a note with `type` in the body. |
 | `GET` | `/api/notes/:id` | One note or not found. |
-| `PUT` | `/api/notes/:id` | Update a note; type changes are curated writes. |
+| `PUT` | `/api/notes/:id` | Update a note; type changes follow the approval policy. |
 | `DELETE` | `/api/notes/:id` | Delete a note; human UI action. |
 | `GET` | `/api/search?q=...` | Bounded ranked search. |
 | `GET` | `/api/topics` | Topic inventory. |
-| `GET` | `/api/wiki/:topic` | Cited topic page as Markdown or structured sections. |
+| `GET` | `/api/wiki/:topic` | Cited topic page as Markdown or structured sections; `mode` selects extractive or synthesized. |
 | `GET` | `/api/pending` | Pending proposals. |
 | `POST` | `/api/pending/:proposalId/approve` | Apply an approval. |
 | `POST` | `/api/pending/:proposalId/reject` | Reject an approval. |
@@ -473,10 +480,9 @@ must enforce it.
 | Human via CLI or web, any create/update/delete | Direct, with normal validation and confirmation for delete. |
 | Agent via MCP, create or update fleeting | Direct. Fleeting is a low-trust inbox. |
 | Agent via MCP, create or update permanent | Pending human approval. |
-| Agent via MCP, create or update literature | Pending human approval. |
+| Agent via MCP, create or update literature | Direct; the `reference` requirement applies. |
 | Agent via MCP, delete any note | Pending human approval. |
-| Agent via MCP, reclassify a note | Pending human approval. |
-| Agent via MCP, change a curated note's reference | Pending human approval. |
+| Agent via MCP, reclassify to or from permanent | Pending human approval. |
 
 The default is deliberately conservative. If experience shows that fleeting
 updates need approval too, tighten the matrix without changing the mechanism.
@@ -529,8 +535,17 @@ Selection:
 
 ### 9.2 Output contract
 
-The MVP output is extractive. Each excerpt is quoted or tightly paraphrased
-from one note and carries a citation to that note's ID and file.
+The page may be generated in either mode, selected by configuration:
+
+- **Extractive.** Each excerpt is quoted or tightly paraphrased from one note
+  and carries a citation to that note's ID and file. No prose is invented.
+- **Synthesized.** A configurable model or agent composes prose from the
+  selected notes. The synthesizer receives only the bounded, selected note set
+  and never gets tools, write access, or authority to act on note content. A
+  citation validator checks every sentence against its supporting note span;
+  unsupported sentences are rejected or omitted before output.
+
+Example extractive output:
 
 ```markdown
 # Topic: agent memory
@@ -554,7 +569,7 @@ Source: [[20261117193045-agent-memory-is-bounded]]
 
 Requirements:
 
-- Every factual excerpt has an adjacent source citation.
+- Every factual excerpt or synthesized sentence has an adjacent source citation.
 - The generator may not merge two notes into one unsupported claim.
 - Conflicting notes are shown side by side with both citations, not silently
   reconciled.
@@ -567,8 +582,10 @@ Requirements:
 - Source text is treated as untrusted. A note that says "ignore previous
   instructions" is quoted as data, never followed.
 
-Optional later phase: LLM synthesis with a citation validator that rejects any
-sentence without a supporting source span. This is not MVP scope.
+Synthesis configuration: `SLIPMEM_WIKI_SYNTHESIS` selects `extractive`, a model
+ID, or a local agent command. In every non-extractive mode the citation
+validator rejects any sentence without a supporting source span. The synthesizer
+runs locally against the bounded selection; note text stays untrusted data.
 
 ## 10. Phased plan
 
@@ -642,7 +659,8 @@ Exit criteria:
 Deliverables:
 
 - MCP read and write tools backed by the same repository.
-- Pending proposals for permanent, literature, and delete operations.
+- Pending proposals for permanent, reclassification, and delete operations;
+  direct fleeting and literature writes.
 - MCP instructions updated for Markdown storage, citations, bounded recall, and
   approval.
 - Shared registrations between stdio and HTTP MCP.
@@ -651,6 +669,8 @@ Deliverables:
 Exit criteria:
 
 - An MCP client cannot create a permanent note without a human approval.
+- An MCP client can create and update literature notes directly when they carry
+  a valid reference.
 - A stale proposal cannot overwrite a changed note.
 - Fleeting capture works directly.
 - stdio and HTTP return the same shapes and enforce the same limits.
@@ -785,12 +805,12 @@ fail closed at its trust boundaries.
 | Frontmatter | Reject executable YAML features, aliases with excessive expansion, and documents above a small fixed size. Parse with a safe schema. |
 | Recall | Default 10 results, hard maximum 50 for search/list; bounded excerpt length; reject empty or oversized queries. |
 | Wiki | Default 10 notes, hard maximum 25; bounded total output; no arbitrary note count or unbounded excerpts. |
-| Approval | Server-enforced for curated and destructive MCP writes. Proposals bind to a base content hash and expire. No MCP approval tool. |
+| Approval | Server-enforced for permanent and destructive MCP writes. Proposals bind to a base content hash and expire. No MCP approval tool. |
 | Network | Web and HTTP MCP bind to `127.0.0.1` by default. No authentication is implied. Non-loopback binding is an explicit, documented risk. |
 | CORS and origins | Do not enable permissive cross-origin access. The local API is not a public API. |
 | Sensitive data | Notes are plaintext and unencrypted. MCP instructions forbid secrets and sensitive personal data; the tool is not a secret store. |
 | Trust boundary | Note text is data, never instructions, permissions, scope, or paths. Never execute note content or follow note-provided commands. |
-| Prompt injection | Wiki output quotes untrusted notes; it must not promote their instructions into the result. The web UI must render note content as text/Markdown, not trusted HTML. |
+| Prompt injection | Wiki output treats notes as untrusted data in extractive and synthesized modes; note-provided instructions never reach the synthesizer as instructions or become tool calls. The web UI must render note content as text/Markdown, not trusted HTML. |
 | Deletion | Human confirmation for destructive CLI/web actions; MCP deletion always pending approval. Prefer trash or backup over permanent unlink. |
 | Concurrency | One writer lock per repository; atomic temp-file-plus-rename writes; fail clearly on lock or stale-base conflicts. |
 | Index | Cache permissions are user-only. Cache is disposable and may contain note text. Provide a clear-cache command. |
@@ -846,9 +866,10 @@ unauthenticated.
 
 ### 13.4 Approval
 
-- **APPROVE-01:** An MCP permanent create returns a pending proposal and creates
-  no note file.
-- **APPROVE-02:** An MCP literature create or update behaves the same way.
+- **APPROVE-01:** An MCP permanent create or update returns a pending proposal
+  and creates or changes no note file.
+- **APPROVE-02:** An MCP literature create or update writes directly and carries
+  `source: mcp` provenance.
 - **APPROVE-03:** An MCP delete of any note creates a pending proposal and
   deletes nothing.
 - **APPROVE-04:** `slipmem approve` applies the proposal atomically and the note
@@ -866,7 +887,8 @@ unauthenticated.
 
 - **WIKI-01:** `slipmem wiki <topic>` returns only notes matching the topic
   filters, within the default and maximum bounds.
-- **WIKI-02:** Every factual excerpt has an adjacent note ID and file citation.
+- **WIKI-02:** Every factual excerpt or synthesized sentence has an adjacent
+  note ID and file citation.
 - **WIKI-03:** No matching notes produce an empty or "no sources" result, not
   invented content.
 - **WIKI-04:** Conflicting notes are presented with separate citations rather
@@ -875,6 +897,9 @@ unauthenticated.
   explicit output path outside the note root is requested.
 - **WIKI-06:** Wiki output treats note text as data and does not follow
   instructions embedded in a note.
+- **WIKI-07:** A configured model or agent synthesizer produces a cited page,
+  and every synthesized sentence either passes the citation validator or is
+  omitted.
 
 ### 13.6 Migration
 
@@ -912,8 +937,8 @@ The MVP is complete when a new user can:
 1. Clone the repository and install dependencies.
 2. Run `slipmem init` and create fleeting, permanent, and literature notes.
 3. Search and browse them locally.
-4. Start the MCP server and have an agent capture a fleeting note and propose a
-   permanent note.
+4. Start the MCP server and have an agent capture a fleeting note, write a
+   literature note, and propose a permanent note.
 5. Approve the permanent proposal from the CLI or web review page.
 6. Open a cited topic page generated on demand.
 7. Delete the cache, rebuild it, and see identical content.
@@ -929,18 +954,19 @@ The MVP is complete when a new user can:
 | Filename slug drifts after a title change | Accepted. Filename stems are immutable; add opt-in rename with link rewriting later. |
 | YAML parsing edge cases | Use one safe, well-tested parser; reject executable features; preserve unknown keys. |
 | Timestamp collisions | Same-second titles get a numeric suffix; the 14-digit prefix remains the creation time. |
-| Approval friction | Limit approval to curated and destructive writes; keep fleeting capture direct. |
+| Approval friction | Limit approval to permanent writes and deletions; keep fleeting and literature capture direct. |
 | Index drift or deletion | The index is disposable and rebuildable; `check --rebuild-index` is the recovery path. |
 | Migration of malformed rows | Preserve text and report; never silently drop or truncate. |
 | Git merge conflicts | Detect and report; never auto-resolve. |
-| Wiki quality without an LLM | Extractive output is intentionally narrow and fully cited. Synthesis is a later opt-in. |
+| Wiki quality with a synthesizer | Extractive mode remains a fully cited fallback. Synthesized mode runs each sentence through a citation validator; unsupported sentences are dropped. |
 | Multi-user sync | Out of scope. Git is the collaboration mechanism for the MVP. |
 | Secret leakage | Plaintext warning, MCP policy, redaction guidance, and no secret-store claims. |
 | Old type-based API clients | Keep adapters for one release and then remove with a deprecation note. |
 
 Open decisions to resolve in Phase 0:
 
-- Whether fleeting updates should also require approval after early usage data.
+- Which default synthesizer to ship (local model, hosted model, or agent
+  command) and how operators configure it.
 - The exact topic normalization rules shared by CLI, MCP, and web.
 - Whether the web API returns wiki output as rendered Markdown or structured
   sections; the default should be structured sections with a Markdown rendering
