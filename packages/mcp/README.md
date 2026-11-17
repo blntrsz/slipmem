@@ -37,6 +37,44 @@ and lets the MCP transport finish before the process exits.
 
 ## MCP client configuration
 
+### OpenCode
+
+OpenCode V2 configures local MCP servers under `mcp.servers`. This repository's
+checked-in `opencode.json` already registers the stdio server, so opening the
+repository connects it automatically:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "slipmem": {
+        "type": "local",
+        "command": ["bun", "run", "packages/mcp/src/main.ts"],
+      },
+    },
+  },
+}
+```
+
+`command` is the executable followed by its arguments. Omit `cwd` to run it
+from the workspace root, which is also the default. Add `environment` entries
+for options such as `SLIPMEM_DB_PATH`, and check the connection with
+`opencode mcp list`.
+
+To register the server in another project, run this from the repository root:
+
+```sh
+opencode mcp add slipmem -- bun run packages/mcp/src/main.ts
+```
+
+Add `--global` to make the server available in every project. If the server is
+registered globally, or the workspace is not the repository root, use an
+absolute path to `packages/mcp/src/main.ts` or set `cwd` to the repository
+root.
+
+### Other clients
+
 Use an absolute path to this repository in your MCP client configuration:
 
 ```json

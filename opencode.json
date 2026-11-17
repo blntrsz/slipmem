@@ -10,6 +10,23 @@
       "repository": "foldkit/foldkit",
       "branch": "main",
       "description": "Use when working with Foldkit APIs, architecture, packages, or implementation details."
+    },
+    "opencode": {
+      "repository": "anomalyco/opencode",
+      "branch": "dev",
+      "description": "Use when working with OpenCode APIs, architecture, packages, or implementation details."
+    }
+  },
+  "mcp": {
+    "servers": {
+      "slipmem": {
+        "type": "local",
+        "command": [
+          "bun",
+          "run",
+          "packages/mcp/src/main.ts"
+        ]
+      }
     }
   }
 }

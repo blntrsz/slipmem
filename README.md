@@ -82,5 +82,6 @@ expose it behind your own access controls.
 
 See [`packages/web/README.md`](packages/web/README.md) for the UI routes, API
 endpoints, and MCP setup. See [`packages/mcp/README.md`](packages/mcp/README.md)
-for the stdio MCP client setup.
+for the stdio MCP client setup. The repository's `opencode.json` registers the
+stdio server as a local OpenCode MCP server.
 
