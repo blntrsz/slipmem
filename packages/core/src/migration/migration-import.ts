@@ -39,6 +39,7 @@ import {
   type PreservedValue,
   type SqliteValue,
 } from "./migration-plan.js"
+import { withMigrationSourceSnapshot } from "./migration-source.js"
 
 /**
  * Imports the read-only migration plan into a Markdown note root.
@@ -571,75 +572,75 @@ const createSourceBackup = (
   databasePath: string,
   backupPath: string,
   plan: MigrationPlan,
-): MigrationBackupReport => {
-  const sourceSize = statSync(databasePath).size
-  const walPath = `${databasePath}-wal`
-  if (sourceSize === 0 && !existsSync(walPath)) {
-    // A zero-byte SQLite file has no pages to copy. VACUUM INTO refuses to
-    // write from a read-only empty database, so an exact byte copy is the
-    // consistent backup.
-    copyFileSync(databasePath, backupPath)
-  } else {
-    // `PRAGMA query_only` blocks `VACUUM INTO` on a non-WAL source, so the
-    // read-only connection flag is the write guard here. VACUUM INTO still
-    // reads a single consistent snapshot, including uncheckpointed WAL frames.
-    const database = new Database(databasePath, { readonly: true })
-    try {
-      database.prepare("VACUUM INTO ?").run(backupPath)
-    } finally {
-      database.close()
-    }
-  }
-
-  const bytes = statSync(backupPath).size
-  const sha256 = sha256File(backupPath)
-  const verify = new Database(backupPath, {
-    readonly: true,
-    safeIntegers: true,
-  })
-  let integrity = ""
-  const tableCounts: Record<string, number> = {}
-  try {
-    integrity =
-      verify
-        .query<{ readonly integrity_check: string }, []>(
-          "PRAGMA integrity_check",
-        )
-        .get()?.integrity_check ?? ""
-    if (integrity !== "ok") {
-      throw new Error(
-        `The source backup failed SQLite integrity_check: ${integrity || "(empty)"}.`,
-      )
-    }
-
-    for (const table of plan.source.tables) {
-      const count = countSqliteInteger(
-        verify
-          .query<{ readonly count: unknown }, []>(
-            `SELECT COUNT(*) AS count FROM "${table.name}"`,
-          )
-          .get()?.count,
-      )
-      tableCounts[table.name] = count
-      if (count !== table.rowCount) {
-        throw new Error(
-          `The source backup has ${count} row(s) in "${table.name}", expected ${table.rowCount}.`,
-        )
+): MigrationBackupReport =>
+  withMigrationSourceSnapshot(databasePath, (snapshot) => {
+    if (snapshot.main.bytes === 0 && !snapshot.wal.exists) {
+      // A zero-byte SQLite file has no pages to copy. VACUUM INTO refuses to
+      // write from a read-only empty database, so an exact byte copy is the
+      // consistent backup.
+      copyFileSync(snapshot.databasePath, backupPath)
+    } else {
+      // `PRAGMA query_only` blocks `VACUUM INTO` on a non-WAL source, so the
+      // read-only connection flag is the write guard here. VACUUM INTO still
+      // reads a single consistent snapshot, including uncheckpointed WAL frames.
+      // The read happens on the private snapshot, never beside the source.
+      const database = new Database(snapshot.databasePath, { readonly: true })
+      try {
+        database.prepare("VACUUM INTO ?").run(backupPath)
+      } finally {
+        database.close()
       }
     }
-  } finally {
-    verify.close()
-  }
 
-  return {
-    path: backupPath,
-    bytes,
-    sha256,
-    verified: true,
-    integrity,
-    tableCounts,
-  }
-}
+    const bytes = statSync(backupPath).size
+    const sha256 = sha256File(backupPath)
+    const verify = new Database(backupPath, {
+      readonly: true,
+      safeIntegers: true,
+    })
+    let integrity = ""
+    const tableCounts: Record<string, number> = {}
+    try {
+      integrity =
+        verify
+          .query<{ readonly integrity_check: string }, []>(
+            "PRAGMA integrity_check",
+          )
+          .get()?.integrity_check ?? ""
+      if (integrity !== "ok") {
+        throw new Error(
+          `The source backup failed SQLite integrity_check: ${integrity || "(empty)"}.`,
+        )
+      }
+
+      for (const table of plan.source.tables) {
+        const count = countSqliteInteger(
+          verify
+            .query<{ readonly count: unknown }, []>(
+              `SELECT COUNT(*) AS count FROM "${table.name}"`,
+            )
+            .get()?.count,
+        )
+        tableCounts[table.name] = count
+        if (count !== table.rowCount) {
+          throw new Error(
+            `The source backup has ${count} row(s) in "${table.name}", expected ${table.rowCount}.`,
+          )
+        }
+      }
+    } finally {
+      verify.close()
+    }
+
+    return {
+      path: backupPath,
+      bytes,
+      sha256,
+      verified: true,
+      integrity,
+      tableCounts,
+    }
+  })
 
 const uniqueRunId = (migrationsDirectory: string, nowMs: number): string => {
   const base = Markdown.toUtcTimestamp(nowMs).filenamePrefix
@@ -1316,6 +1317,9 @@ export const importMigration = (
       )
       context = { ...context, backup }
     } catch (cause) {
+      if (cause instanceof MigrationSourceError) {
+        fail("source-changed", cause.message, cause)
+      }
       fail(
         "backup-failed",
         `Could not create a consistent source backup: ${

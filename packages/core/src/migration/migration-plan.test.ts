@@ -3,6 +3,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { createHash } from "node:crypto"
 import {
+  chmodSync,
+  copyFileSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -405,6 +407,55 @@ describe("SQLite migration planning", () => {
       "scoped-invalid:invalid-scope",
       "scoped-invalid:invalid-provenance",
     ])
+  })
+
+  test("plans WAL-only rows from a copied db plus WAL without creating -shm", () => {
+    const sourceDirectory = temporaryDirectory()
+    const sourcePath = join(sourceDirectory, "wal.db")
+    const writer = new Database(sourcePath)
+    writer.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA wal_autocheckpoint = 0;
+      CREATE TABLE fleeting_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+      );
+    `)
+    writer.run("INSERT INTO fleeting_note VALUES (?, ?, ?, ?, ?)", [
+      "wal-only",
+      "WAL only",
+      "This row lives only in the WAL.",
+      1794943845000,
+      1794943845000,
+    ])
+
+    try {
+      // A copied database plus WAL, deliberately without -shm, in its own
+      // directory. The planner must not create a sidecar next to it.
+      const copyDirectory = temporaryDirectory()
+      const copiedPath = join(copyDirectory, "copied.db")
+      copyFileSync(sourcePath, copiedPath)
+      copyFileSync(`${sourcePath}-wal`, `${copiedPath}-wal`)
+      const before = readdirSync(copyDirectory).sort()
+      expect(before).toEqual(["copied.db", "copied.db-wal"])
+      chmodSync(copyDirectory, 0o555)
+
+      try {
+        const plan = planMigration({ databasePath: copiedPath })
+
+        expect(plan.counts.plannedNotes).toBe(1)
+        expect(plan.notes[0]?.legacyId).toBe("wal-only")
+        expect(plan.notes[0]?.body).toBe("This row lives only in the WAL.")
+        expect(readdirSync(copyDirectory).sort()).toEqual(before)
+      } finally {
+        chmodSync(copyDirectory, 0o755)
+      }
+    } finally {
+      writer.close()
+    }
   })
 
   test("preserves integers above 2^53 and blobs exactly", () => {

@@ -2,8 +2,14 @@ import { Database } from "bun:sqlite"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { Schema } from "effect"
 import { createHash } from "node:crypto"
-import { readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
+import {
+  MigrationSourceError,
+  withMigrationSourceSnapshot,
+} from "./migration-source.js"
+
+export { MigrationSourceError } from "./migration-source.js"
+export type { MigrationSourceErrorCode } from "./migration-source.js"
 
 /**
  * Plans the one-way import from the legacy SQLite note tables to Markdown.
@@ -191,29 +197,6 @@ export interface MigrationPlanOptions {
   readonly takenFilenames?: Iterable<string>
 }
 
-export type MigrationSourceErrorCode =
-  | "missing"
-  | "not-a-file"
-  | "unreadable"
-  | "changed"
-
-/** Raised when the source cannot be read safely or changed during planning. */
-export class MigrationSourceError extends Error {
-  readonly code: MigrationSourceErrorCode
-  readonly cause: unknown
-
-  constructor(
-    code: MigrationSourceErrorCode,
-    message: string,
-    cause?: unknown,
-  ) {
-    super(message)
-    this.name = "MigrationSourceError"
-    this.code = code
-    this.cause = cause
-  }
-}
-
 interface NoteTableDefinition {
   readonly name: NoteTableName
   readonly type: Markdown.NoteType
@@ -272,9 +255,6 @@ const typeCounts = (): Record<Markdown.NoteType, number> => ({
 
 const sha256 = (value: string): string =>
   createHash("sha256").update(value, "utf8").digest("hex")
-
-const sha256File = (path: string): string =>
-  createHash("sha256").update(readFileSync(path)).digest("hex")
 
 const normalizeSqliteValue = (value: unknown): SqliteValue => {
   if (value === null) return null
@@ -774,169 +754,131 @@ const planRow = (
  */
 export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
   const databasePath = options.databasePath
-  let stats
-  try {
-    stats = statSync(databasePath)
-  } catch (cause) {
-    throw new MigrationSourceError(
-      "missing",
-      `The migration source "${databasePath}" does not exist or cannot be read.`,
-      cause,
-    )
-  }
-
-  if (!stats.isFile()) {
-    throw new MigrationSourceError(
-      "not-a-file",
-      `The migration source "${databasePath}" is not a regular file.`,
-    )
-  }
-
-  let hashBefore: string
-  try {
-    hashBefore = sha256File(databasePath)
-  } catch (cause) {
-    throw new MigrationSourceError(
-      "unreadable",
-      `The migration source "${databasePath}" could not be hashed before reading.`,
-      cause,
-    )
-  }
-
   const noteRoot = options.noteRoot ?? ".slipmem"
   const taken = new Set<string>(options.takenFilenames ?? [])
   const tables: Array<MigrationSourceTable> = []
   const rows: Array<RawRow> = []
   const issues: Array<MigrationPlanIssue> = []
 
-  try {
-    const database = new Database(databasePath, {
-      readonly: true,
-      safeIntegers: true,
-    })
+  // Read from a private copy. Opening the original read-only would still create
+  // a `-shm` beside a WAL source (or fail on a read-only directory), which a
+  // planner and a dry run must never do.
+  const sourceSnapshot = withMigrationSourceSnapshot(databasePath, (snapshot) => {
     try {
-      // Belt and braces: the connection is already read-only. This pragma also
-      // protects against accidental writes from future edits to this module.
-      database.exec("PRAGMA query_only = ON")
+      const database = new Database(snapshot.databasePath, {
+        readonly: true,
+        safeIntegers: true,
+      })
+      try {
+        // Belt and braces: the staged copy is disposable, but planning must
+        // still never write note data into it.
+        database.exec("PRAGMA query_only = ON")
 
-      for (const definition of NOTE_TABLES) {
-        const object = database
-          .query<{ readonly type: string }, [string]>(
-            "SELECT type FROM sqlite_master WHERE name = ?",
-          )
-          .get(definition.name)
+        for (const definition of NOTE_TABLES) {
+          const object = database
+            .query<{ readonly type: string }, [string]>(
+              "SELECT type FROM sqlite_master WHERE name = ?",
+            )
+            .get(definition.name)
 
-        if (object === null) {
-          continue
-        }
+          if (object === null) {
+            continue
+          }
 
-        if (object.type !== "table") {
-          issues.push({
-            table: definition.name,
-            rowIndex: null,
-            legacyId: null,
-            severity: "error",
-            problems: [
-              problem(
-                "error",
-                "unsupported-note-table",
-                `"${definition.name}" is a ${object.type}, not a table; it is ignored.`,
-              ),
-            ],
-            row: null,
-          })
-          continue
-        }
+          if (object.type !== "table") {
+            issues.push({
+              table: definition.name,
+              rowIndex: null,
+              legacyId: null,
+              severity: "error",
+              problems: [
+                problem(
+                  "error",
+                  "unsupported-note-table",
+                  `"${definition.name}" is a ${object.type}, not a table; it is ignored.`,
+                ),
+              ],
+              row: null,
+            })
+            continue
+          }
 
-        const columns = database
-          .query<{ readonly name: string }, []>(
-            `PRAGMA table_info("${definition.name}")`,
-          )
-          .all()
-          .map((column) => column.name)
-        const shape = tableShape(definition, columns)
+          const columns = database
+            .query<{ readonly name: string }, []>(
+              `PRAGMA table_info("${definition.name}")`,
+            )
+            .all()
+            .map((column) => column.name)
+          const shape = tableShape(definition, columns)
 
-        if (shape === "unrecognized") {
-          const missing = definition.requiredColumns.filter(
-            (column) => !columns.includes(column),
-          )
-          const rowCount = countValue(
-            database
-              .query<{ readonly count: unknown }, []>(
-                `SELECT COUNT(*) AS count FROM "${definition.name}"`,
-              )
-              .get()?.count,
-          )
+          if (shape === "unrecognized") {
+            const missing = definition.requiredColumns.filter(
+              (column) => !columns.includes(column),
+            )
+            const rowCount = countValue(
+              database
+                .query<{ readonly count: unknown }, []>(
+                  `SELECT COUNT(*) AS count FROM "${definition.name}"`,
+                )
+                .get()?.count,
+            )
+            tables.push({
+              name: definition.name,
+              rowCount,
+              columns,
+              shape,
+            })
+            issues.push({
+              table: definition.name,
+              rowIndex: null,
+              legacyId: null,
+              severity: "error",
+              problems: [
+                problem(
+                  "error",
+                  "missing-required-column",
+                  `"${definition.name}" is missing required column(s): ${missing.join(", ")}. The table is reported and skipped; its rows are preserved in the issue report and quarantine.`,
+                ),
+              ],
+              row: null,
+            })
+            continue
+          }
+
+          const tableRows = database
+            .query<Readonly<Record<string, unknown>>, []>(
+              `SELECT * FROM "${definition.name}"`,
+            )
+            .all()
+            .map(normalizeRow)
+
           tables.push({
             name: definition.name,
-            rowCount,
+            rowCount: tableRows.length,
             columns,
             shape,
           })
-          issues.push({
-            table: definition.name,
-            rowIndex: null,
-            legacyId: null,
-            severity: "error",
-            problems: [
-              problem(
-                "error",
-                "missing-required-column",
-                `"${definition.name}" is missing required column(s): ${missing.join(", ")}. The table is reported and skipped; its rows are not imported.`,
-              ),
-            ],
-            row: null,
-          })
-          continue
+
+          for (const [rowIndex, row] of tableRows.entries()) {
+            rows.push({ definition, columns, rowIndex, row })
+          }
         }
-
-        const tableRows = database
-          .query<Readonly<Record<string, unknown>>, []>(
-            `SELECT * FROM "${definition.name}"`,
-          )
-          .all()
-          .map(normalizeRow)
-
-        tables.push({
-          name: definition.name,
-          rowCount: tableRows.length,
-          columns,
-          shape,
-        })
-
-        for (const [rowIndex, row] of tableRows.entries()) {
-          rows.push({ definition, columns, rowIndex, row })
-        }
+      } finally {
+        database.close()
       }
-    } finally {
-      database.close()
+    } catch (cause) {
+      if (cause instanceof MigrationSourceError) throw cause
+      throw new MigrationSourceError(
+        "unreadable",
+        `The migration source "${databasePath}" could not be read as a SQLite database.`,
+        cause,
+      )
     }
-  } catch (cause) {
-    if (cause instanceof MigrationSourceError) throw cause
-    throw new MigrationSourceError(
-      "unreadable",
-      `The migration source "${databasePath}" could not be read as a SQLite database.`,
-      cause,
-    )
-  }
 
-  let hashAfter: string
-  try {
-    hashAfter = sha256File(databasePath)
-  } catch (cause) {
-    throw new MigrationSourceError(
-      "changed",
-      `The migration source "${databasePath}" disappeared or became unreadable while it was being read; no plan was produced.`,
-      cause,
-    )
-  }
+    return { main: snapshot.main }
+  })
 
-  if (hashBefore !== hashAfter) {
-    throw new MigrationSourceError(
-      "changed",
-      `The migration source "${databasePath}" changed while it was being read; no plan was produced.`,
-    )
-  }
+  const hashBefore = sourceSnapshot.main.sha256 ?? ""
 
   const candidates: Array<Candidate> = []
   for (const raw of rows) {
@@ -1080,7 +1022,7 @@ export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
 
   const source: MigrationSourceInfo = {
     path: databasePath,
-    bytes: stats.size,
+    bytes: sourceSnapshot.main.bytes,
     sha256: hashBefore,
     shape: sourceShape(tables),
     tables,

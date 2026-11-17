@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  copyFileSync,
   readFileSync,
   readdirSync,
   rmSync,
@@ -118,6 +119,53 @@ describe("SQLite to Markdown importer", () => {
     expect(readdirSync(directory)).toEqual(["slipmem.db"])
     expect(existsSync(target)).toBe(false)
     expect(readFileSync(path).equals(before)).toBe(true)
+  })
+
+  test("a WAL dry run reads a db plus WAL copy without creating -shm", () => {
+    const sourceDirectory = temporaryDirectory()
+    const sourcePath = join(sourceDirectory, "wal.db")
+    const writer = new Database(sourcePath)
+    writer.exec(`
+      PRAGMA journal_mode = WAL;
+      PRAGMA wal_autocheckpoint = 0;
+      CREATE TABLE fleeting_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+      );
+    `)
+    writer.run("INSERT INTO fleeting_note VALUES (?, ?, ?, ?, ?)", [
+      "wal-dry",
+      "WAL dry run",
+      "Only in the WAL.",
+      1794943845000,
+      1794943845000,
+    ])
+
+    try {
+      const copyDirectory = temporaryDirectory()
+      const copiedPath = join(copyDirectory, "copied.db")
+      copyFileSync(sourcePath, copiedPath)
+      copyFileSync(`${sourcePath}-wal`, `${copiedPath}-wal`)
+      const before = readdirSync(copyDirectory).sort()
+
+      const report = importMigration({
+        databasePath: copiedPath,
+        noteRoot: join(copyDirectory, "notes"),
+        dryRun: true,
+        now: () => FIXED_NOW,
+      })
+
+      expect(report.status).toBe("dry-run")
+      expect(report.plan.counts.plannedNotes).toBe(1)
+      expect(report.sourceCheck.unchanged).toBe(true)
+      expect(report.sourceCheck.walBefore.exists).toBe(true)
+      expect(readdirSync(copyDirectory).sort()).toEqual(before)
+    } finally {
+      writer.close()
+    }
   })
 
   test("imports the current fixture and keeps the source unchanged", () => {
