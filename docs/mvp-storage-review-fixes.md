@@ -36,7 +36,7 @@ file was edited. Concurrent work in other paths was left untouched.
 | 6 | `parseProvenance` kept only `source` and `actor`, silently dropping nested application keys such as `model` or `run` on update. | Provenance keeps every nested key after validating the known fields. The existing unsafe-key scan still applies to the whole YAML mapping, and rendering carries the extra fields through an update. | `f37cff9` |
 | 7 | A finite timestamp outside JavaScript's date range made `toUtcTimestamp` throw a `RangeError` defect from create/update. | Create and update validate finiteness and formatability through a typed `timestamp-invalid` error before rendering. A broken or out-of-range clock is reported, not raised as a defect, and no file is written. | `3e969b0` |
 | 8 | Caller-supplied `unknown` metadata with an own `__proto__` key was silently dropped by rendering. | `createMarkdownNoteDocument` runs the same nested unsafe-key check as the parser for unknown metadata and provenance extras before rendering. The write fails with `frontmatter`/`malformed-yaml` and the offending field. | `d418e4e` |
-| 9 | Ancestor lookup used `stat`, so a symlinked `.slipmem` resolved, then repository `lstat` rejected it as merely missing. | Root resolution, initialization, repository startup, and scan/list now reject a symlinked root with one actionable `symlink` error that names `SLIPMEM_DIR`. Missing roots keep the existing missing-root error. | `ef03812` |
+| 9 | Ancestor lookup used `stat`, so a symlinked `.slipmem` resolved, then repository `lstat` rejected it as merely missing. | Root resolution, initialization, repository startup, and scan/list now reject a symlinked root with one actionable `symlink` error that names `SLIPMEM_DIR`. Ancestor discovery also notices a broken `.slipmem` symlink instead of reporting it as missing. Missing roots keep the existing missing-root error. | `ef03812`, `c488657` |
 
 ## Behavior notes
 
@@ -71,19 +71,22 @@ Each finding has a focused regression test:
 | 6 | `repository.test.ts` — preserves unknown nested provenance fields on update |
 | 7 | `repository.test.ts` — reports out-of-range timestamps as typed failures, not defects |
 | 8 | `repository.test.ts` — rejects dangerous unknown metadata keys before writing |
-| 9 | `root.test.ts` — ancestor, env, and init symlink cases; `repository.test.ts` — symlinked root on open and check |
+| 9 | `root.test.ts` — ancestor, broken-ancestor, env, and init symlink cases; `repository.test.ts` — symlinked root on open and check |
 
 Commands run on the final tree:
 
 ```text
 bun test packages/core/src/markdown
-  87 pass, 0 fail, 613 expect() calls
+  88 pass, 0 fail, 615 expect() calls
 
 bun run typecheck
   clean
 
 bun run lint
   clean
+
+bun run check
+  292 pass, 0 fail; typecheck, lint, and web build clean
 ```
 
 Automatic `get`/`list` behavior is unchanged: a symlinked note file is still
@@ -95,6 +98,7 @@ notes.
 ```text
 1f427eb Preserve note file mode on atomic updates
 ef03812 Reject symlinked note roots with a typed error
+c488657 Report broken ancestor root symlinks as symlinks
 6fd9ab3 Contain backup and index directories through real paths
 a2a6009 Refresh index by content hash and repair stale FTS text
 8a4239a Compare exact slug before stripping collision suffixes
