@@ -129,13 +129,13 @@ Run on 2026-11-17 from the repository root:
 
 ```text
 $ bun test packages/mcp
-17 pass, 0 fail, 84 expect() calls (2 files)
+18 pass, 0 fail, 95 expect() calls (2 files)
 
 $ bun test packages/server
 24 pass, 0 fail, 139 expect() calls (4 files)
 
 $ bun test packages/mcp packages/server packages/schemas
-67 pass, 0 fail, 340 expect() calls (8 files)
+68 pass, 0 fail, 351 expect() calls (8 files)
 
 $ bun run lint
 passes; warnings are in concurrently edited web/server files
