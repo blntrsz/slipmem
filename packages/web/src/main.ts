@@ -368,9 +368,7 @@ export const LoadWiki = Command.define("LoadWiki", {
   },
   messages: [Message.SucceededWiki, Message.FailedWiki],
   execute: ({ requestId, topic, mode }) =>
-    getWiki(topic, {
-      ...(Option.isSome(mode) ? { mode: mode.value } : {}),
-    }).pipe(
+    getWiki(topic, Option.isSome(mode) ? { mode: mode.value } : {}).pipe(
       Effect.map((wiki) => Message.SucceededWiki({ requestId, wiki })),
       Effect.catch((error) =>
         Effect.succeed(
@@ -668,13 +666,6 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url) => {
 
 // UPDATE
 
-const formOf = (editor: EditorState): Option.Option<NoteForm> =>
-  EditorState.match(editor, {
-    Closed: () => Option.none(),
-    Open: ({ form }) => Option.some(form),
-    Saving: ({ form }) => Option.some(form),
-  })
-
 const withForm = (editor: EditorState, change: Partial<NoteForm>): EditorState =>
   EditorState.match(editor, {
     Closed: () => editor,
@@ -738,9 +729,6 @@ const submitEditor = (model: Model): UpdateReturn =>
       }
     },
   })
-
-const notesOf = (state: typeof NotesData.schema.Type) =>
-  AsyncData.getOrElse(state, () => [])
 
 const byNewest = Order.combine(
   Order.mapInput(Order.flip(Order.Number), (note: ApiNote) => note.updatedAt),
@@ -1215,7 +1203,7 @@ export const update = (model: Model, message: Message) =>
       }
     },
 
-    SucceededApprove: ({ proposalId }) => {
+    SucceededApprove: () => {
       const requestId = model.pendingRequestId + 1
       return {
         model: modifyFields(model, {
@@ -1231,7 +1219,7 @@ export const update = (model: Model, message: Message) =>
       model: modifyFields(model, { lastError: () => Option.some(message) }),
     }),
 
-    SucceededReject: ({ proposalId }) => {
+    SucceededReject: () => {
       const requestId = model.pendingRequestId + 1
       return {
         model: modifyFields(model, {
@@ -1737,24 +1725,6 @@ const editorView = (model: Model, h: HtmlBuilder<Message>): Html =>
         ],
       )
     },
-  })
-
-const noteDataView = <A>(
-  data: typeof NoteData.schema.Type,
-  render: (note: ApiNote) => A,
-  renderMissing: () => A,
-  h: HtmlBuilder<Message>,
-): A =>
-  AsyncData.match(data, {
-    onIdle: () => renderMissing(),
-    onLoading: () => renderMissing(),
-    onRefreshing: (maybeNote) =>
-      Option.match(maybeNote, { onNone: renderMissing, onSome: render }),
-    onStale: ({ data: maybeNote }) =>
-      Option.match(maybeNote, { onNone: renderMissing, onSome: render }),
-    onFailure: () => renderMissing(),
-    onSuccess: (maybeNote) =>
-      Option.match(maybeNote, { onNone: renderMissing, onSome: render }),
   })
 
 const noteMissing = (h: HtmlBuilder<Message>): Html =>

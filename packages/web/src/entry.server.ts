@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { Server } from "foldkit/experimental"
 
-import { makeApiHandler, resolveNoteRootPath } from "@slipmem/server"
+import { makeApiHandler, makeMcpHttp, resolveNoteRootPath } from "@slipmem/server"
 
 import { init, view } from "./main"
 
@@ -33,8 +33,12 @@ if (previousApi !== undefined) {
 
 // Markdown is the only source of truth. A missing `.slipmem/` is reported with
 // the `slipmem init` guidance instead of silently creating a repository or
-// falling back to the retired SQLite note tables.
-const api = makeApiHandler(resolveNoteRootPath())
+// falling back to the retired SQLite note tables. The HTTP MCP endpoint shares
+// the same note root and registration layer as the stdio server.
+const noteRoot = resolveNoteRootPath()
+const api = makeApiHandler(noteRoot, {
+  extraRoutes: makeMcpHttp({ root: noteRoot }),
+})
 serverGlobals.__slipmemApiHandler = api
 
 if (serverGlobals.__slipmemShutdownRegistered !== true) {
@@ -49,7 +53,10 @@ if (serverGlobals.__slipmemShutdownRegistered !== true) {
 }
 
 const isApiRequest = (pathname: string): boolean =>
-  pathname === "/api" || pathname.startsWith("/api/")
+  pathname === "/api" ||
+  pathname.startsWith("/api/") ||
+  pathname === "/mcp" ||
+  pathname.startsWith("/mcp/")
 
 /**
  * One Web fetch handler serves the Foldkit page and the JSON API. The dev host

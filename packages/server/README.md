@@ -1,25 +1,25 @@
 # @slipmem/server
 
-The HTTP surface for slipmem. It reuses the Effect note services and SQLite
-tables from `@slipmem/core`, and it is mounted by the Foldkit server entry in
-`@slipmem/web`.
+The HTTP surface for slipmem. Notes are Markdown files under the local
+`.slipmem/` root; this package serves the canonical ID-based JSON API, the
+on-demand cited topic wiki, the human approval queue, and the shared HTTP MCP
+endpoint. The Foldkit server entry in `@slipmem/web` mounts it in the same
+process as the pages.
 
-`makeApiHandler(databasePath)` returns a Web `fetch` handler with two transports:
-
-- JSON routes under `/api`
-- a streamable HTTP MCP endpoint at `/mcp`
-
-Both transports share one database layer, so they see the same notes.
+`makeApiHandler(noteRoot)` returns a Web `fetch` handler. Pass
+`extraRoutes: makeMcpHttp({ root })` to serve `/mcp` beside `/api`; the web entry
+does this with the same registrations as the stdio server.
 
 ## Usage
 
 ```ts
-import { makeApiHandler, resolveDatabasePath } from "@slipmem/server"
+import { makeApiHandler, makeMcpHttp, resolveNoteRootPath } from "@slipmem/server"
 
-const api = makeApiHandler(resolveDatabasePath())
+const root = resolveNoteRootPath()
+const api = makeApiHandler(root, { extraRoutes: makeMcpHttp({ root }) })
 
 const response = await api.handler(
-  new Request("http://localhost/api/notes"),
+  new Request("http://127.0.0.1:3000/api/notes"),
 )
 ```
 
@@ -28,49 +28,97 @@ the previous handler when Vite reloads the server module, closes the current one
 on `SIGINT`/`SIGTERM`, and routes `/api` and `/mcp` requests to it through
 `Server.Responded`.
 
-## Database
+## Note root
 
-`resolveDatabasePath()` matches the stdio MCP server:
+`resolveNoteRootPath()` uses the frozen root order:
 
-```text
-$XDG_DATA_HOME/slipmem/slipmem.db
-```
+1. `SLIPMEM_DIR`, absolute or relative to the working directory.
+2. The nearest ancestor `.slipmem/`.
+3. Never an implicit creation or SQLite fallback.
 
-It falls back to `~/.local/share/slipmem/slipmem.db` and honors
-`SLIPMEM_DB_PATH`. Startup runs the checked-in Drizzle migrations, so an
-existing database is upgraded in place; databases created by the old
-`CREATE TABLE IF NOT EXISTS` bootstrap are validated and adopted without
-losing rows. A database whose Drizzle history does not include the bundled
-initial migration is refused instead of having the initial migration appended
-to unknown history. In a deployment that does not keep the repository's
-`packages/server/drizzle` directory next to the running code, point
-`SLIPMEM_MIGRATIONS_DIR` at a copy of it.
+A missing root fails startup with a message to run `slipmem init`. There is no
+SQLite note database in the HTTP startup path. `resolveDatabasePath()` remains
+only for the migration importer and the compatibility window.
+
+The disposable search index lives outside the note root under
+`$XDG_CACHE_HOME/slipmem/index/<root-hash>/index.sqlite`. It can be deleted and
+rebuilt at any time.
 
 ## JSON API
 
+Canonical routes are ID-based. A note ID is the Markdown filename stem:
+
+| Method | Path | Result |
+| --- | --- | --- |
+| `GET` | `/api/health` | Service status, note root, index mode and count |
+| `GET` | `/api/notes` | Bounded list; `type`, `topic`, `limit` filters |
+| `POST` | `/api/notes` | Create with `type` in the JSON body |
+| `GET` | `/api/notes/:id` | One note or 404 |
+| `PUT` | `/api/notes/:id` | Partial update; human web write |
+| `DELETE` | `/api/notes/:id` | Move the note to the local backup directory |
+| `GET` | `/api/search` | Bounded ranked search; requires `q` |
+| `GET` | `/api/topics` | Topic inventory with counts |
+| `GET` | `/api/wiki/:topic` | Structured cited page; `format=markdown` for text |
+| `GET` | `/api/pending` | Pending proposals with inspectable diffs |
+| `POST` | `/api/pending/:proposalId/approve` | Apply a proposal |
+| `POST` | `/api/pending/:proposalId/reject` | Discard a proposal |
+
+Single-note responses are `{ "note": ... }`. Lists are `{ "notes": [...] }` or
+`{ "topics": [...] }`. Errors are `{ "error": "...", "code": "..." }`.
+
+Create and update bodies require `title` and `content`; literature notes also
+require `reference`. Mutating requests require `content-type:
+application/json`. The Markdown repository enforces the type content limits
+(1000 / 2000 / 5000 characters), topic normalization, and the literature
+reference rule, so the API, CLI, and MCP cannot drift.
+
+List, search, and wiki results are bounded on the server. Defaults are 10 for
+search and wiki and 10 for lists, with hard maxima of 50 for list/search and 25
+for wiki. A caller cannot request the entire repository by omitting a limit.
+
+### Compatibility adapters
+
+These routes are kept as thin adapters for one release. They resolve through the
+same ID repository and never create type folders or a second store:
+
 | Method | Path |
 | --- | --- |
-| `GET` | `/api/health` |
-| `GET` | `/api/notes` |
 | `GET` | `/api/notes/:type` |
 | `GET` | `/api/notes/:type/:id` |
 | `POST` | `/api/notes/:type` |
 | `PUT` | `/api/notes/:type/:id` |
 | `DELETE` | `/api/notes/:type/:id` |
 
-`:type` is `fleeting`, `literature`, or `permanent`. Lists read through
-`NoteService` so every result is a `Note.Info` tagged union. Writes use the
-per-kind services because each kind has its own input schema.
+`:type` must be `fleeting`, `literature`, or `permanent`. A type mismatch returns
+404 rather than mutating the note through the wrong route.
 
-Create and update bodies require `title` and `content`; literature notes also
-require `reference`. Requests must use `content-type: application/json`, and the
-per-kind schemas enforce the content length limits.
+## Wiki and review
 
-## MCP tools
+`GET /api/wiki/:topic` defaults to structured sections with sources and
+citations; `format=markdown` returns only the rendered Markdown. Generation is
+read-only and bounded. Extractive mode quotes selected notes verbatim. A
+configured synthesizer is opt-in via `SLIPMEM_WIKI_SYNTHESIS`; unsupported
+sentences are omitted before output.
 
-`NoteRegistrations` is also exported from `@slipmem/server/note-tools`. The stdio
-server in `@slipmem/mcp` uses the same registrations, so the two MCP transports
-cannot drift apart.
+`GET /api/pending` reads proposals from `.slipmem/.state/pending/` and returns
+their operation, target ID, path, actor, expiry, staleness, and a line diff.
+Approve and reject are human HTTP actions: no MCP tool can call them. Approving
+revalidates the base content hash and all note rules; a stale proposal is
+rejected without writing.
+
+Pending proposals never appear in the note list, search, topics, or the note
+root.
+
+## Network posture
+
+The API and `/mcp` are unauthenticated. The web server binds to `127.0.0.1` by
+default. Setting `HOST` is explicit; a non-loopback bind prints a warning to
+stderr because anyone who can reach the address can read and write plaintext
+notes.
+
+Mutations are same-origin only: a present `Origin` must match the request Host,
+`sec-fetch-site: cross-site` is refused, and no CORS response headers are ever
+emitted. Command-line clients may omit `Origin`.
 
 ## Development
 

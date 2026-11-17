@@ -1,5 +1,4 @@
 import {
-  ApprovalService,
   ApprovalServiceLive,
   MarkdownNoteRepositoryLive,
   MarkdownSearchIndexFromRepository,

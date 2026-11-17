@@ -1,87 +1,78 @@
 # slipmem
 
-This repository is a [Bun](https://bun.sh/) monorepo. Workspace packages live
-in `packages/*` and each package should have its own `package.json`.
+A local-first memory system for a person and the coding agents that work with
+them. A flat Markdown repository under `.slipmem/` is the only source of truth;
+the CLI, MCP server, and web app are three interfaces over the same files. A
+disposable local index makes search fast but can be deleted and rebuilt at any
+time.
 
-Install dependencies from the repository root:
+This repository is a [Bun](https://bun.sh/) monorepo. Workspace packages live in
+`packages/*`.
 
 ```sh
 bun install
-```
-
-Run the full lint, typecheck, test, and web build pipeline with:
-
-```sh
 bun run check
 ```
 
-## Packages
-
-- `packages/core` — note services and SQLite implementations
-- `packages/schemas` — Effect Schema definitions for each note slice
-- `packages/mcp` — stdio MCP server exposing the note services
-- `packages/server` — HTTP JSON API and streamable HTTP MCP endpoint
-- `packages/web` — Foldkit web application with list and CRUD UI
-
-## Database migrations
-
-The SQLite note tables are defined with Drizzle in `packages/core` and the
-checked-in migrations are generated with Drizzle Kit:
+## Quick local loop
 
 ```sh
-bun run db:generate   # add a migration after changing a *.sql.ts table
-bun run db:check      # verify the migration history
-```
-
-Both the web server and the stdio MCP server run the same migration runner at
-startup. A fresh database gets the three note tables and a
-`__drizzle_migrations` history. A database created by the old handwritten
-`CREATE TABLE` bootstrap is validated against the expected legacy schema and
-then adopted without dropping or copying rows. If an existing table has an
-unexpected shape, startup fails with a `MigrationError` instead of guessing,
-recreating, or deleting data.
-
-The generated migrations live in `packages/server/drizzle`. A packaged
-deployment that does not keep the source tree next to the executable can point
-`SLIPMEM_MIGRATIONS_DIR` at a copy of that directory.
-
-## Web application
-
-The Foldkit app in `packages/web` serves the note list and CRUD editor for all
-three note kinds. The same process also serves the JSON API under `/api` and the
-streamable HTTP MCP endpoint at `/mcp`, so there is no separate API server to
-start.
-
-```sh
+bun run slipmem -- init
+bun run slipmem -- new --type fleeting --title "First thought"
+bun run slipmem -- list
+bun run slipmem -- search thought
 bun run web
 ```
 
-The development host is Vite with server-side rendering. It reads and writes the
-same SQLite database as the stdio MCP server:
+`bun run web` serves the Foldkit UI, the canonical ID-based JSON API under
+`/api`, and the HTTP MCP endpoint at `/mcp` in one process. The repository's
+`opencode.json` registers the stdio MCP server for OpenCode.
 
-```text
-$XDG_DATA_HOME/slipmem/slipmem.db
-```
+## Storage
 
-Override it with `SLIPMEM_DB_PATH`:
+- Every note is one direct child of `.slipmem/`, named
+  `YYYYMMDDHHmmss-<kebab-slug>.md`; the filename stem is the stable ID.
+- Type, title, timestamps, topics, provenance, and optional source live in YAML
+  frontmatter. Unknown keys are preserved.
+- Local state such as pending approvals lives under `.slipmem/.state/` and is
+  gitignored. Pending proposals are never notes.
+- The search index lives under `$XDG_CACHE_HOME/slipmem/` and contains derived
+  data only.
+- `SLIPMEM_DIR` overrides the root; otherwise the nearest ancestor `.slipmem/`
+  is used. A missing root fails startup instead of creating or importing one.
+- Migrating from the old SQLite store is a separate, non-destructive command.
+  SQLite is not the runtime source of truth.
+
+## Packages
+
+- `packages/schemas` — Effect Schema note slices and the frozen Markdown
+  filename, metadata, approval, and wiki contracts.
+- `packages/core` — Markdown repository, safe parser, atomic writes, locking,
+  disposable FTS index, approval service, wiki service, and migration importer.
+- `packages/cli` — the `slipmem` executable for init, capture, curation, search,
+  review, wiki, check, and migration.
+- `packages/mcp` — MCP tools and stdio transport over the shared core services.
+- `packages/server` — canonical JSON API, compatibility adapters, HTTP MCP
+  mounting, and the Markdown layer wiring.
+- `packages/web` — Foldkit SSR app for list, detail, create, edit, delete,
+  search, topics, wiki, review, and health.
+
+## Web and network posture
 
 ```sh
-SLIPMEM_DB_PATH=/path/to/slipmem.db bun run web
-```
-
-Build and serve the production bundle with:
-
-```sh
+bun run web        # Vite development host
 bun run web:build
 PORT=3000 bun run web:serve
 ```
 
-The production server binds to `127.0.0.1` by default because the API and MCP
-endpoint are unauthenticated. Set `HOST=0.0.0.0` only when you intentionally
-expose it behind your own access controls.
+The web server binds to `127.0.0.1` by default. The API is unauthenticated and
+note files are plaintext and unencrypted. Setting `HOST` to a non-loopback
+address is an explicit decision to expose every note to the network and prints
+a warning. Mutations are same-origin only and require JSON; no CORS access is
+enabled. Note text is untrusted data and is rendered as text/Markdown, never
+trusted HTML.
 
-See [`packages/web/README.md`](packages/web/README.md) for the UI routes, API
-endpoints, and MCP setup. See [`packages/mcp/README.md`](packages/mcp/README.md)
-for the stdio MCP client setup. The repository's `opencode.json` registers the
-stdio server as a local OpenCode MCP server.
-
+See [`packages/server/README.md`](packages/server/README.md),
+[`packages/web/README.md`](packages/web/README.md), and
+[`docs/mvp-plan.md`](docs/mvp-plan.md) for the API, UI routes, approval flow,
+topic pages, and acceptance criteria.

@@ -11,13 +11,12 @@ import {
   WikiError,
   WikiService,
   type MarkdownNoteRepositoryShape,
-  type MarkdownSearchIndexShape,
   type ParsedMarkdownNote,
 } from "@slipmem/core"
 import { Data, Effect, Layer, Match, Option, Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 
-import { toApiNote, type ApiNote } from "./markdown"
+import { toApiNote } from "./markdown"
 
 // The wire shape shared by the web client and the API. Per-kind rules
 // (content limits, literature reference) are enforced by the Markdown
