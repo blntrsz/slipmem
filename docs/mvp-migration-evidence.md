@@ -144,11 +144,15 @@ $ bunx tsc --ignoreConfig --noEmit --target ESNext --module Preserve \
 (no errors)
 ```
 
-The root `bunx tsc --noEmit` run also compiles the concurrently developed
-Markdown repository files. At the time of this evidence it reported errors in
-`packages/core/src/markdown/check.ts` and
-`packages/core/src/markdown/repository.ts` (Effect API type mismatches), not in
-the migration module. Re-run the root typecheck after that work lands.
+Root typecheck:
+
+```text
+$ bunx tsc --noEmit
+(no errors, exit 0)
+```
+
+The migration module also passed a scoped compiler run while the concurrently
+developed Markdown repository files were briefly red in the working tree.
 
 Tests explicitly assert the dry run leaves the database bytes unchanged, creates
 no SQLite sidecar files, and does not create the configured target directory.
