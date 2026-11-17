@@ -7,6 +7,27 @@ export {
 } from "./note-database"
 
 export {
+  createMarkdownNoteDocument,
+  MarkdownError,
+  MAX_FRONTMATTER_BYTES,
+  MAX_YAML_ALIASES,
+  markdownError,
+  parseFrontmatterYaml,
+  parseMarkdownNote,
+  renderNoteDocument,
+  splitNoteDocument,
+  splitUnknownMetadata,
+  type MarkdownErrorArea,
+  type MarkdownErrorCode,
+  type MarkdownErrorFields,
+  type NoteFrontmatter,
+  type ParsedMarkdownNote,
+  type ParseMarkdownNoteInput,
+  type RenderNoteDocumentInput,
+} from "./markdown/index"
+
+
+export {
   FleetingNoteNotFound,
   FleetingNoteService,
 } from "./fleeting-note/fleeting-note.service"

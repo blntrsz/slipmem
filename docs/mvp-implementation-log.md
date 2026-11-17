@@ -1,6 +1,6 @@
 # MVP implementation log
 
-Status: **Phase 0 started; contract frozen and fixtures added.**
+Status: **Phase 1 started; safe parser and fixture replay landed.**
 Date: 2026-11-17
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md). This log records decisions,
 baseline evidence, commit boundaries, and acceptance status. It does not replace
@@ -126,6 +126,38 @@ Verification gate for this commit: `bun test` **89 pass, 0 fail, 530 assertions,
 12 files**; `bun run check` passes. The previous baseline is preserved because
 the new code is additive.
 
+## 3.1 Phase 1a - safe parser and read-only note mapping
+
+This increment adds no writes and does not touch SQLite or any surface.
+
+Added:
+
+- `packages/core/src/markdown/errors.ts`: one `MarkdownError` type carrying
+  `area`, stable `code`, `path`, optional `field`, and an actionable message.
+  Fixture manifest codes are reused verbatim.
+- `packages/core/src/markdown/frontmatter.ts`: line-based frontmatter split,
+  64 KiB frontmatter bound, safe `yaml` parsing with `schema: "core"`,
+  duplicate-key rejection, 32-alias expansion bound, executable/local YAML tag
+  rejection, dangerous-key rejection, unknown-key extraction, and canonical
+  rendering with quoted timestamps.
+- `packages/core/src/markdown/note-document.ts`: filename, ID, timestamp,
+  type, title, topic, reference, provenance, body-limit, file-size, and
+  conflict-marker validation; bidirectional `Markdown.NoteMetadata` and
+  `Note.Info` mapping; SHA-256 content hash. `createMarkdownNoteDocument`
+  renders and immediately re-parses so callers cannot write a file the reader
+  rejects.
+- `packages/core/src/markdown/note-document.test.ts`: replays every valid and
+  invalid Phase 0 fixture, asserts unknown-key round trips, canonical output,
+  timestamp quoting, body formatting, file-size failure, and error paths.
+- `yaml@2.9.1` added to `@slipmem/core`; the parser uses only data schemas, never
+  executable constructors.
+
+Evidence: `bun test packages/core/src/markdown/note-document.test.ts` **26 pass,
+0 fail, 196 assertions**; `bun run typecheck` passes; the full suite is **115
+pass, 0 fail, 726 assertions, 13 files**. The 26 new tests include six valid
+fixtures and thirteen invalid-fixture code matches.
+
+
 ## 4. Incremental commit strategy
 
 Rules for every phase:
@@ -175,7 +207,7 @@ Status legend: **done** = implemented and tested against the real surface;
 | Phase 0 note fixtures | Valid/invalid corpus, Unicode, collisions, long titles, every type, malformed YAML, conflicts | done | `fixtures/phase0/notes`, manifest tests |
 | Phase 0 migration fixtures | Current, legacy, empty, invalid rows | done | executable SQL + row/column tests |
 | Phase 0 examples | CLI, API, MCP payloads | done | `acceptance/examples.json` tests |
-| STOR-01..08 | Flat `.slipmem/`, filenames, frontmatter, limits, collisions, unknown keys, atomic failure | not started | Phase 1 repository + `check` |
+| STOR-01..08 | Flat `.slipmem/`, filenames, frontmatter, limits, collisions, unknown keys, atomic failure | partial | Parser validates 01,03,04,05,07,08 read path; repository and `check` next |
 | TRUTH-01..04 | Disposable index, files-only recovery, external edits, no SQLite runtime | not started | Phase 1d, Phase 5 |
 | SURFACE-01..05 | CLI/MCP/web parity, same tool schemas, ID routes, adapters | not started | Phases 2-4 |
 | APPROVE-01..09 | Pending permanent/delete, direct fleeting/literature, stale hash, no MCP approval | partial | Proposal/wiki schemas only; Phase 3 |
