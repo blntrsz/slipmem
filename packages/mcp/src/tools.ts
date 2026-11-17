@@ -16,8 +16,9 @@ import { McpServer, Tool, Toolkit } from "effect/ai"
 import { McpApprovalService } from "./approval"
 import { failure, noteNotFound, toolFailure } from "./errors"
 import {
-  boundedExcerpt,
   boundedListLimit,
+  boundedReference,
+  boundedTitle,
   boundedTopicLimit,
   boundedWikiLimit,
   BuildTopicWikiInput,
@@ -31,9 +32,12 @@ import {
   ListTopicsInput,
   ListTopicsResult,
   MAX_TOPIC_EXAMPLES,
+  noteDetail,
   NoteListResult,
+  noteSummary,
   NoteResult,
   PendingApprovalResult,
+  SearchHit,
   SearchNotesInput,
   SearchNotesResult,
   ToolFailure,
@@ -230,21 +234,77 @@ const getInfoOfKind = (
     Effect.catch(() => Effect.succeed(Option.none<Note.Info>())),
   )
 
+/** Keeps the single-note body but projects bounded display metadata. */
+const detailOf = (info: Note.Info) =>
+  noteDetail({
+    id: info.id,
+    type: info.type,
+    title: info.title,
+    content: info.content,
+    ...(info.type === "literature" ? { reference: info.reference } : {}),
+    createdAt: info.createdAt,
+    updatedAt: info.updatedAt,
+  })
+
+const getDetailOfKind = (
+  repository: MarkdownNoteRepository["Service"],
+  id: string,
+  type: Markdown.NoteType,
+) =>
+  getInfoOfKind(repository, id, type).pipe(
+    Effect.map((note) => ({
+      note: Option.isSome(note) ? detailOf(note.value) : null,
+    })),
+  )
+
 const listOfKind = (
   repository: MarkdownNoteRepository["Service"],
   type: Markdown.NoteType,
   input: { readonly limit?: number; readonly topic?: string },
 ) =>
   repository
-    .list({
+    .listNotes({
       type,
       limit: boundedListLimit(input.limit),
       ...(input.topic === undefined ? {} : { topic: input.topic }),
     })
     .pipe(
-      Effect.map((notes) => ({ notes })),
+      Effect.map((notes) => ({
+        notes: notes.map((note) =>
+          noteSummary({
+            id: note.id,
+            type: note.info.type,
+            title: note.info.title,
+            content: note.info.content,
+            createdAt: note.info.createdAt,
+            updatedAt: note.info.updatedAt,
+            path: note.path,
+          }),
+        ),
+      })),
       Effect.mapError(toolFailure),
     )
+
+const searchHit = (
+  hit: {
+    readonly id: string
+    readonly path: string
+    readonly note: Note.Info
+  },
+): SearchHit => {
+  const summary = noteSummary({
+    id: hit.id,
+    type: hit.note.type,
+    title: hit.note.title,
+    content: hit.note.content,
+    createdAt: hit.note.createdAt,
+    updatedAt: hit.note.updatedAt,
+    path: hit.path,
+  })
+  return hit.note.type === "literature"
+    ? { ...summary, reference: boundedReference(hit.note.reference) }
+    : summary
+}
 
 const approvalFailure = (error: ApprovalError): ToolFailure =>
   failure(error.code, error.message)
@@ -330,9 +390,7 @@ export const McpHandlersLayer = McpNoteTools.toLayer(
     return McpNoteTools.of({
       list_fleeting_notes: (input) => listOfKind(repository, "fleeting", input),
       get_fleeting_note: (input) =>
-        getInfoOfKind(repository, input.id, "fleeting").pipe(
-          Effect.map((note) => ({ note: Option.getOrNull(note) })),
-        ),
+        getDetailOfKind(repository, input.id, "fleeting"),
       create_fleeting_note: (input) =>
         submit(approval, {
           operation: "create",
@@ -359,9 +417,7 @@ export const McpHandlersLayer = McpNoteTools.toLayer(
         }),
       list_permanent_notes: (input) => listOfKind(repository, "permanent", input),
       get_permanent_note: (input) =>
-        getInfoOfKind(repository, input.id, "permanent").pipe(
-          Effect.map((note) => ({ note: Option.getOrNull(note) })),
-        ),
+        getDetailOfKind(repository, input.id, "permanent"),
       create_permanent_note: (input) =>
         submit(approval, {
           operation: "create",
@@ -388,9 +444,7 @@ export const McpHandlersLayer = McpNoteTools.toLayer(
         }),
       list_literature_notes: (input) => listOfKind(repository, "literature", input),
       get_literature_note: (input) =>
-        getInfoOfKind(repository, input.id, "literature").pipe(
-          Effect.map((note) => ({ note: Option.getOrNull(note) })),
-        ),
+        getDetailOfKind(repository, input.id, "literature"),
       create_literature_note: (input) =>
         submit(approval, {
           operation: "create",
@@ -419,28 +473,33 @@ export const McpHandlersLayer = McpNoteTools.toLayer(
           yield* requireNoteOfKind(repository, input.id, "literature")
           return yield* submitDelete(approval, input.id)
         }),
-      search_notes: (input) =>
-        Effect.gen(function* () {
+      search_notes: (input) => {
+        const query = input.query.trim()
+        if (query.length === 0) {
+          return Effect.fail(
+            failure(
+              "invalid-query",
+              "Search query must contain at least one non-whitespace character.",
+            ),
+          )
+        }
+
+        return Effect.gen(function* () {
           const limit = boundedListLimit(input.limit)
           const topic = input.topic
           yield* index.refresh()
           const hits = yield* index.search({
-            query: input.query,
+            query,
             ...(input.type === undefined ? {} : { kinds: [input.type] }),
             ...(topic === undefined ? {} : { topic }),
             limit,
           })
           return {
-            query: input.query,
-            notes: hits.map((hit) => ({
-              id: hit.id,
-              type: hit.note.type,
-              title: hit.note.title,
-              excerpt: boundedExcerpt(hit.note.content),
-              path: hit.path,
-            })),
+            query,
+            notes: hits.map(searchHit),
           }
-        }).pipe(Effect.mapError(toolFailure)),
+        }).pipe(Effect.mapError(toolFailure))
+      },
       list_topics: (input) =>
         Effect.gen(function* () {
           const scan = yield* repository.scan().pipe(Effect.mapError(toolFailure))
@@ -470,7 +529,7 @@ export const McpHandlersLayer = McpNoteTools.toLayer(
                 summary.examples.push({
                   id: note.id,
                   type: note.metadata.type,
-                  title: note.metadata.title,
+                  title: boundedTitle(note.metadata.title),
                 })
               }
               summaries.set(topic, summary)

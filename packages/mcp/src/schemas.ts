@@ -87,12 +87,47 @@ export const BuildTopicWikiInput = Schema.Struct({
   includeFleeting: Schema.optional(Schema.Boolean),
 }).annotate({ identifier: "Mcp.BuildTopicWikiInput" })
 
+/**
+ * Recall responses use a summary instead of `Note.Info`. A full note can carry
+ * up to 5000 body characters and its metadata is not length-bounded by the
+ * storage contract, so echoing `Note.Info` multiplied both by a 50-result list.
+ * Summaries keep enough to identify and cite a note while every field is
+ * bounded.
+ */
+export interface NoteSummary extends Schema.Schema.Type<typeof NoteSummary> {}
+export const NoteSummary = Schema.Struct({
+  id: Schema.String,
+  type: Markdown.NoteType,
+  title: Schema.String,
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+  path: Schema.String,
+  excerpt: Schema.String,
+}).annotate({ identifier: "Mcp.NoteSummary" })
+
+/**
+ * `get_*` is allowed to return the single note body, but its display metadata
+ * is bounded just like recall. This prevents one abusive title or literature
+ * reference from dominating a response that is otherwise a legitimate read.
+ */
+export interface NoteDetail
+  extends Schema.Schema.Type<typeof NoteDetail> {}
+export const NoteDetail = Schema.Struct({
+  id: Schema.String,
+  type: Markdown.NoteType,
+  title: Schema.String,
+  content: Schema.String,
+  reference: Schema.optional(Schema.String),
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+}).annotate({ identifier: "Mcp.NoteDetail" })
+
 export const NoteListResult = Schema.Struct({
-  notes: Schema.Array(Note.Info),
+  notes: Schema.Array(NoteSummary),
 }).annotate({ identifier: "Mcp.NoteListResult" })
 
 export const NoteResult = Schema.Struct({
-  note: Schema.NullOr(Note.Info),
+  note: Schema.NullOr(NoteDetail),
 }).annotate({ identifier: "Mcp.NoteResult" })
 
 export const PendingApprovalResult = Schema.Struct({
@@ -111,12 +146,10 @@ export const DeleteNoteResult = PendingApprovalResult
 export type DeleteNoteResult = Schema.Schema.Type<typeof DeleteNoteResult>
 
 export const SearchHit = Schema.Struct({
-  id: Schema.String,
-  type: Markdown.NoteType,
-  title: Schema.String,
-  excerpt: Schema.String,
-  path: Schema.String,
+  ...NoteSummary.fields,
+  reference: Schema.optional(Schema.String),
 }).annotate({ identifier: "Mcp.SearchHit" })
+export type SearchHit = Schema.Schema.Type<typeof SearchHit>
 
 export const SearchNotesResult = Schema.Struct({
   query: Schema.String,
@@ -152,7 +185,79 @@ export const DEFAULT_TOPIC_LIST_LIMIT = 50
 export const MAX_TOPIC_LIST_LIMIT = 200
 export const MAX_TOPIC_EXAMPLES = 3
 export const MAX_EXCERPT_LENGTH = 240
+export const MAX_TITLE_LENGTH = 200
+export const MAX_REFERENCE_LENGTH = 240
 export const MAX_WIKI_EXCERPT_LENGTH = 500
+
+/**
+ * Collapses whitespace and truncates untrusted display text. The ellipsis is
+ * part of the bound, so callers can rely on `length <= maxLength`.
+ */
+export const boundedText = (text: string, maxLength: number): string => {
+  const collapsed = text.replace(/\s+/g, " ").trim()
+  if (collapsed.length <= maxLength) {
+    return collapsed
+  }
+  return `${collapsed.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`
+}
+
+/** Collapses whitespace so an excerpt cannot smuggle a large note body out. */
+export const boundedExcerpt = (
+  text: string,
+  maxLength: number = MAX_EXCERPT_LENGTH,
+): string => boundedText(text, maxLength)
+
+/** Bounds a note title in every recall/detail response. */
+export const boundedTitle = (title: string): string =>
+  boundedText(title, MAX_TITLE_LENGTH)
+
+/** Bounds a literature reference in every recall/detail response. */
+export const boundedReference = (reference: string): string =>
+  boundedText(reference, MAX_REFERENCE_LENGTH)
+
+export interface NoteSummarySource {
+  readonly id: string
+  readonly type: Markdown.NoteType
+  readonly title: string
+  readonly content: string
+  readonly createdAt: number
+  readonly updatedAt: number
+  readonly path: string
+}
+
+/** The single projection used by every list tool. */
+export const noteSummary = (source: NoteSummarySource): NoteSummary => ({
+  id: source.id,
+  type: source.type,
+  title: boundedTitle(source.title),
+  createdAt: source.createdAt,
+  updatedAt: source.updatedAt,
+  path: source.path,
+  excerpt: boundedExcerpt(source.content),
+})
+
+export interface NoteDetailSource {
+  readonly id: string
+  readonly type: Markdown.NoteType
+  readonly title: string
+  readonly content: string
+  readonly reference?: string
+  readonly createdAt: number
+  readonly updatedAt: number
+}
+
+/** The single projection used by the per-kind get tools. */
+export const noteDetail = (source: NoteDetailSource): NoteDetail => ({
+  id: source.id,
+  type: source.type,
+  title: boundedTitle(source.title),
+  content: source.content,
+  ...(source.reference === undefined
+    ? {}
+    : { reference: boundedReference(source.reference) }),
+  createdAt: source.createdAt,
+  updatedAt: source.updatedAt,
+})
 
 /** Bounded list/search limit: default 10, hard maximum 50. */
 export const boundedListLimit = (limit: number | undefined): number => {
@@ -174,16 +279,4 @@ export const boundedWikiLimit = (limit: number | undefined): number => {
     return Markdown.DEFAULT_WIKI_LIMIT
   }
   return Math.max(1, Math.min(Markdown.MAX_WIKI_LIMIT, Math.trunc(limit)))
-}
-
-/** Collapses whitespace so an excerpt cannot smuggle a large note body out. */
-export const boundedExcerpt = (
-  text: string,
-  maxLength: number = MAX_EXCERPT_LENGTH,
-): string => {
-  const collapsed = text.replace(/\s+/g, " ").trim()
-  if (collapsed.length <= maxLength) {
-    return collapsed
-  }
-  return `${collapsed.slice(0, Math.max(0, maxLength - 1)).trimEnd()}…`
 }

@@ -1,4 +1,4 @@
-import { createTestNote, makeDisposableRoot, makeTestClock, removeDisposableRoot } from "./test-helpers"
+import { createTestNote, makeDisposableRoot, makeTestClock, removeDisposableRoot, withRepository } from "./test-helpers"
 import { mcpInstructions } from "./config"
 import { makeMarkdownServicesLayer } from "./layer"
 import {
@@ -6,6 +6,9 @@ import {
   boundedListLimit,
   boundedTopicLimit,
   boundedWikiLimit,
+  MAX_EXCERPT_LENGTH,
+  MAX_REFERENCE_LENGTH,
+  MAX_TITLE_LENGTH,
 } from "./schemas"
 import { McpNoteRegistrations } from "./tools"
 import { makeMarkdownNoteRepository, type MarkdownNoteRepositoryShape } from "@slipmem/core"
@@ -182,6 +185,165 @@ test("list tools default to ten and cap at fifty", async () => {
     expect(count(maxResult)).toBe(12)
     expect(count(clampedResult)).toBe(12)
     expect(count(oneResult)).toBe(1)
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("recall stays bounded for fifty maximum-size literature notes", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+  const longTitle = "t".repeat(30_000)
+  const longReference = "r".repeat(30_000)
+  const bodyFor = (index: number) => `Body ${index} ${"b".repeat(4800)}`
+  const ids: string[] = []
+
+  try {
+    await withRepository(disposable.root, clock.now, async (repository) => {
+      for (let index = 0; index < 50; index++) {
+        const note = await Effect.runPromise(
+          repository.create({
+            type: "literature",
+            title: `Literature ${index} ${longTitle}`,
+            content: bodyFor(index),
+            reference: `https://example.com/${index}/${longReference}`,
+            topics: ["bulk-recall"],
+          }),
+        )
+        ids.push(note.id)
+        clock.advance()
+      }
+    })
+
+    const [firstList, secondList, firstSearch, secondSearch, topics, detail] =
+      await withClient(disposable.root, disposable.cacheDir, clock.now, (client) =>
+        Effect.gen(function* () {
+          return yield* Effect.all([
+            client.callTool({
+              name: "list_literature_notes",
+              arguments: { limit: 50 },
+            }),
+            client.callTool({
+              name: "list_literature_notes",
+              arguments: { limit: 50 },
+            }),
+            client.callTool({
+              name: "search_notes",
+              arguments: { query: "Body", limit: 50 },
+            }),
+            client.callTool({
+              name: "search_notes",
+              arguments: { query: "Body", limit: 50 },
+            }),
+            client.callTool({ name: "list_topics", arguments: { limit: 1 } }),
+            client.callTool({
+              name: "get_literature_note",
+              arguments: { id: ids[0] },
+            }),
+          ])
+        }),
+      )
+
+    interface Summary {
+      readonly id: string
+      readonly type: string
+      readonly title: string
+      readonly createdAt: number
+      readonly updatedAt: number
+      readonly path: string
+      readonly excerpt: string
+      readonly content?: unknown
+      readonly reference?: string
+    }
+
+    const list = firstList.structuredContent as { notes: ReadonlyArray<Summary> }
+    expect(list.notes).toHaveLength(50)
+    expect(list.notes.map((note) => note.id).sort()).toEqual(
+      ids.slice().sort(),
+    )
+    for (const note of list.notes) {
+      expect(note.type).toBe("literature")
+      expect(note.title.length).toBeLessThanOrEqual(MAX_TITLE_LENGTH)
+      expect(note.excerpt.length).toBeLessThanOrEqual(MAX_EXCERPT_LENGTH)
+      expect(note.path.endsWith(`${note.id}.md`)).toBe(true)
+      expect(note.content).toBeUndefined()
+      expect(note.reference).toBeUndefined()
+    }
+    expect(secondList.structuredContent).toEqual(firstList.structuredContent)
+    expect(JSON.stringify(firstList.structuredContent).length).toBeLessThan(60_000)
+
+    const search = firstSearch.structuredContent as {
+      readonly query: string
+      readonly notes: ReadonlyArray<Summary>
+    }
+    expect(search.query).toBe("Body")
+    expect(search.notes).toHaveLength(50)
+    for (const note of search.notes) {
+      expect(note.title.length).toBeLessThanOrEqual(MAX_TITLE_LENGTH)
+      expect(note.excerpt.length).toBeLessThanOrEqual(MAX_EXCERPT_LENGTH)
+      expect(note.reference?.length).toBeLessThanOrEqual(MAX_REFERENCE_LENGTH)
+      expect(note.content).toBeUndefined()
+    }
+    expect(secondSearch.structuredContent).toEqual(firstSearch.structuredContent)
+    expect(JSON.stringify(firstSearch.structuredContent).length).toBeLessThan(70_000)
+
+    const topicList = topics.structuredContent as {
+      readonly topics: ReadonlyArray<{
+        readonly topic: string
+        readonly noteCount: number
+        readonly examples: ReadonlyArray<{ readonly title: string }>
+      }>
+    }
+    expect(topicList.topics).toHaveLength(1)
+    expect(topicList.topics[0]!.topic).toBe("bulk-recall")
+    expect(topicList.topics[0]!.noteCount).toBe(50)
+    expect(topicList.topics[0]!.examples.length).toBeLessThanOrEqual(3)
+    for (const example of topicList.topics[0]!.examples) {
+      expect(example.title.length).toBeLessThanOrEqual(MAX_TITLE_LENGTH)
+    }
+
+    const note = (detail.structuredContent as { note: Summary & { content: string } })
+      .note
+    expect(note.content).toBe(bodyFor(0))
+    expect(note.title.length).toBe(MAX_TITLE_LENGTH)
+    expect(note.reference?.length).toBe(MAX_REFERENCE_LENGTH)
+    expect(JSON.stringify(detail.structuredContent).length).toBeLessThan(7_000)
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+}, 30_000)
+
+test("search rejects empty and whitespace-only queries at the tool boundary", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const results = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        Effect.gen(function* () {
+          return yield* Effect.all([
+            client.callTool({ name: "search_notes", arguments: { query: "" } }),
+            client.callTool({
+              name: "search_notes",
+              arguments: { query: "   " },
+            }),
+            client.callTool({
+              name: "search_notes",
+              arguments: { query: "\n\t " },
+            }),
+          ])
+        }),
+    )
+
+    for (const result of results) {
+      expect(result.isError).toBe(true)
+      expect((result.content[0] as { text: string }).text).toContain(
+        "at least one non-whitespace character",
+      )
+    }
   } finally {
     await removeDisposableRoot(disposable)
   }
