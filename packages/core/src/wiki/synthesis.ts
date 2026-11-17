@@ -2,7 +2,11 @@ import { Effect } from "effect"
 import { spawn } from "node:child_process"
 import type { ParsedMarkdownNote } from "../markdown/note-document.js"
 import { wikiError, WikiError, type WikiErrorCode } from "./errors.js"
-import { MAX_SYNTHESIS_SENTENCES, MAX_SYNTHESIS_SENTENCE_CHARS } from "./render.js"
+import {
+  sanitizeHeading,
+  MAX_SYNTHESIS_SENTENCES,
+  MAX_SYNTHESIS_SENTENCE_CHARS,
+} from "./render.js"
 
 export const DEFAULT_AGENT_TIMEOUT_MS = 30_000
 export const MAX_AGENT_OUTPUT_BYTES = 1024 * 1024
@@ -461,7 +465,7 @@ export const groupSynthesizedSentences = (
         `${sentence.text}\n\nSource: [[${note.id}]] (\`${path}\`)`,
     )
     sections.push({
-      heading: note.metadata.title,
+      heading: sanitizeHeading(note.metadata.title),
       markdown: blocks.join("\n\n"),
       citations: supported.map((sentence) => ({
         noteId: note.id,
