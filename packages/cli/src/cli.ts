@@ -6,7 +6,11 @@ import {
   type ParsedArguments,
 } from "./args.js"
 import type { CommandDefinition } from "./commands/command.js"
+import { editCommand } from "./commands/edit.js"
 import { initCommand } from "./commands/init.js"
+import { listCommand } from "./commands/list.js"
+import { newCommand } from "./commands/new.js"
+import { showCommand } from "./commands/show.js"
 import type { CliContext } from "./context.js"
 import { CliUnavailableError, CliUsageError, usageError } from "./errors.js"
 import {
@@ -17,7 +21,13 @@ import {
 } from "./help.js"
 import { writeErrorLine } from "./output.js"
 
-export const COMMANDS: ReadonlyArray<CommandDefinition> = [initCommand]
+export const COMMANDS: ReadonlyArray<CommandDefinition> = [
+  initCommand,
+  newCommand,
+  listCommand,
+  showCommand,
+  editCommand,
+]
 
 const commandByName = (
   name: string,
