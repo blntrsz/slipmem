@@ -286,20 +286,20 @@ Focused importer tests:
 
 ```text
 $ bun test packages/core/src/migration/migration-import.test.ts
- 11 pass
+ 12 pass
  0 fail
- 159 expect() calls
-Ran 11 tests across 1 file.
+ 163 expect() calls
+Ran 12 tests across 1 file.
 ```
 
 Planner plus importer:
 
 ```text
 $ bun test packages/core/src/migration
- 19 pass
+ 20 pass
  0 fail
- 283 expect() calls
-Ran 19 tests across 2 files.
+ 287 expect() calls
+Ran 20 tests across 2 files.
 ```
 
 Scoped lint:
@@ -335,6 +335,8 @@ The importer tests cover:
 - actual import, source bytes unchanged, source backup integrity and row counts;
 - uncheckpointed WAL backup and unchanged main/WAL bytes;
 - `merge` idempotence by `legacyId` and a second manifest run;
+- scope, unknown provenance keys, and unknown source columns round-tripping
+  through note frontmatter;
 - non-empty-root refusal without `merge`, with no `.state/` or note writes;
 - same-second filename collisions and a merge collision with an existing file;
 - malformed rows with complete raw text in quarantine, valid-row import, and the

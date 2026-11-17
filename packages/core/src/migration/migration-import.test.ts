@@ -389,6 +389,59 @@ describe("SQLite to Markdown importer", () => {
     expect(readFileSync(path).equals(before)).toBe(true)
   })
 
+  test("preserves scope, provenance extras, and unknown source columns", () => {
+    const { directory, path } = createDatabase(`
+      CREATE TABLE permanent_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL,
+        scope TEXT NOT NULL,
+        provenance TEXT NOT NULL,
+        extension TEXT
+      );
+      INSERT INTO permanent_note VALUES
+        (
+          'extended-note',
+          'Extended note',
+          'Extended body',
+          1794943845000,
+          1794943845000,
+          'project:slipmem',
+          '{"source":"mcp","actor":"agent","externalId":"ext-1","future":42}',
+          'keep me'
+        );
+    `)
+    const target = join(directory, "notes")
+
+    const report = importMigration({
+      databasePath: path,
+      noteRoot: target,
+      now: () => FIXED_NOW,
+    })
+
+    expect(report.status).toBe("imported")
+    const note = Effect.runSync(
+      readNoteFile(target, "20261117193045-extended-note"),
+    )
+    expect(note?.metadata.provenance).toEqual({
+      source: "mcp",
+      actor: "agent",
+    })
+    expect(note?.unknown).toEqual({
+      scope: "project:slipmem",
+      legacyProvenance: {
+        externalId: "ext-1",
+        future: 42,
+      },
+      legacyColumns: {
+        extension: "keep me",
+      },
+    })
+    expect(report.verification.ok).toBe(true)
+  })
+
   test("merge mode is idempotent by legacyId and does not duplicate notes", () => {
     const { directory, path } = createDatabase(fixtureSql("current.sql"))
     const target = join(directory, "notes")
