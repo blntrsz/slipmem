@@ -227,22 +227,32 @@ export const listRootEntries = (
       )
     }
 
-    return [...names].sort().map((name) => {
-      const path = join(absoluteRoot, name)
-      const stats = lstatSync(path)
-      const kind: RepositoryEntryKind = stats.isSymbolicLink()
-        ? "symlink"
-        : stats.isFile()
-          ? "file"
-          : stats.isDirectory()
-            ? "directory"
-            : "other"
-      return {
-        name,
-        path,
-        kind,
-        isNoteFilename: Markdown.isNoteFilename(name),
-      }
+    return yield* Effect.try({
+      try: () =>
+        [...names].sort().map((name) => {
+          const path = join(absoluteRoot, name)
+          const stats = lstatSync(path)
+          const kind: RepositoryEntryKind = stats.isSymbolicLink()
+            ? "symlink"
+            : stats.isFile()
+              ? "file"
+              : stats.isDirectory()
+                ? "directory"
+                : "other"
+          return {
+            name,
+            path,
+            kind,
+            isNoteFilename: Markdown.isNoteFilename(name),
+          }
+        }),
+      catch: (cause) =>
+        markdownError({
+          area: "repository",
+          code: "not-found",
+          path: absoluteRoot,
+          message: `A note root entry changed while it was being inspected: ${cause instanceof Error ? cause.message : String(cause)}`,
+        }),
     })
   })
 

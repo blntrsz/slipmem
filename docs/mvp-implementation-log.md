@@ -227,9 +227,15 @@ Added:
 
 Evidence: `bun test packages/core/src/markdown/search-index.test.ts` **9 pass, 0
 fail, 48 assertions**; `bun run lint` passes. Focused core typecheck passes.
-At this commit boundary, unrelated in-progress `packages/cli` and
-`scripts/tour` work from other workers makes the root `bun run typecheck` and a
-couple of tour safety tests fail; no Phase 1 file is involved.
+A follow-up hardening pass rejects dangerous keys recursively in decoded YAML,
+returns typed errors when a root entry disappears during inspection, and refuses
+to place the index inside the note root. The combined parser/repository/index
+suite is **50 pass, 0 fail, 314 assertions** across 3 files.
+
+At the original Phase 1d commit boundary, unrelated in-progress `packages/cli`
+and `scripts/tour` work from other workers made the root typecheck and a couple
+of tour safety tests fail. Those workers have since committed and the root
+typecheck passes; see the final handoff gate.
 
 
 ## 4. Incremental commit strategy
@@ -277,7 +283,7 @@ Status legend: **done** = implemented and tested against the real surface;
 
 | Area | Criteria | Status | Evidence or next gate |
 | --- | --- | --- | --- |
-| Phase 0 contract | Filename, metadata, topic, approval, wiki rules frozen | done | `packages/schemas/src/markdown.ts`, 12 tests |
+| Phase 0 contract | Filename, metadata, topic, approval, wiki rules frozen | done | `packages/schemas/src/markdown.ts`; hardened in `8b4d463` with real timestamps, operation-specific proposals, and cited wiki sections |
 | Phase 0 note fixtures | Valid/invalid corpus, Unicode, collisions, long titles, every type, malformed YAML, conflicts | done | `fixtures/phase0/notes`, manifest tests |
 | Phase 0 migration fixtures | Current, legacy, empty, invalid rows | done | executable SQL + row/column tests |
 | Phase 0 examples | CLI, API, MCP payloads | done | `acceptance/examples.json` tests |

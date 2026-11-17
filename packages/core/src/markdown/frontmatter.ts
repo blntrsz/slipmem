@@ -155,8 +155,8 @@ export const splitNoteDocument = (
       )
     }
 
-    const unsafeKey = Object.keys(data).find((key) => isUnsafeKey(key))
-    if (unsafeKey !== undefined) {
+    const unsafeKey = findUnsafeDataKey(data)
+    if (unsafeKey !== null) {
       return yield* Effect.fail(
         frontmatterError(
           path,
@@ -175,6 +175,43 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isUnsafeKey = (key: string): boolean =>
   key === "__proto__" || key === "constructor" || key === "prototype"
+
+const findUnsafeDataKey = (
+  value: unknown,
+  seen: Set<object> = new Set(),
+): string | null => {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findUnsafeDataKey(item, seen)
+      if (found !== null) {
+        return found
+      }
+    }
+    return null
+  }
+
+  if (!isPlainRecord(value)) {
+    return null
+  }
+  if (seen.has(value)) {
+    // `toJS` does not produce cycles, but guarding here keeps this helper safe
+    // if it is reused on caller-supplied objects.
+    return null
+  }
+  seen.add(value)
+
+  for (const [key, item] of Object.entries(value)) {
+    if (isUnsafeKey(key)) {
+      return key
+    }
+    const found = findUnsafeDataKey(item, seen)
+    if (found !== null) {
+      return found
+    }
+  }
+
+  return null
+}
 
 // Standard YAML 1.2 core/scalar tags are data. Everything else - including
 // `!!python/...`, `!ruby/object`, and local tags - is rejected before `toJS` so

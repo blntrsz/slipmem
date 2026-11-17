@@ -172,6 +172,14 @@ describe("Markdown note parser", () => {
     expect(parsed.body).toBe("First line.\n\n- item one\n- item two")
   })
 
+  test("rejects nested dangerous metadata keys after YAML decoding", async () => {
+    const path = join(notesRoot, "valid/20261117193045-nested-unsafe.md")
+    const content = `---\nschema: 1\nid: 20261117193045-nested-unsafe\ntype: fleeting\ntitle: Nested\ncreatedAt: "2026-11-17T19:30:45Z"\nupdatedAt: "2026-11-17T19:30:45Z"\nnested:\n  __proto__: polluted\n---\n\nBody.\n`
+    const error = await failure(parseMarkdownNote({ path, content }))
+    expect(error.code).toBe("malformed-yaml")
+    expect(error.field).toBe("__proto__")
+  })
+
   test("rejects a note with no frontmatter before validating anything else", async () => {
     const path = join(notesRoot, "valid/20261117193045-no-frontmatter.md")
     const error = await failure(parseMarkdownNote({ path, content: "Just a body.\n" }))

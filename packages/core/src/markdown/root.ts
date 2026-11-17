@@ -6,7 +6,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join, resolve } from "node:path"
+import { dirname, join, resolve, sep } from "node:path"
 import { createHash } from "node:crypto"
 import { MarkdownError, markdownError } from "./errors.js"
 
@@ -241,6 +241,6 @@ export const isPathInside = (child: string, parentPath: string): boolean => {
   const childResolved = resolve(child)
   return (
     childResolved === parentResolved ||
-    childResolved.startsWith(`${parentResolved}/`)
+    childResolved.startsWith(`${parentResolved}${sep}`)
   )
 }

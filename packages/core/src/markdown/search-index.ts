@@ -16,7 +16,10 @@ import { readNoteFile } from "./paths.js"
 import {
   MarkdownNoteRepository,
 } from "./repository.js"
-import { defaultIndexCacheDirectory } from "./root.js"
+import {
+  defaultIndexCacheDirectory,
+  isPathInside,
+} from "./root.js"
 
 export const INDEX_SCHEMA_VERSION = 1
 export const INDEX_FILENAME = "index.sqlite"
@@ -413,6 +416,14 @@ export const makeMarkdownSearchIndex = (
   Effect.gen(function* () {
     const root = resolve(config.root)
     const path = indexPath(config)
+    if (isPathInside(path, root)) {
+      return yield* Effect.fail(
+        indexError(
+          path,
+          "The disposable index must live outside the note root.",
+        ),
+      )
+    }
     const database = yield* Effect.try({
       try: () => openDatabase(root, path),
       catch: (cause) =>

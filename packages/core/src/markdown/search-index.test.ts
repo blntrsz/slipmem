@@ -391,6 +391,23 @@ describe("disposable FTS search index", () => {
     }
   })
 
+  test("refuses to place the disposable index inside the note root", async () => {
+    const fixture = setup()
+    try {
+      const error = await failure(
+        makeMarkdownSearchIndex({
+          root: fixture.root,
+          cacheDir: join(fixture.root, "cache"),
+        }),
+      )
+      expect(error.area).toBe("index")
+      expect(error.code).toBe("index-error")
+      expect(existsSync(join(fixture.root, "cache"))).toBe(false)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("index files are user-only and a schema bump rebuilds", async () => {
     const fixture = setup()
     const seeded = await seed(fixture)
