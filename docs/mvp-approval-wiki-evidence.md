@@ -1,7 +1,9 @@
 # Approval and wiki services evidence
 
-Status: **core approval and on-demand cited wiki implemented and tested.**
-Date: 2026-11-17
+Status: **core approval and on-demand cited wiki implemented and tested,
+including compare-and-swap approval apply, conservative extractive citation
+validation, and a fail-closed agent sandbox policy.**
+Date: 2026-11-18
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md) sections 8, 9, 12, 13.4,
 13.5; [`docs/mvp-implementation-log.md`](./mvp-implementation-log.md) slices 3a,
 4a, and 4b.
@@ -20,10 +22,14 @@ Added:
   assembly, structured/Markdown rendering, opt-in synthesized mode, safe local
   agent process, exact-support-span citation validator.
 - `packages/core/src/index.ts` - additive exports for both modules.
+- `packages/core/src/markdown/repository.ts` and `errors.ts` - an optional
+  `expectedContentHash` compare-and-swap guard on update and delete, checked
+  under the existing repository lock, plus the `stale-base` error code.
 
-Not edited: `packages/schemas/**`, `packages/core/src/markdown/**` (repository,
-parser, index), `packages/cli/**`, `packages/migration/**` or
-`packages/core/src/migration/**`, and the shared implementation log.
+Not edited: `packages/schemas/**`, the parser/index files under
+`packages/core/src/markdown/` other than those two files, `packages/cli/**`,
+`packages/migration/**` or `packages/core/src/migration/**`, and the shared
+implementation log.
 
 The services consume narrow structural slices of the existing repository rather
 than reimplementing file mechanics:
@@ -87,18 +93,25 @@ Lifecycle:
    SHA-256. Deletes bind the same hash and carry no replacement content.
 5. A human calls `review()` to see summaries, diffs, current hash, stale and
    expired flags, and any tampered proposal files. `review()` cleans expired
-   proposals by default and reports the removed IDs.
+   proposals by default, reports the removed IDs, and quarantines old malformed
+   files under bounded local state.
 6. Applying revalidates:
    - proposal schema, ID shape, canonical direct-child path, and TTL limit;
-   - expiry against the current clock;
+   - expiry against the current clock, and a future-skew guard on `createdAt`;
    - create: target must not exist, proposed content must parse and carry the
      proposal ID, and the written note must keep that exact ID;
-   - update/reclassify: current note must exist, `baseHash` must still match,
-     proposed content must parse, ID must match, and `createdAt` must not change;
-   - delete: current note must exist and `baseHash` must still match.
-7. Only after the repository write succeeds is the proposal file removed.
-8. `reject()` removes the proposal and changes no note.
-9. Deletes continue to use the repository's backup move outside the note root.
+   - update/reclassify: current note must exist, proposed content must parse,
+     ID must match, and `createdAt` must not change;
+   - delete: current note must exist.
+7. Updates and deletes pass `baseHash` to the repository as a
+   compare-and-swap guard. The repository re-reads the note and compares its
+   whole-file SHA-256 **inside `withRepositoryLock`**, immediately before the
+   write or backup move. The earlier `apply` read is only a fast, descriptive
+   check; the under-lock comparison is authoritative and closes the
+   review/apply interleaving race.
+8. Only after the repository write succeeds is the proposal file removed.
+9. `reject()` removes the proposal and changes no note.
+10. Deletes continue to use the repository's backup move outside the note root.
 
 Bounds and storage hardening:
 
@@ -106,9 +119,16 @@ Bounds and storage hardening:
 - `MAX_PENDING_PROPOSALS` = 200 active proposals per root.
 - Proposal IDs must match `proposal-\d{14}-[0-9a-f]{8}`.
 - Proposal `path` must equal the canonical note path for `noteId`.
-- Expiry may not exceed the configured TTL from `createdAt`.
+- Expiry may not exceed the configured TTL from `createdAt`, and may not be
+  more than one TTL ahead of the current clock.
+- A hand-edited `createdAt` more than five minutes ahead of the current clock is
+  rejected, so a future timestamp cannot make a proposal immortal.
 - Summary, actor, and content sizes are bounded; malformed or oversized files
   are reported by `review().invalid` and cannot be applied.
+- Old malformed files (mtime older than the TTL) are moved to
+  `.state/quarantine/pending/`, at most 20 per cleanup run. That directory keeps
+  at most 100 records; the oldest are removed beyond the cap. Fresh malformed
+  files stay visible in `review().invalid` rather than being silently deleted.
 - Proposal files live under `.state/` and are never notes, index entries, or
   `.slipmem/*.md` files.
 
@@ -170,6 +190,21 @@ const rejected = yield* approval.reject(proposalId)
 Each `review().proposals` item contains the strict `proposal`, `summary`,
 `diff`, `stale`, `expired`, and `currentHash`. Diffs are bounded and render
 proposal text as plain +/- lines, never as executable instructions.
+`review()` also returns `quarantined` filenames moved by that run.
+
+Repository compare-and-swap API for integration:
+
+```ts
+repository.update({ ...input, expectedContentHash: baseHash })
+repository.delete(id, { expectedContentHash: baseHash })
+```
+
+`expectedContentHash` is optional, so ordinary human/CLI writes are unchanged.
+When present and stale, the repository fails with
+`MarkdownError { area: "repository", code: "stale-base" }` and writes nothing.
+The approval service maps that code to `ApprovalError { code: "stale-base" }`.
+Callers that need optimistic concurrency should pass the hash they observed and
+retry from a fresh read, never retry blindly with the old hash.
 
 ## 5. Wiki selection and output
 
@@ -194,8 +229,17 @@ proposal text as plain +/- lines, never as executable instructions.
   adjacent `[[note-id]]` and file path citation. Conflicting notes remain in
   separate cited sections; they are never merged.
 - Excerpts are cut at a sentence/word boundary and capped at 600 characters.
-- Page Markdown is capped at 20,000 characters; structured sections are built
-  within the same budget. No wiki page is written under `.slipmem/`.
+- Page Markdown is capped at 20,000 characters, and the complete serialized
+  structured page is capped at 40,000 characters. Headings are capped at 120,
+  source titles at 200, and citation paths at 300 characters. Bounds apply to
+  the structured result as well as Markdown, so a huge note title cannot evade
+  the page bound through `sources[]`.
+- Bounding drops whole trailing sections and any source that no longer has a
+  citing section. It never slices a section or a citation partway. The fallback
+  Markdown truncator cuts at a line boundary and drops an incomplete trailing
+  citation line, so every emitted `Source: [[id]] (`path`)` citation is closed
+  and addressable.
+- No wiki page is written under `.slipmem/`.
 - A note containing "ignore previous instructions" is emitted as quoted data.
   Nothing in the note is executed, interpreted as a path, or used as a shell
   command.
@@ -211,15 +255,31 @@ Configuration:
   registers an adapter for that exact ID. An unconfigured model ID fails with
   `synthesis-adapter-unsupported`; no provider or network default is assumed.
 
-The local agent boundary (`packages/core/src/wiki/synthesis.ts`):
+The local agent boundary (`packages/core/src/wiki/synthesis.ts` and
+`sandbox.ts`):
 
 - `spawn(command, args, { shell: false })` with an explicit argv array.
 - Note text is sent only as bounded JSON on stdin. It never appears in argv,
   environment variables, paths, or shell syntax.
 - The payload is capped at 200,000 bytes; stdout at 1 MiB; runtime at 30 seconds
   by default.
-- Note text is placed under `untrustedNotes` with a fixed instruction envelope;
-  slipmem gives the process no tools or write access.
+- The child receives only an allowlist of environment variables (`PATH`, `HOME`,
+  `TMPDIR`, locale, terminal hints). Unrelated process secrets such as API keys
+  are not inherited.
+- **Sandbox policy:** by default the process must run under a working bubblewrap
+  sandbox (`--unshare-all`, read-only root, fresh writable `/tmp`, cleared
+  environment, note root hidden when it does not contain the executable).
+  bubblewrap is *probed*, not merely located: in containers where user
+  namespaces are unavailable the probe fails and the agent is refused.
+- If no working sandbox is available, the agent fails closed with
+  `synthesis-config`. The documented unsafe escape hatch is
+  `SLIPMEM_WIKI_AGENT_UNSAFE=1` (or `allowUnsandboxedAgent: true` in core).
+  With that opt-in the process runs directly with the slipmem user's full
+  filesystem privileges. It is not confined, and the documentation says so.
+  This is never a claim that an arbitrary agent has no tools or write access.
+- Even inside the sandbox, the read-only root leaves other world-readable files
+  visible. The sandbox is a write, network, note-root, and environment boundary,
+  not a confidentiality boundary.
 - A non-zero exit, timeout, unexpected output size, empty output, or invalid
   JSON fails with a bounded, actionable error. There is no silent fallback that
   pretends synthesis worked; the operator is told to use extractive mode or fix
@@ -232,10 +292,17 @@ Citation validator:
   and a `quote` of at least 12 characters.
 - The quote must be an exact substring of that note's body after collapsing
   whitespace.
-- Unknown IDs, unsupported quotes, non-sentences, duplicates, and sentences
-  beyond the 60-sentence cap are omitted, counted, and reported in the page
-  footer. They are never rendered as claims.
+- The `text` must be **extractive**: after conservative normalization (whitespace,
+  wrapping quotation marks, terminal punctuation) it must equal the supplied
+  quote or be an exact fragment of it. The validator verifies extraction, not
+  semantic entailment. A paraphrase, negation, or opposite claim is omitted even
+  when a nearby real source span exists.
+- Unknown IDs, unsupported quotes, non-extractive text, non-sentences,
+  duplicates, and sentences beyond the 60-sentence cap are omitted, counted, and
+  reported in the page footer. They are never rendered as claims.
 - Every accepted sentence is followed by its own adjacent note ID and path.
+- An empty synthesizer result says that no supported synthesized output was
+  produced; it never claims that no notes matched when notes did match.
 
 ## 7. Wiki integration API
 
@@ -273,11 +340,11 @@ server can pass its own environment without mutating `process.env`.
 Commands:
 
 ```text
-bun test packages/core/src/approval   # 13 pass, 0 fail, 97 assertions
-bun test packages/core/src/wiki       # 13 pass, 0 fail, 130 assertions
-bun test packages/core               # 132 pass, 0 fail, 1168 assertions
-bunx tsc --noEmit                     # no approval/wiki errors
-bun run lint                          # no approval/wiki warnings or errors
+bun test packages/core/src/approval   # 17 pass, 0 fail, 119 assertions
+bun test packages/core/src/wiki       # 19 pass, 0 fail, 151 assertions
+bun test packages/core/src             # 178 pass, 0 fail, 1403 assertions
+bunx tsc --noEmit                     # no approval/wiki/repository errors
+bun run lint                          # no approval/wiki/repository warnings or errors
 ```
 
 Approval tests cover:
@@ -289,7 +356,15 @@ Approval tests cover:
 - rejection leaving notes unchanged;
 - delete pending, no deletion before apply, backup after apply;
 - stale update and stale delete refused without writing;
+- **interleaving regression:** a wrapper injects a concurrent repository write
+  immediately before an approved update and before an approved delete. The
+  pre-check has already passed, and the under-lock CAS still fails with
+  `stale-base`, leaving the newer note intact and the proposal pending;
+- future-dated `createdAt` and expiry beyond `now + TTL` rejected and never
+  applied;
 - expiry cleanup by review and refusal to apply an expired proposal;
+- old malformed proposal files quarantined under `.state/quarantine/pending/`,
+  with bounded per-run work and a capped retention set;
 - bounded proposal queue (`proposal-queue-full`);
 - tampered/poisoned proposal files reported and never applied;
 - hostile newline-heavy diffs bounded before LCS allocation;
@@ -306,11 +381,22 @@ Wiki tests cover:
 - injection text quoted as data, unchanged note root, nothing executed;
 - default 10 / max 25 limits and actionable over-limit errors;
 - excerpt and total output bounds over 25 large notes;
-- a real fixture child process producing one supported sentence while
-  unsupported, unknown-note, and non-sentence claims are omitted;
+- structured-field and serialized-page bounds with a 30,000-character title;
+  every emitted citation line remains complete;
+- a real fixture child process producing one extractive sentence while an
+  opposite claim, unsupported quote, unknown-note claim, and non-sentence are
+  omitted;
+- **opposite-claim regression:** `"Caching is dangerous"` paired with the real
+  span `"Caching is not dangerous"` is omitted and never rendered;
+- conservative normalization accepts a quoted exact sentence; a paraphrase
+  with the same source span is omitted;
+- empty synthesizer output says no supported synthesized output was produced,
+  not that no notes matched;
 - argv/stdin separation proving note text never enters process arguments;
 - sentence-count and total-output bounds for synthesized mode;
 - unregistered model ID fails closed; an explicitly registered adapter works;
+- unsandboxed agent refused without the explicit unsafe opt-in; bubblewrap
+  invocation and secret-free environment allowlist verified;
 - actionable missing-config, non-zero-exit, and malformed-JSON errors;
 - agent config rejected unless args are a JSON string array.
 
@@ -323,17 +409,17 @@ Wiki tests cover:
 | APPROVE-03 | done | any delete pending; no file change before apply |
 | APPROVE-04 | done at service | apply writes atomically through repository; CLI/web wiring pending |
 | APPROVE-05 | done | reject leaves notes unchanged |
-| APPROVE-06 | done | stale update/delete returns `stale-base` without writing |
+| APPROVE-06 | done | stale update/delete returns `stale-base`; repository CAS rechecks under lock |
 | APPROVE-07 | done in API shape | no MCP apply method; server/MCP must not register one |
 | APPROVE-08 | done | fleeting create/update direct with provenance |
 | APPROVE-09 | done | proposals only under `.state/pending`; no note/index visibility |
 | WIKI-01 | done | topic filters, default/max limits tested |
-| WIKI-02 | done | every section/sentence has an adjacent ID/path citation |
+| WIKI-02 | done | every section/sentence has an adjacent ID/path citation; truncation never cuts one |
 | WIKI-03 | done | empty result and suggestions, no generated content |
 | WIKI-04 | done | conflicting notes in separate cited sections |
 | WIKI-05 | done | wiki tests assert an unchanged root |
 | WIKI-06 | done | injection note quoted as data; agent receives stdin JSON only |
-| WIKI-07 | done | fixture process + strict exact-span validator omits unsupported sentences |
+| WIKI-07 | done | fixture process + strict extractive validator omits paraphrases and opposite claims; unsandboxed agents fail closed |
 
 ## 10. Known limitations and integration notes
 
@@ -341,6 +427,11 @@ Wiki tests cover:
   fresh `updatedAt`. The applied file is therefore not byte-identical to the
   previewed content, but every proposed field was revalidated and the preview
   contains all semantic changes.
+- The under-lock CAS protects same-process and cooperating writers. It does not
+  turn the filesystem into a multi-writer transaction: a non-cooperating process
+  that ignores the repository lock can still race, and the MVP promises
+  last-writer-wins for that cross-process case. Approval apply itself always
+  uses CAS, so it cannot silently overwrite a repository-mediated edit.
 - A create proposal reserves its filename. If another writer takes that exact
   ID between proposal and approval, apply refuses with `stale-base`; the
   repository's suffixed note created during that race is moved to the normal
@@ -351,6 +442,16 @@ Wiki tests cover:
   cut.
 - Synthesized mode is opt-in and local. The core does not ship a hosted model
   adapter and does not claim that any model ID works without registration.
+- Validation is extractive-support checking, not semantic entailment. It cannot
+  prove that an arbitrary paraphrase means the same thing as a note, so it does
+  not accept paraphrases. Operators who want prose synthesis must accept that
+  unsupported sentences are omitted; extractive mode remains the fully cited
+  fallback.
+- A bubbling sandbox that passes the probe still leaves world-readable host
+  files visible through the read-only root. This is an integrity, network, and
+  environment boundary, not a full confidentiality sandbox. When no sandbox
+  works, the default is refusal; the unsafe opt-in is documented and must not be
+  represented as confinement.
 - The MCP server, HTTP API, CLI, and web still need to consume these services.
   In particular, the MCP registration must call `submitMcp` and must never
   expose `review`, `apply`, or `reject` as tools.
@@ -368,6 +469,7 @@ Wiki tests cover:
 - `packages/core/src/wiki/errors.ts`
 - `packages/core/src/wiki/selection.ts`
 - `packages/core/src/wiki/render.ts`
+- `packages/core/src/wiki/sandbox.ts`
 - `packages/core/src/wiki/synthesis.ts`
 - `packages/core/src/wiki/wiki-service.ts`
 - `packages/core/src/wiki/wiki.test.ts`
