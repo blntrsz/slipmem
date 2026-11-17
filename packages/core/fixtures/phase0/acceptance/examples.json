@@ -1,0 +1,176 @@
+{
+  "schema": 1,
+  "frozenAt": "2026-11-17T21:05:00Z",
+  "note": {
+    "id": "20261117201500-mcp-recall-must-cite-sources",
+    "path": ".slipmem/20261117201500-mcp-recall-must-cite-sources.md",
+    "type": "literature",
+    "title": "MCP recall must cite sources",
+    "createdAt": "2026-11-17T20:15:00Z",
+    "updatedAt": "2026-11-17T20:16:00Z"
+  },
+  "cli": {
+    "init": {
+      "argv": ["slipmem", "init"],
+      "creates": [".slipmem/", ".slipmem/README.md", ".slipmem/.state/"]
+    },
+    "newLiterature": {
+      "argv": [
+        "slipmem",
+        "new",
+        "--type",
+        "literature",
+        "--title",
+        "MCP recall must cite sources",
+        "--reference",
+        "https://example.com/mcp-recall"
+      ],
+      "stdin": "Every recall result should identify the note file and ID behind it.\n",
+      "result": { "id": "20261117201500-mcp-recall-must-cite-sources" }
+    },
+    "search": {
+      "argv": ["slipmem", "search", "recall", "--type", "literature", "--limit", "10"],
+      "result": { "notes": ["20261117201500-mcp-recall-must-cite-sources"] }
+    },
+    "wiki": {
+      "argv": ["slipmem", "wiki", "mcp", "--mode", "extractive", "--limit", "10"],
+      "result": {
+        "mode": "extractive",
+        "noteCount": 1,
+        "hasCitations": true
+      }
+    },
+    "approve": {
+      "argv": ["slipmem", "approve", "proposal-1"],
+      "result": {
+        "status": "applied",
+        "noteId": "20261117193045-agent-memory-is-bounded"
+      }
+    }
+  },
+  "api": {
+    "createFleeting": {
+      "request": {
+        "method": "POST",
+        "path": "/api/notes",
+        "body": {
+          "type": "fleeting",
+          "title": "Café notes",
+          "content": "An inbox thought."
+        }
+      },
+      "response": {
+        "status": 201,
+        "body": {
+          "id": "20261117213000-cafe-notes",
+          "type": "fleeting",
+          "title": "Café notes"
+        }
+      }
+    },
+    "getNote": {
+      "request": { "method": "GET", "path": "/api/notes/20261117201500-mcp-recall-must-cite-sources" },
+      "response": { "status": 200, "body": { "id": "20261117201500-mcp-recall-must-cite-sources" } }
+    },
+    "search": {
+      "request": { "method": "GET", "path": "/api/search?q=recall&type=literature&limit=10" },
+      "response": { "status": 200, "body": { "notes": ["20261117201500-mcp-recall-must-cite-sources"] } }
+    },
+    "wiki": {
+      "request": { "method": "GET", "path": "/api/wiki/mcp?mode=extractive&format=structured" },
+      "response": {
+        "status": 200,
+        "body": {
+          "topic": "mcp",
+          "mode": "extractive",
+          "noteCount": 1,
+          "sections": [{ "heading": "Recall", "citations": [{ "noteId": "20261117201500-mcp-recall-must-cite-sources" }] }],
+          "markdown": "# Topic: mcp\n"
+        }
+      }
+    },
+    "review": {
+      "request": { "method": "GET", "path": "/api/pending" },
+      "response": {
+        "status": 200,
+        "body": {
+          "proposals": [
+            {
+              "id": "proposal-1",
+              "operation": "create",
+              "summary": "Create a permanent note."
+            }
+          ]
+        }
+      }
+    }
+  },
+  "mcp": {
+    "createFleeting": {
+      "tool": "create_fleeting_note",
+      "arguments": { "title": "Café notes", "content": "An inbox thought." },
+      "result": {
+        "id": "20261117213000-cafe-notes",
+        "type": "fleeting",
+        "title": "Café notes"
+      }
+    },
+    "createLiterature": {
+      "tool": "create_literature_note",
+      "arguments": {
+        "title": "MCP recall must cite sources",
+        "content": "Every recall result should identify its source.",
+        "reference": "https://example.com/mcp-recall"
+      },
+      "result": {
+        "id": "20261117201500-mcp-recall-must-cite-sources",
+        "type": "literature",
+        "reference": "https://example.com/mcp-recall"
+      }
+    },
+    "createPermanent": {
+      "tool": "create_permanent_note",
+      "arguments": {
+        "title": "Agent memory is bounded",
+        "content": "Every recall operation has a limit."
+      },
+      "result": {
+        "status": "pending_approval",
+        "proposalId": "proposal-1",
+        "summary": "Create permanent note Agent memory is bounded."
+      }
+    },
+    "deleteAny": {
+      "tool": "delete_permanent_note",
+      "arguments": { "id": "20261117193045-agent-memory-is-bounded" },
+      "result": {
+        "status": "pending_approval",
+        "proposalId": "proposal-2",
+        "summary": "Delete permanent note Agent memory is bounded."
+      }
+    },
+    "search": {
+      "tool": "search_notes",
+      "arguments": { "query": "recall", "type": "literature", "limit": 10 },
+      "result": {
+        "notes": [
+          {
+            "id": "20261117201500-mcp-recall-must-cite-sources",
+            "title": "MCP recall must cite sources",
+            "excerpt": "Every recall result should identify its source."
+          }
+        ]
+      }
+    },
+    "wiki": {
+      "tool": "build_topic_wiki",
+      "arguments": { "topic": "mcp", "mode": "extractive", "limit": 10 },
+      "result": {
+        "topic": "mcp",
+        "mode": "extractive",
+        "noteCount": 1,
+        "citations": ["20261117201500-mcp-recall-must-cite-sources"]
+      }
+    }
+  }
+}

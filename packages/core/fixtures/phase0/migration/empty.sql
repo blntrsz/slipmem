@@ -1,0 +1,2 @@
+-- An empty SQLite database has no note tables. Migration must report zero
+-- notes and must not fail just because the expected tables are absent.

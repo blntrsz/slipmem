@@ -1,0 +1,55 @@
+{
+  "schema": 1,
+  "frozenAt": "2026-11-17T21:05:00Z",
+  "fixtures": [
+    {
+      "file": "current.sql",
+      "shape": "current",
+      "noteTables": ["fleeting_note", "literature_note", "permanent_note"],
+      "rows": { "fleeting_note": 1, "literature_note": 1, "permanent_note": 1 },
+      "expectation": "all rows map to valid Markdown notes"
+    },
+    {
+      "file": "legacy.sql",
+      "shape": "legacy",
+      "noteTables": ["fleeting_note", "literature_note", "permanent_note"],
+      "rows": { "fleeting_note": 1, "literature_note": 1, "permanent_note": 1 },
+      "expectation": "all rows map to valid Markdown notes"
+    },
+    {
+      "file": "empty.sql",
+      "shape": "empty",
+      "noteTables": [],
+      "rows": {},
+      "expectation": "zero notes, no failure"
+    },
+    {
+      "file": "invalid-rows.sql",
+      "shape": "current",
+      "noteTables": ["fleeting_note", "literature_note", "permanent_note"],
+      "rows": { "fleeting_note": 2, "literature_note": 1, "permanent_note": 2 },
+      "expectation": "five rows are reported; text is preserved, never truncated"
+    }
+  ],
+  "expectedMappings": [
+    {
+      "source": "current-fleeting",
+      "targetType": "fleeting",
+      "legacyId": "current-fleeting",
+      "createdAt": "2026-11-17T19:30:45Z"
+    },
+    {
+      "source": "current-literature",
+      "targetType": "literature",
+      "legacyId": "current-literature",
+      "reference": "Book, chapter 2",
+      "createdAt": "2026-11-17T20:15:00Z"
+    },
+    {
+      "source": "current-permanent",
+      "targetType": "permanent",
+      "legacyId": "current-permanent",
+      "createdAt": "2026-11-17T21:30:00Z"
+    }
+  ]
+}

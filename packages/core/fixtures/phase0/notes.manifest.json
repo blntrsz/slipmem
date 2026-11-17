@@ -1,0 +1,133 @@
+{
+  "schema": 1,
+  "frozenAt": "2026-11-17T21:05:00Z",
+  "noteRoot": ".slipmem",
+  "valid": [
+    {
+      "file": "valid/20261117193045-agent-memory-is-bounded.md",
+      "id": "20261117193045-agent-memory-is-bounded",
+      "type": "permanent",
+      "title": "Agent memory is bounded",
+      "createdAt": "2026-11-17T19:30:45Z",
+      "updatedAt": "2026-11-17T19:35:02Z",
+      "topics": ["agent-memory", "retrieval"],
+      "reference": null,
+      "unknownKeys": ["reviewStatus"],
+      "bodyIncludes": "hard server-side limit"
+    },
+    {
+      "file": "valid/20261117201500-mcp-recall-must-cite-sources.md",
+      "id": "20261117201500-mcp-recall-must-cite-sources",
+      "type": "literature",
+      "title": "MCP recall must cite sources",
+      "createdAt": "2026-11-17T20:15:00Z",
+      "updatedAt": "2026-11-17T20:16:00Z",
+      "topics": ["mcp", "citations"],
+      "reference": "https://example.com/mcp-recall",
+      "unknownKeys": [],
+      "bodyIncludes": "identify the note file and ID"
+    },
+    {
+      "file": "valid/20261117213000-cafe-notes.md",
+      "id": "20261117213000-cafe-notes",
+      "type": "fleeting",
+      "title": "Café notes",
+      "createdAt": "2026-11-17T21:30:00Z",
+      "updatedAt": "2026-11-17T21:30:00Z",
+      "topics": ["cafe"],
+      "reference": null,
+      "unknownKeys": [],
+      "bodyIncludes": "diacritic in its display title"
+    },
+    {
+      "file": "valid/20261117213000-cafe-notes-2.md",
+      "id": "20261117213000-cafe-notes-2",
+      "type": "permanent",
+      "title": "Café notes",
+      "createdAt": "2026-11-17T21:30:00Z",
+      "updatedAt": "2026-11-17T21:31:00Z",
+      "topics": ["cafe"],
+      "reference": null,
+      "unknownKeys": [],
+      "bodyIncludes": "collision suffix"
+    },
+    {
+      "file": "valid/20261117220000-a-deliberately-long-title-that-exercises-slug-truncation-at-eighty-characters.md",
+      "id": "20261117220000-a-deliberately-long-title-that-exercises-slug-truncation-at-eighty-characters",
+      "type": "permanent",
+      "title": "A deliberately long title that exercises slug truncation at eighty characters without losing the timestamp prefix",
+      "createdAt": "2026-11-17T22:00:00Z",
+      "updatedAt": "2026-11-17T22:00:01Z",
+      "topics": [],
+      "reference": null,
+      "unknownKeys": [],
+      "bodyIncludes": "filename records the slug at creation time"
+    },
+    {
+      "file": "valid/20261117223000-untitled.md",
+      "id": "20261117223000-untitled",
+      "type": "fleeting",
+      "title": "!!!",
+      "createdAt": "2026-11-17T22:30:00Z",
+      "updatedAt": "2026-11-17T22:30:00Z",
+      "topics": [],
+      "reference": null,
+      "unknownKeys": [],
+      "bodyIncludes": "untitled"
+    }
+  ],
+  "invalid": [
+    {
+      "file": "invalid/20261117193045-Bad-Uppercase.md",
+      "expected": { "area": "filename", "code": "filename-pattern" }
+    },
+    {
+      "file": "invalid/20261117193045-bad_underscore.md",
+      "expected": { "area": "filename", "code": "filename-pattern" }
+    },
+    {
+      "file": "invalid/missing-timestamp.md",
+      "expected": { "area": "filename", "code": "filename-pattern" }
+    },
+    {
+      "file": "invalid/20261117193045-double--hyphen.md",
+      "expected": { "area": "filename", "code": "filename-pattern" }
+    },
+    {
+      "file": "invalid/20261117233000-malformed-yaml.md",
+      "expected": { "area": "frontmatter", "code": "malformed-yaml" }
+    },
+    {
+      "file": "invalid/20261117233100-conflict-markers.md",
+      "expected": { "area": "body", "code": "conflict-markers" }
+    },
+    {
+      "file": "invalid/20261117233200-missing-reference.md",
+      "expected": { "area": "metadata", "code": "missing-reference" }
+    },
+    {
+      "file": "invalid/20261117233300-id-mismatch.md",
+      "expected": { "area": "metadata", "code": "id-mismatch" }
+    },
+    {
+      "file": "invalid/20261117233400-timestamp-mismatch.md",
+      "expected": { "area": "metadata", "code": "timestamp-mismatch" }
+    },
+    {
+      "file": "invalid/20261117233500-blank-title.md",
+      "expected": { "area": "metadata", "code": "blank-title" }
+    },
+    {
+      "file": "invalid/20261117233600-unknown-type.md",
+      "expected": { "area": "metadata", "code": "unknown-type" }
+    },
+    {
+      "file": "invalid/20261117233700-content-too-long.md",
+      "expected": { "area": "body", "code": "content-too-long" }
+    },
+    {
+      "file": "invalid/20261117233800-executable-yaml-tag.md",
+      "expected": { "area": "frontmatter", "code": "executable-yaml" }
+    }
+  ]
+}
