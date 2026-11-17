@@ -71,8 +71,26 @@ const warning = (
 })
 
 const collisionSuffix = /-\d+$/
+const ID_PREFIX_LENGTH = 15
 
-const slugOfId = (id: string): string => id.slice(15).replace(collisionSuffix, "")
+/**
+ * The filename slug is the title slug at creation time, optionally followed by
+ * a same-second collision suffix. Compare the exact slug first: stripping a
+ * trailing number unconditionally would report false drift for a title such as
+ * "Agent memory 2" whose own slug legitimately ends in `-2`.
+ */
+const slugMatchesTitle = (title: string, id: string): boolean => {
+  const slug = id.slice(ID_PREFIX_LENGTH)
+  const expected = Markdown.slugifyTitle(title)
+  if (slug === expected) {
+    return true
+  }
+
+  const collision = collisionSuffix.exec(slug)
+  return (
+    collision !== null && slug.slice(0, collision.index) === expected
+  )
+}
 
 const buildReport = (
   root: string,
@@ -109,7 +127,7 @@ const buildReport = (
       seen.set(note.id, note.path)
     }
 
-    if (Markdown.slugifyTitle(note.metadata.title) !== slugOfId(note.id)) {
+    if (!slugMatchesTitle(note.metadata.title, note.id)) {
       warnings.push(
         warning(
           "slug-drift",

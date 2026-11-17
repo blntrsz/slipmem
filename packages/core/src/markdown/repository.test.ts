@@ -653,6 +653,46 @@ describe("checkNoteRoot", () => {
     }
   })
 
+  test("does not report drift for numeric titles or collision suffixes", async () => {
+    const fixture = setup()
+    try {
+      const repo = await repository(fixture)
+      const numeric = await Effect.runPromise(
+        repo.create({
+          type: "fleeting",
+          title: "Agent memory 2",
+          content: "A title whose slug ends in a digit.",
+        }),
+      )
+      const first = await Effect.runPromise(
+        repo.create({
+          type: "fleeting",
+          title: "Same second",
+          content: "First note.",
+        }),
+      )
+      const second = await Effect.runPromise(
+        repo.create({
+          type: "fleeting",
+          title: "Same second",
+          content: "Second note with a collision suffix.",
+        }),
+      )
+
+      expect(numeric.id).toBe("20261117213000-agent-memory-2")
+      expect(second.id).toBe("20261117213000-same-second-2")
+      expect(first.id).toBe("20261117213000-same-second")
+
+      const report = await Effect.runPromise(checkNoteRoot(fixture.root))
+      expect(report.ok).toBe(true)
+      expect(report.warnings.map((issue) => issue.code)).not.toContain(
+        "slug-drift",
+      )
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("warns on slug drift but does not rename the file", async () => {
     const fixture = setup()
     try {
