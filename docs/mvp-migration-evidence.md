@@ -323,11 +323,11 @@ $ bunx tsc --ignoreConfig --noEmit --target ESNext --module Preserve \
 ```
 
 Root check status: the migration files were clean in a scoped run. At handoff,
-`bun run check` was blocked by unrelated in-progress approval, MCP, web, and wiki
-work; no migration file appeared in the typecheck output. A full `bun test`
-reported 228 pass and 4 fail, with all four failures in
-`packages/mcp/src/main.test.ts` stdio startup, outside the migration module.
-Re-run the root check after the concurrent surface increments land.
+`bun run check` was blocked by unrelated in-progress approval, MCP, CLI, web, and
+wiki work; no migration file appeared in the typecheck output. The full
+`bun test` run continued to pass the migration tests; the remaining failures were
+in concurrently developed CLI and MCP surface tests. Re-run the root check after
+the concurrent surface increments land.
 
 The importer tests cover:
 
