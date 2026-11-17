@@ -8,6 +8,7 @@ import { basename } from "node:path"
 import { Effect } from "effect"
 import { MarkdownError, markdownError } from "./errors.js"
 import {
+  findUnsafeMetadataKey,
   renderNoteDocument,
   splitNoteDocument,
   splitUnknownMetadata,
@@ -500,6 +501,21 @@ const toNoteInfo = (
 export const createMarkdownNoteDocument = (
   input: RenderNoteDocumentInput & { readonly path: string },
 ): Effect.Effect<ParsedMarkdownNote, MarkdownError> => {
+  for (const candidate of [input.unknown, input.metadata.provenance]) {
+    const unsafeKey = findUnsafeMetadataKey(candidate)
+    if (unsafeKey !== null) {
+      return Effect.fail(
+        markdownError({
+          area: "frontmatter",
+          code: "malformed-yaml",
+          path: input.path,
+          field: unsafeKey,
+          message: `Frontmatter key '${unsafeKey}' is not allowed.`,
+        }),
+      )
+    }
+  }
+
   const content = renderNoteDocument(input)
   return parseMarkdownNote({
     path: input.path,

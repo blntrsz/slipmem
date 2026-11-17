@@ -176,6 +176,15 @@ const isPlainRecord = (value: unknown): value is Record<string, unknown> =>
 const isUnsafeKey = (key: string): boolean =>
   key === "__proto__" || key === "constructor" || key === "prototype"
 
+/**
+ * Validates a caller-supplied metadata object on the same rules applied to a
+ * parsed file. A `__proto__` own property survives JSON parsing but is dropped
+ * by an ordinary object assignment during rendering, so writes would silently
+ * lose it instead of reporting the unsafe key.
+ */
+export const findUnsafeMetadataKey = (value: unknown): string | null =>
+  findUnsafeDataKey(value)
+
 const findUnsafeDataKey = (
   value: unknown,
   seen: Set<object> = new Set(),

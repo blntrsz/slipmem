@@ -301,6 +301,54 @@ describe("Markdown note repository CRUD", () => {
     }
   })
 
+  test("rejects dangerous unknown metadata keys before writing", async () => {
+    const fixture = setup()
+    try {
+      const repo = await repository(fixture)
+      const polluted = JSON.parse('{"__proto__":{"polluted":true}}')
+
+      const createError = await failure(
+        repo.create({
+          type: "fleeting",
+          title: "Unsafe metadata",
+          content: "This must never be written.",
+          unknown: polluted,
+        }),
+      )
+      expect(createError.area).toBe("frontmatter")
+      expect(createError.code).toBe("malformed-yaml")
+      expect(createError.field).toBe("__proto__")
+      expect(
+        ({} as Record<string, unknown>).polluted,
+      ).toBeUndefined()
+      expect(
+        readdirSync(fixture.root).filter((name) => name.endsWith(".md")),
+      ).toEqual([])
+
+      const created = await Effect.runPromise(
+        repo.create({
+          type: "fleeting",
+          title: "Safe metadata",
+          content: "Original body.",
+        }),
+      )
+      const path = join(fixture.root, created.filename)
+      const before = readFileSync(path, "utf8")
+      const updateError = await failure(
+        repo.update({
+          id: created.id,
+          content: "Replacement body.",
+          unknown: JSON.parse('{"nested":{"constructor":"polluted"}}'),
+        }),
+      )
+      expect(updateError.code).toBe("malformed-yaml")
+      expect(updateError.field).toBe("constructor")
+      expect(readFileSync(path, "utf8")).toBe(before)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("preserves compatibility metadata supplied by migration callers", async () => {
     const fixture = setup()
     try {
