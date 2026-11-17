@@ -8,6 +8,7 @@ import {
 import type { CommandDefinition } from "./commands/command.js"
 import { approveCommand } from "./commands/approve.js"
 import { checkCommand } from "./commands/check.js"
+import { deleteCommand } from "./commands/delete.js"
 import { editCommand } from "./commands/edit.js"
 import { initCommand } from "./commands/init.js"
 import { listCommand } from "./commands/list.js"
@@ -35,6 +36,7 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   listCommand,
   showCommand,
   editCommand,
+  deleteCommand,
   searchCommand,
   topicsCommand,
   checkCommand,

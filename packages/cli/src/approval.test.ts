@@ -6,7 +6,7 @@ import {
   type MarkdownNoteRepositoryShape,
 } from "@slipmem/core"
 import { Effect } from "effect"
-import { rmSync } from "node:fs"
+import { existsSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { makeTempBase, parseJson, runCliProcess } from "./test-support.js"
 
@@ -260,5 +260,40 @@ describe("slipmem review, approve, and reject", () => {
     expect(
       parseJson<{ error: { code: string } }>(result.stderr).error.code,
     ).toBe("proposal-not-found")
+  }, 30000)
+
+  test("requires explicit --yes before moving a note to trash", async () => {
+    const setupValue = await setup()
+    const created = await run(setupValue, [
+      "new",
+      "--type",
+      "fleeting",
+      "--title",
+      "Delete confirmation",
+      "--content",
+      "Require confirmation.",
+      "--json",
+    ])
+    const noteId = parseJson<{ note: { id: string } }>(created.stdout).note.id
+
+    const refused = await run(setupValue, ["delete", noteId, "--json"])
+    expect(refused.code).toBe(2)
+    expect(
+      parseJson<{ error: { kind: string } }>(refused.stderr).error.kind,
+    ).toBe("usage")
+    const stillThere = await run(setupValue, ["show", noteId, "--json"])
+    expect(stillThere.code).toBe(0)
+
+    const deleted = await run(setupValue, ["delete", noteId, "--yes", "--json"])
+    expect(deleted.code).toBe(0)
+    const result = parseJson<{
+      deleted: boolean
+      backupPath: string
+    }>(deleted.stdout)
+    expect(result.deleted).toBe(true)
+    expect(existsSync(result.backupPath)).toBe(true)
+
+    const missing = await run(setupValue, ["show", noteId, "--json"])
+    expect(missing.code).toBe(1)
   }, 30000)
 })
