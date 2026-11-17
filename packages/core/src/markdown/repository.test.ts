@@ -265,6 +265,48 @@ describe("Markdown note repository CRUD", () => {
     }
   })
 
+  test("preserves compatibility metadata supplied by migration callers", async () => {
+    const fixture = setup()
+    try {
+      const repo = await repository(fixture)
+      const createdAt = Date.parse("2026-11-17T19:30:45Z")
+      const created = await Effect.runPromise(
+        repo.create({
+          type: "permanent",
+          title: "Imported note",
+          content: "Preserved text.",
+          legacyId: "legacy-permanent-1",
+          createdAt,
+          updatedAt: Date.parse("2026-11-17T20:00:00Z"),
+          unknown: { scope: "work", reviewStatus: "accepted" },
+        }),
+      )
+
+      expect(created.metadata.legacyId).toBe("legacy-permanent-1")
+      expect(created.unknown).toEqual({
+        scope: "work",
+        reviewStatus: "accepted",
+      })
+      expect(readFileSync(join(fixture.root, created.filename), "utf8")).toContain(
+        "scope: work",
+      )
+
+      const updated = await Effect.runPromise(
+        repo.update({
+          id: created.id,
+          content: "Updated text.",
+          unknown: { reviewStatus: "approved" },
+        }),
+      )
+      expect(updated.unknown).toEqual({
+        scope: "work",
+        reviewStatus: "approved",
+      })
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("deletes by moving the note to a backup outside the root", async () => {
     const fixture = setup()
     try {

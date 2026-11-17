@@ -177,7 +177,8 @@ Added:
 - `packages/core/src/markdown/repository.ts`: `MarkdownNoteRepository` Effect
   service and Layer with scan/list/listTitles/get/getInfo/create/update/delete,
   filename collision suffixes, type/topic/limit filters, monotonic `updatedAt`,
-  unknown-metadata preservation, reclassification by metadata only, and
+  unknown-metadata preservation on create/update (including migration `legacyId`
+  and compatibility fields), reclassification by metadata only, and
   move-to-backup deletes outside the root.
 - `packages/core/src/markdown/check.ts`: read-only `checkNoteRoot` report for
   filename/metadata/body errors, unexpected files, duplicate IDs, slug drift,

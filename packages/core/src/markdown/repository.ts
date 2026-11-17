@@ -63,6 +63,8 @@ export interface CreateMarkdownNoteInput {
   readonly provenance?: Markdown.Provenance
   readonly legacyId?: string
   readonly aliases?: ReadonlyArray<string>
+  /** Additional frontmatter fields, preserved for compatibility/migration. */
+  readonly unknown?: Readonly<Record<string, unknown>>
   /** Creation time for a normal write is the repository clock. */
   readonly createdAt?: number
   readonly updatedAt?: number
@@ -79,6 +81,8 @@ export interface UpdateMarkdownNoteInput {
   readonly provenance?: Markdown.Provenance
   readonly legacyId?: string
   readonly aliases?: ReadonlyArray<string>
+  /** Fields to merge into the preserved unknown frontmatter record. */
+  readonly unknown?: Readonly<Record<string, unknown>>
 }
 
 export interface DeleteMarkdownNoteResult {
@@ -486,7 +490,7 @@ export const makeMarkdownNoteRepository = (
                 path,
                 metadata,
                 body,
-                unknown: {},
+                unknown: input.unknown ?? {},
               })
 
               const write = yield* atomicWriteFile(path, renderDocument(document), {
@@ -586,7 +590,10 @@ export const makeMarkdownNoteRepository = (
             path: current.path,
             metadata,
             body,
-            unknown: current.unknown,
+            unknown:
+              input.unknown === undefined
+                ? current.unknown
+                : { ...current.unknown, ...input.unknown },
           })
 
           yield* atomicWriteFile(current.path, renderDocument(document), {
