@@ -1,14 +1,16 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Exit } from "effect"
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs"
 import { join } from "node:path"
+import type { MarkdownError } from "./errors.js"
 import {
   defaultBackupDirectory,
   defaultIndexCacheDirectory,
@@ -22,6 +24,20 @@ const temporaryRoot = (): string => mkdtempSync("/tmp/opencode/slipmem-root-")
 
 const cleanup = (path: string): void => {
   rmSync(path, { recursive: true, force: true })
+}
+
+const failure = async <A>(
+  effect: Effect.Effect<A, MarkdownError>,
+): Promise<MarkdownError> => {
+  const exit = await Effect.runPromiseExit(effect)
+  if (Exit.isSuccess(exit)) {
+    throw new Error("Expected a MarkdownError")
+  }
+  const fail = exit.cause.reasons.find((reason) => reason._tag === "Fail")
+  if (fail === undefined || fail._tag !== "Fail") {
+    throw new Error("Expected a typed failure")
+  }
+  return fail.error
 }
 
 describe("note root resolution", () => {
@@ -77,6 +93,48 @@ describe("note root resolution", () => {
     }
   })
 
+  test("rejects a symlinked ancestor root with an actionable typed error", async () => {
+    const base = temporaryRoot()
+    try {
+      const real = join(base, "real-notes")
+      const workspace = join(base, "workspace")
+      mkdirSync(real, { recursive: true })
+      mkdirSync(workspace, { recursive: true })
+      symlinkSync(real, join(base, ".slipmem"))
+
+      const error = await failure(
+        resolveNoteRoot({ cwd: workspace, env: {} }),
+      )
+      expect(error.area).toBe("repository")
+      expect(error.code).toBe("symlink")
+      expect(error.path).toBe(join(base, ".slipmem"))
+      expect(error.message).toContain("symbolic link")
+      expect(error.message).toContain("SLIPMEM_DIR")
+    } finally {
+      cleanup(base)
+    }
+  })
+
+  test("rejects a symlinked SLIPMEM_DIR root instead of following it", async () => {
+    const base = temporaryRoot()
+    try {
+      const real = join(base, "real-notes")
+      mkdirSync(real, { recursive: true })
+      symlinkSync(real, join(base, "linked-notes"))
+
+      const error = await failure(
+        resolveNoteRoot({
+          cwd: base,
+          env: { SLIPMEM_DIR: "linked-notes" },
+        }),
+      )
+      expect(error.code).toBe("symlink")
+      expect(error.path).toBe(join(base, "linked-notes"))
+    } finally {
+      cleanup(base)
+    }
+  })
+
   test("init resolves to the Git root, else the current directory", async () => {
     const gitBase = temporaryRoot()
     const plainBase = temporaryRoot()
@@ -123,6 +181,23 @@ describe("note root initialization", () => {
       const second = await Effect.runPromise(initializeNoteRoot(root))
       expect(second.created).toBe(false)
       expect(readFileSync(join(root, "README.md"), "utf8")).toBe("user edited\n")
+    } finally {
+      cleanup(base)
+    }
+  })
+
+  test("refuses to initialize through a symlinked note root", async () => {
+    const base = temporaryRoot()
+    try {
+      const real = join(base, "real-notes")
+      mkdirSync(real, { recursive: true })
+      const linked = join(base, ".slipmem")
+      symlinkSync(real, linked)
+
+      const error = await failure(initializeNoteRoot(linked))
+      expect(error.code).toBe("symlink")
+      expect(error.path).toBe(linked)
+      expect(existsSync(join(real, "README.md"))).toBe(false)
     } finally {
       cleanup(base)
     }

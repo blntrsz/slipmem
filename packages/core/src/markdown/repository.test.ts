@@ -408,6 +408,32 @@ describe("Markdown repository path, symlink, size, and lock guards", () => {
     }
   })
 
+  test("rejects a symlinked note root consistently on open and check", async () => {
+    const fixture = setup()
+    try {
+      const real = join(fixture.base, "real-notes")
+      mkdirSync(real, { recursive: true })
+      const linked = join(fixture.base, "linked-notes")
+      symlinkSync(real, linked)
+
+      const error = await failure(
+        makeMarkdownNoteRepository({
+          root: linked,
+          backupDir: fixture.backup,
+        }),
+      )
+      expect(error.area).toBe("repository")
+      expect(error.code).toBe("symlink")
+      expect(error.path).toBe(linked)
+
+      const report = await Effect.runPromise(checkNoteRoot(linked))
+      expect(report.ok).toBe(false)
+      expect(report.issues.map((issue) => issue.code)).toContain("symlink")
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("rejects note files larger than 1 MiB on read", async () => {
     const fixture = setup()
     try {

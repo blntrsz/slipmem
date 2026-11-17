@@ -35,6 +35,7 @@ import {
 import {
   defaultBackupDirectory,
   isPathInside,
+  rootSymlinkError,
   STATE_DIRECTORY,
 } from "./root.js"
 
@@ -301,23 +302,37 @@ export const scanMarkdownRoot = (
     return { notes, invalid, unexpected }
   })
 
-const assertRoot = (root: string): Effect.Effect<void, MarkdownError> =>
-  Effect.sync(() => {
-    try {
-      return lstatSync(root).isDirectory()
-    } catch {
-      return false
+type RootStatus = "ok" | "symlink" | "missing"
+
+/**
+ * Uses lstat so a note root symlink is reported as such. Following it with
+ * stat would either accept an unexpected location or fail later as "missing".
+ */
+const inspectRoot = (root: string): RootStatus => {
+  try {
+    const stats = lstatSync(root)
+    if (stats.isSymbolicLink()) {
+      return "symlink"
     }
-  }).pipe(
-    Effect.flatMap((isDirectory) =>
-      isDirectory
+    return stats.isDirectory() ? "ok" : "missing"
+  } catch {
+    return "missing"
+  }
+}
+
+const assertRoot = (root: string): Effect.Effect<void, MarkdownError> =>
+  Effect.sync(() => inspectRoot(root)).pipe(
+    Effect.flatMap((status) =>
+      status === "ok"
         ? Effect.void
         : Effect.fail(
-            repositoryError(
-              root,
-              "repository-root-missing",
-              `The note root does not exist. Run 'slipmem init' or create ${root}.`,
-            ),
+            status === "symlink"
+              ? rootSymlinkError(root)
+              : repositoryError(
+                  root,
+                  "repository-root-missing",
+                  `The note root does not exist. Run 'slipmem init' or create ${root}.`,
+                ),
           ),
     ),
   )

@@ -1,6 +1,7 @@
 import { Effect } from "effect"
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   statSync,
   writeFileSync,
@@ -77,6 +78,26 @@ const rootError = (path: string, message: string): MarkdownError =>
     message,
   })
 
+export const rootSymlinkError = (path: string): MarkdownError =>
+  markdownError({
+    area: "repository",
+    code: "symlink",
+    path,
+    message: `The note root '${path}' is a symbolic link. Point SLIPMEM_DIR (or the repository) at the real directory; slipmem does not follow a linked note root.`,
+  })
+
+/**
+ * Rejects a note root that is itself a symlink even when it resolves to an
+ * existing directory. A missing path is not this function's concern.
+ */
+export const symlinkedNoteRoot = (path: string): boolean => {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
 /**
  * Resolves the note root using the frozen order:
  *
@@ -96,11 +117,18 @@ export const resolveNoteRoot = (
     const configured = env.SLIPMEM_DIR?.trim()
 
     if (configured !== undefined && configured.length > 0) {
-      return { root: resolve(cwd, configured), source: "env" as const }
+      const root = resolve(cwd, configured)
+      if (symlinkedNoteRoot(root)) {
+        return yield* Effect.fail(rootSymlinkError(root))
+      }
+      return { root, source: "env" as const }
     }
 
     const ancestor = findAncestorNoteRoot(cwd)
     if (ancestor !== null) {
+      if (symlinkedNoteRoot(ancestor)) {
+        return yield* Effect.fail(rootSymlinkError(ancestor))
+      }
       return { root: ancestor, source: "ancestor" as const }
     }
 
@@ -158,6 +186,10 @@ export const initializeNoteRoot = (
     const readmePath = join(absoluteRoot, "README.md")
     const gitignorePath = join(absoluteRoot, ".gitignore")
     const existed = isDirectory(absoluteRoot)
+
+    if (symlinkedNoteRoot(absoluteRoot)) {
+      return yield* Effect.fail(rootSymlinkError(absoluteRoot))
+    }
 
     try {
       mkdirSync(absoluteRoot, { recursive: true, mode: 0o755 })

@@ -10,7 +10,7 @@ import { basename, dirname, join, resolve, sep } from "node:path"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { MarkdownError, markdownError } from "./errors.js"
 import { parseMarkdownNote, type ParsedMarkdownNote } from "./note-document.js"
-import { isPathInside } from "./root.js"
+import { isPathInside, rootSymlinkError, symlinkedNoteRoot } from "./root.js"
 
 export const NOTE_SUFFIX = ".md"
 
@@ -237,6 +237,13 @@ export const listRootEntries = (
 ): Effect.Effect<ReadonlyArray<RepositoryEntry>, MarkdownError> =>
   Effect.gen(function* () {
     const absoluteRoot = resolve(root)
+    // readdir(2) follows a symlinked root, so check the root entry itself
+    // before listing anything. Scan, check, and repository startup then agree
+    // on the same typed rejection.
+    if (symlinkedNoteRoot(absoluteRoot)) {
+      return yield* Effect.fail(rootSymlinkError(absoluteRoot))
+    }
+
     let names: ReadonlyArray<string>
     try {
       names = readdirSync(absoluteRoot)
