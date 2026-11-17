@@ -500,6 +500,27 @@ test("wiki sections and citations render without persisted HTML", () => {
   )
 })
 
+test("the new-note form offers a type selector with the route type selected", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(AppRoute.NewNote({ type: Option.some("permanent") }), {
+        editor: EditorState.Open({
+          type: "permanent",
+          maybeId: Option.none(),
+          form: { title: "", content: "", reference: "", topics: "" },
+        }),
+      }),
+    ),
+    Scene.expect(Scene.role("heading", { name: "New permanent note" })).toExist(),
+    Scene.expect(Scene.role("link", { name: "Fleeting" })).toExist(),
+    Scene.expect(Scene.role("link", { name: "Literature" })).toExist(),
+    Scene.expect(Scene.role("link", { name: "Permanent" })).toExist(),
+    Scene.expect(Scene.selector("#note-title")).toHaveAccessibleName("Title"),
+    Scene.expect(Scene.selector("#note-content")).toHaveAccessibleName("Content"),
+  )
+})
+
 test("the review queue shows an inspectable diff and approve/reject controls", () => {
   Scene.scene(
     { update, view },

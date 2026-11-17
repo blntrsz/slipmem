@@ -124,7 +124,7 @@ bun test packages/server/src/app.test.ts \
   packages/server/src/config.test.ts \
   packages/web/src/main.test.ts \
   packages/web/src/route.test.ts
-# 43 pass, 0 fail, 203 assertions
+# 44 pass, 0 fail, 203 assertions
 ```
 
 The server acceptance tests cover:
@@ -147,6 +147,7 @@ The web tests cover:
 - `init` entering every route and issuing the expected bounded command;
 - route parsing and href round-trips for every page;
 - editor validation for title, type limits, literature reference, and topics;
+- the new-note type selector and field labels;
 - save request identity, saving state, list upsert, and navigation;
 - delete confirmation command identity and list removal;
 - Scene rendering for list escaping, detail by ID, delete confirmation, search,
@@ -164,7 +165,7 @@ bun test              272 pass, 0 fail, 1949 assertions, 34 files
 bun run web:build     pass (client and SSR bundles)
 ```
 
-The Phase 4-only subset was **43 pass, 0 fail, 203 assertions, 6 files** for
+The Phase 4-only subset was **44 pass, 0 fail, 203 assertions, 6 files** for
 `packages/server` and `packages/web`.
 
 ### Live production-bundle smoke test

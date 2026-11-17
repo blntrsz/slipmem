@@ -1738,6 +1738,32 @@ const editorView = (model: Model, h: HtmlBuilder<Message>): Html =>
           h.div(
             [h.Class("flex flex-col gap-4")],
             [
+              isCreating
+                ? h.div(
+                    [
+                      h.Class("flex flex-wrap items-center gap-2"),
+                      h.AriaLabel("Note type"),
+                    ],
+                    [
+                      h.span([h.Class("text-sm text-slate-400")], ["Type:"]),
+                      ...Array.map(
+                        ["fleeting", "literature", "permanent"] as const,
+                        (candidate) =>
+                          h.a(
+                            [
+                              h.Href(newNoteHref(candidate)),
+                              h.Class(
+                                candidate === type
+                                  ? "rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-slate-950"
+                                  : "rounded-lg bg-slate-800 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700",
+                              ),
+                            ],
+                            [kindLabels[candidate]],
+                          ),
+                      ),
+                    ],
+                  )
+                : h.empty,
               field(
                 "Title",
                 "note-title",
