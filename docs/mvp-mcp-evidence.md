@@ -14,8 +14,12 @@ Commits on `main`:
 1. `9c8f771` — Move MCP reads to Markdown with bounded recall.
    Markdown `list_*`, `get_*`, `search_notes`, `list_topics`, and
    `build_topic_wiki`; stdio root resolution; no SQLite migrations at startup.
-2. This commit — MCP writes, approval integration, HTTP registration, tests, and
-   docs.
+2. `e6b2260` — Add approval-governed MCP writes over Markdown.
+   Direct fleeting/literature writes, pending permanent/delete proposals,
+   provenance, per-kind policy, and write tests.
+3. `91e18f6` — Share MCP registrations over HTTP and document Phase 3.
+   `makeMcpHttp`, the shared HTTP integration test, README, and this evidence.
+4. `88035a8` — Fail closed on an unexpected direct-delete policy result.
 
 Files owned by this work:
 
