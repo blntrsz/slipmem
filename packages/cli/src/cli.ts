@@ -14,6 +14,7 @@ import { newCommand } from "./commands/new.js"
 import { searchCommand } from "./commands/search.js"
 import { showCommand } from "./commands/show.js"
 import { topicsCommand } from "./commands/topics.js"
+import { wikiCommand } from "./commands/wiki.js"
 import type { CliContext } from "./context.js"
 import { CliUnavailableError, CliUsageError, usageError } from "./errors.js"
 import {
@@ -33,6 +34,7 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   searchCommand,
   topicsCommand,
   checkCommand,
+  wikiCommand,
 ]
 
 const commandByName = (
