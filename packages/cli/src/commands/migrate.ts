@@ -84,6 +84,11 @@ const writeReportHuman = (
   }
   if (report.dryRun) {
     writeLine(io, "  verification: not applicable (dry run writes no files)")
+  } else if (!report.verification.verified) {
+    writeLine(
+      io,
+      "  verification: not run (the import stopped before writing any note files)",
+    )
   } else {
     writeLine(
       io,

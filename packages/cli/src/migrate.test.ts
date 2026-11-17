@@ -191,6 +191,19 @@ describe("slipmem migrate sqlite", () => {
     const refused = parseJson<{ report: MigrationReport }>(second.stdout)
     expect(refused.report.error?.code).toBe("root-not-empty")
 
+    const refusedHuman = await run(base, [
+      "migrate",
+      "sqlite",
+      "--db",
+      dbPath,
+      "--dir",
+      root,
+    ])
+    expect(refusedHuman.code).toBe(1)
+    expect(refusedHuman.stdout).toContain("root-not-empty")
+    expect(refusedHuman.stdout).toContain("verification: not run")
+    expect(refusedHuman.stdout).not.toContain("verification: OK")
+
     const merged = await run(base, [
       "migrate",
       "sqlite",
