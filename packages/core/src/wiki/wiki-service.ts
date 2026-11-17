@@ -7,10 +7,15 @@ import {
 } from "../markdown/repository.js"
 import { wikiError, type WikiError } from "./errors.js"
 import {
+  boundWikiText,
   extractiveSections,
   renderWikiMarkdown,
+  truncateWikiMarkdownSafely,
   wikiSourceFromNote,
+  MAX_WIKI_CITATION_PATH_CHARS,
   MAX_WIKI_OUTPUT_CHARS,
+  MAX_WIKI_STRUCTURED_CHARS,
+  type WikiEmptyReason,
   type WikiSectionDraft,
 } from "./render.js"
 import {
@@ -45,6 +50,12 @@ export interface WikiServiceConfig {
   /** Exact model ID adapters. An unregistered model ID fails closed. */
   readonly modelAdapters?: ReadonlyArray<SynthesisModelAdapter>
   readonly agentRunner?: SynthesisAgentRunner
+  /**
+   * Documented unsafe escape hatch. When true the configured agent runs
+   * directly with the slipmem user's filesystem privileges instead of a probed
+   * OS sandbox. It is off by default.
+   */
+  readonly allowUnsandboxedAgent?: boolean
   readonly agent?: {
     readonly timeoutMs?: number
     readonly maxOutputBytes?: number
@@ -82,7 +93,10 @@ const pair = (
 ): Markdown.WikiSource => wikiSourceFromNote(root, note)
 
 const citationPath = (root: string) => (note: ParsedMarkdownNote) =>
-  wikiCitationPath(root, note)
+  boundWikiText(
+    wikiCitationPath(root, note),
+    MAX_WIKI_CITATION_PATH_CHARS,
+  )
 
 const emptyPage = (input: {
   readonly topic: string
@@ -90,6 +104,8 @@ const emptyPage = (input: {
   readonly mode: Markdown.WikiMode
   readonly suggestions: ReadonlyArray<string>
   readonly omittedSentences?: number
+  readonly emptyReason?: WikiEmptyReason
+  readonly truncated?: boolean
 }): Markdown.WikiPage => {
   const markdown = renderWikiMarkdown({
     topic: input.topic,
@@ -101,6 +117,10 @@ const emptyPage = (input: {
     ...(input.omittedSentences === undefined
       ? {}
       : { omittedSentences: input.omittedSentences }),
+    ...(input.emptyReason === undefined
+      ? {}
+      : { emptyReason: input.emptyReason }),
+    ...(input.truncated === undefined ? {} : { truncated: input.truncated }),
   })
   return {
     topic: input.topic,
@@ -236,9 +256,14 @@ export const makeWikiService = (
         }
 
         const runner = config.agentRunner ?? runSynthesisAgent
+        const unsafeUnsandboxed =
+          config.allowUnsandboxedAgent === true ||
+          synthesis.unsafeUnsandboxed === true
         const output = yield* runner(request, {
           command: synthesis.command,
           args: synthesis.args,
+          unsafeUnsandboxed,
+          hidePaths: [repository.root],
           ...(config.agent?.timeoutMs === undefined
             ? {}
             : { timeoutMs: config.agent.timeoutMs }),
@@ -248,6 +273,103 @@ export const makeWikiService = (
           ...(config.agent?.cwd === undefined ? {} : { cwd: config.agent.cwd }),
         })
         return yield* parseAgentOutput(output)
+      })
+
+    /**
+     * Assembles a page while enforcing both the Markdown and structured-output
+     * bounds. It never slices a section or a citation: when the page is too
+     * large it drops whole trailing sections and drops sources that no longer
+     * have a citing section.
+     */
+    const assemblePage = (input: {
+      readonly topic: string
+      readonly generatedAt: string
+      readonly mode: Markdown.WikiMode
+      readonly notes: ReadonlyArray<ParsedMarkdownNote>
+      readonly sections: ReadonlyArray<WikiSectionDraft>
+      readonly omittedSentences?: number
+      readonly emptyReason?: WikiEmptyReason
+      readonly truncated?: boolean
+    }): Effect.Effect<Markdown.WikiPage, WikiError> =>
+      Effect.gen(function* () {
+        if (input.sections.length === 0) {
+          return yield* decodePage(
+            emptyPage({
+              topic: input.topic,
+              generatedAt: input.generatedAt,
+              mode: input.mode,
+              suggestions: [],
+              ...(input.omittedSentences === undefined
+                ? {}
+                : { omittedSentences: input.omittedSentences }),
+              ...(input.emptyReason === undefined
+                ? {}
+                : { emptyReason: input.emptyReason }),
+              ...(input.truncated === undefined
+                ? {}
+                : { truncated: input.truncated }),
+            }),
+          )
+        }
+
+        let sections = [...input.sections]
+        let truncated = input.truncated === true
+        while (sections.length > 0) {
+          const usedIds = new Set(
+            sections.flatMap((section) =>
+              section.citations.map((citation) => citation.noteId),
+            ),
+          )
+          const sources = input.notes
+            .filter((note) => usedIds.has(note.id))
+            .map((note) => pair(repository.root, note))
+          const markdown = truncateWikiMarkdownSafely(
+            renderWikiMarkdown({
+              topic: input.topic,
+              generatedAt: input.generatedAt,
+              mode: input.mode,
+              sources,
+              sections,
+              ...(input.omittedSentences === undefined
+                ? {}
+                : { omittedSentences: input.omittedSentences }),
+              truncated: truncated || sections.length < input.sections.length,
+            }),
+            maxOutputChars,
+          )
+          const page: Markdown.WikiPage = {
+            topic: input.topic,
+            generatedAt: input.generatedAt,
+            mode: input.mode,
+            noteCount: sources.length,
+            sources,
+            sections,
+            markdown,
+          }
+
+          if (
+            markdown.length <= maxOutputChars &&
+            JSON.stringify(page).length <= MAX_WIKI_STRUCTURED_CHARS
+          ) {
+            return yield* decodePage(page)
+          }
+
+          sections = sections.slice(0, -1)
+          truncated = true
+        }
+
+        return yield* decodePage(
+          emptyPage({
+            topic: input.topic,
+            generatedAt: input.generatedAt,
+            mode: input.mode,
+            suggestions: [],
+            emptyReason: "output-truncated",
+            ...(input.omittedSentences === undefined
+              ? {}
+              : { omittedSentences: input.omittedSentences }),
+          }),
+        )
       })
 
     const build = (
@@ -270,30 +392,20 @@ export const makeWikiService = (
         }
 
         if (mode === "extractive") {
-          const { sections, used, truncated } = extractiveSections(selection, {
+          const { sections, truncated } = extractiveSections(selection, {
             root: repository.root,
             ...(config.excerptChars === undefined
               ? {}
               : { excerptChars: config.excerptChars }),
             maxOutputChars,
           })
-          const sources = used.map((note) => pair(repository.root, note))
-          const markdown = renderWikiMarkdown({
+          return yield* assemblePage({
             topic: selection.topic,
             generatedAt,
             mode,
-            sources,
+            notes: selection.notes,
             sections,
             truncated,
-          })
-          return yield* decodePage({
-            topic: selection.topic,
-            generatedAt,
-            mode,
-            noteCount: sources.length,
-            sources,
-            sections,
-            markdown: boundMarkdown(markdown, maxOutputChars),
           })
         }
 
@@ -301,15 +413,15 @@ export const makeWikiService = (
         const validation = yield* validateSynthesisOutput(raw, selection.notes)
 
         if (validation.sentences.length === 0) {
-          return yield* decodePage(
-            emptyPage({
-              topic: selection.topic,
-              generatedAt,
-              mode,
-              suggestions: [],
-              omittedSentences: validation.omitted,
-            }),
-          )
+          return yield* assemblePage({
+            topic: selection.topic,
+            generatedAt,
+            mode,
+            notes: selection.notes,
+            sections: [],
+            omittedSentences: validation.omitted,
+            emptyReason: "no-supported-sentences",
+          })
         }
 
         const bounded = boundSentences(
@@ -321,29 +433,14 @@ export const makeWikiService = (
           selection.notes,
           citationPath(repository.root),
         )
-        const usedNotes = selection.notes.filter((note) =>
-          grouped.usedNoteIds.includes(note.id),
-        )
-        const sources = usedNotes.map((note) => pair(repository.root, note))
-        const sections: ReadonlyArray<WikiSectionDraft> = grouped.sections
-        const markdown = renderWikiMarkdown({
+        return yield* assemblePage({
           topic: selection.topic,
           generatedAt,
           mode,
-          sources,
-          sections,
+          notes: selection.notes,
+          sections: grouped.sections,
           omittedSentences: validation.omitted + bounded.omitted,
           truncated: bounded.omitted > 0,
-        })
-
-        return yield* decodePage({
-          topic: selection.topic,
-          generatedAt,
-          mode,
-          noteCount: sources.length,
-          sources,
-          sections,
-          markdown: boundMarkdown(markdown, maxOutputChars),
         })
       })
 
@@ -383,14 +480,6 @@ const parseAgentOutput = (
       }),
     )
   }
-}
-
-const boundMarkdown = (markdown: string, maxOutputChars: number): string => {
-  if (markdown.length <= maxOutputChars) {
-    return markdown
-  }
-  const suffix = "\n\n_Output truncated at the wiki bound._"
-  return `${markdown.slice(0, Math.max(0, maxOutputChars - suffix.length)).trimEnd()}${suffix}`
 }
 
 interface BoundedSentences {

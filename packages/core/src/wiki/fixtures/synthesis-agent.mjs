@@ -46,7 +46,15 @@ const quote = sentence === undefined ? "" : `${sentence}.`
 const mixed = {
   sentences: [
     {
-      text: "Recall should cite a supporting note.",
+      // Extractive: the claim is the source sentence itself.
+      text: quote,
+      noteId: first?.id ?? "missing",
+      quote,
+    },
+    {
+      // Opposite claim paired with a real span. The validator must omit it
+      // because substring presence alone is not semantic support.
+      text: "Every recall operation has no hard limit.",
       noteId: first?.id ?? "missing",
       quote,
     },
@@ -69,14 +77,16 @@ const mixed = {
 }
 
 if (mode === "many") {
-  const sentences = []
-  for (let index = 0; index < 100; index++) {
-    sentences.push({
-      text: `Bounded synthesized sentence number ${index + 1}.`,
+  const body = first?.body ?? ""
+  const sourceSentences = body.match(/[^.!?]+[.!?]/g) ?? []
+  const sentences = sourceSentences.slice(0, 100).map((sourceSentence) => {
+    const trimmed = sourceSentence.trim()
+    return {
+      text: trimmed,
       noteId: first?.id ?? "missing",
-      quote,
-    })
-  }
+      quote: trimmed,
+    }
+  })
   process.stdout.write(JSON.stringify({ sentences }))
   process.exit(0)
 }

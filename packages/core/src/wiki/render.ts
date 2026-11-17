@@ -5,12 +5,28 @@ import { wikiCitationPath } from "./selection.js"
 
 export const MAX_WIKI_EXCERPT_CHARS = 600
 export const MAX_WIKI_OUTPUT_CHARS = 20_000
+/** Bound for the whole structured page, including every nested field. */
+export const MAX_WIKI_STRUCTURED_CHARS = 2 * MAX_WIKI_OUTPUT_CHARS
 export const MAX_WIKI_HEADING_CHARS = 120
+export const MAX_WIKI_SOURCE_TITLE_CHARS = 200
+export const MAX_WIKI_CITATION_PATH_CHARS = 300
+export const MAX_WIKI_TOPIC_CHARS = 120
 export const MAX_SYNTHESIS_SENTENCES = 60
 export const MAX_SYNTHESIS_SENTENCE_CHARS = 500
 
 const normalizeSpan = (value: string): string =>
   value.replace(/\s+/g, " ").trim()
+
+/** Bounds an arbitrary metadata string at a word boundary when possible. */
+export const boundWikiText = (value: string, maxChars: number): string => {
+  const collapsed = normalizeSpan(value)
+  if (collapsed.length <= maxChars) {
+    return collapsed
+  }
+  const head = collapsed.slice(0, maxChars)
+  const wordEnd = head.lastIndexOf(" ")
+  return (wordEnd > Math.floor(maxChars * 0.6) ? head.slice(0, wordEnd) : head).trim()
+}
 
 /** Whitespace-insensitive comparison used by the exact-span validator. */
 export const normalizeSupportSpan = normalizeSpan
@@ -110,7 +126,10 @@ export const extractiveSections = (
       continue
     }
 
-    const citationPath = wikiCitationPath(options.root, note)
+    const citationPath = boundWikiText(
+      wikiCitationPath(options.root, note),
+      MAX_WIKI_CITATION_PATH_CHARS,
+    )
     const heading = sanitizeHeading(note.metadata.title)
     const markdown = blockquote(excerpt)
     sections.push({
@@ -130,11 +149,53 @@ export const wikiSourceFromNote = (
   note: ParsedMarkdownNote,
 ): Markdown.WikiSource => ({
   id: note.id,
-  path: wikiCitationPath(root, note),
+  path: boundWikiText(
+    wikiCitationPath(root, note),
+    MAX_WIKI_CITATION_PATH_CHARS,
+  ),
   type: note.metadata.type,
-  title: note.metadata.title,
+  title:
+    boundWikiText(note.metadata.title, MAX_WIKI_SOURCE_TITLE_CHARS) ||
+    "Untitled",
   updatedAt: Markdown.toUtcTimestamp(note.info.updatedAt).isoTimestamp,
 })
+
+const looksLikeIncompleteCitation = (line: string): boolean => {
+  const trimmed = line.trim()
+  if (trimmed.length === 0) {
+    return false
+  }
+  if (trimmed.includes("[[") && !trimmed.includes("]]")) {
+    return true
+  }
+  return trimmed.includes("(`") && !trimmed.includes("`)")
+}
+
+/**
+ * Last-resort bound for rendered Markdown. It cuts only at a line boundary and
+ * drops a trailing partial citation line, so a truncated page never contains a
+ * citation that is cut off midway and no longer addressable.
+ */
+export const truncateWikiMarkdownSafely = (
+  markdown: string,
+  maxChars: number,
+): string => {
+  if (markdown.length <= maxChars) {
+    return markdown
+  }
+  const suffix = "\n\n_Output truncated at the wiki bound._"
+  const head = markdown.slice(0, Math.max(0, maxChars - suffix.length))
+  const lines = head.slice(0, head.lastIndexOf("\n") + 1).split("\n")
+  while (lines.length > 0 && looksLikeIncompleteCitation(lines[lines.length - 1]!)) {
+    lines.pop()
+  }
+  return `${lines.join("\n").trimEnd()}${suffix}`
+}
+
+export type WikiEmptyReason =
+  | "no-matches"
+  | "no-supported-sentences"
+  | "output-truncated"
 
 export interface RenderPageInput {
   readonly topic: string
@@ -144,6 +205,7 @@ export interface RenderPageInput {
   readonly sections: ReadonlyArray<WikiSectionDraft>
   readonly suggestions?: ReadonlyArray<string>
   readonly omittedSentences?: number
+  readonly emptyReason?: WikiEmptyReason
   readonly truncated?: boolean
 }
 
@@ -160,6 +222,7 @@ export const renderWikiMarkdown = ({
   sections,
   suggestions,
   omittedSentences,
+  emptyReason,
   truncated,
 }: RenderPageInput): string => {
   const noteWord = sources.length === 1 ? "note" : "notes"
@@ -175,9 +238,18 @@ export const renderWikiMarkdown = ({
 
   if (sections.length === 0) {
     lines.push("")
-    if (omittedSentences !== undefined && omittedSentences > 0) {
+    if (
+      emptyReason === "no-supported-sentences" ||
+      (emptyReason === undefined && omittedSentences !== undefined && omittedSentences > 0)
+    ) {
       lines.push(
-        `No synthesized sentences passed citation validation (${omittedSentences} omitted). Use extractive mode for a fully quoted fallback.`,
+        omittedSentences === undefined || omittedSentences === 0
+          ? "The synthesizer returned no sentences supported by the selected notes. No synthesized prose was generated; use extractive mode for a fully quoted fallback."
+          : `No synthesized sentences passed citation validation (${omittedSentences} omitted). Use extractive mode for a fully quoted fallback.`,
+      )
+    } else if (emptyReason === "output-truncated") {
+      lines.push(
+        "The selected notes could not fit within the wiki output bound, so no sections were rendered. Raise the limit only if the output bound allows it, or read the notes directly.",
       )
     } else if (suggestions !== undefined && suggestions.length > 0) {
       lines.push(

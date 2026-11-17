@@ -13,8 +13,14 @@ import {
   type MarkdownNoteRepositoryShape,
 } from "../markdown/repository.js"
 import {
+  agentEnvironment,
+  bubblewrapArgs,
   makeWikiService,
+  MAX_WIKI_OUTPUT_CHARS,
+  MAX_WIKI_SOURCE_TITLE_CHARS,
+  MAX_WIKI_STRUCTURED_CHARS,
   resolveSynthesisSelection,
+  runSynthesisAgent,
   type SynthesisSelection,
   type WikiError,
   type WikiServiceShape,
@@ -80,6 +86,7 @@ const wiki = (
   options: {
     readonly synthesis?: SynthesisSelection
     readonly mode?: "extractive" | "synthesized"
+    readonly allowUnsandboxedAgent?: boolean
     readonly modelAdapters?: ReadonlyArray<{
       modelId: string
       synthesize: (request: {
@@ -103,6 +110,9 @@ const wiki = (
         ? {}
         : { synthesis: options.synthesis }),
       ...(options.mode === undefined ? {} : { mode: options.mode }),
+      ...(options.allowUnsandboxedAgent === undefined
+        ? {}
+        : { allowUnsandboxedAgent: options.allowUnsandboxedAgent }),
       ...(options.modelAdapters === undefined
         ? {}
         : { modelAdapters: options.modelAdapters }),
@@ -345,6 +355,43 @@ describe("extractive topic wiki", () => {
       cleanup(fixture)
     }
   })
+
+  test("bounds every structured field and never leaves a partial citation", async () => {
+    const fixture = await createFixture()
+    try {
+      const hugeTitle = "H".repeat(30_000)
+      await createNote(fixture, {
+        title: hugeTitle,
+        content: "A bounded body with a citable sentence.",
+        topics: ["huge-title"],
+      })
+      const service = await wiki(fixture)
+      const page = await Effect.runPromise(
+        service.build({ topic: "huge-title" }),
+      )
+
+      expect(page.sources).toHaveLength(1)
+      expect(page.sources[0]!.title.length).toBeLessThanOrEqual(
+        MAX_WIKI_SOURCE_TITLE_CHARS,
+      )
+      expect(page.sections[0]!.heading.length).toBeLessThanOrEqual(120)
+      expect(page.markdown.length).toBeLessThanOrEqual(MAX_WIKI_OUTPUT_CHARS)
+      expect(JSON.stringify(page).length).toBeLessThanOrEqual(
+        MAX_WIKI_STRUCTURED_CHARS,
+      )
+
+      const citationLines = page.markdown
+        .split("\n")
+        .filter((line) => line.startsWith("Source: "))
+      expect(citationLines.length).toBeGreaterThan(0)
+      for (const line of citationLines) {
+        expect(line).toMatch(/^Source: \[\[[^\]]+\]\] \(`[^`]+`\)$/)
+      }
+      expect(page.markdown).not.toContain("H".repeat(MAX_WIKI_SOURCE_TITLE_CHARS + 1))
+    } finally {
+      cleanup(fixture)
+    }
+  })
 })
 
 describe("synthesized topic wiki", () => {
@@ -359,6 +406,7 @@ describe("synthesized topic wiki", () => {
       })
       const recordPath = join(fixture.base, "argv.json")
       const service = await wiki(fixture, {
+        allowUnsandboxedAgent: true,
         synthesis: {
           kind: "agent",
           command: process.execPath,
@@ -376,17 +424,18 @@ describe("synthesized topic wiki", () => {
       expect(page.noteCount).toBe(1)
       expect(page.sections).toHaveLength(1)
       expect(page.sections[0]!.markdown).toContain(
-        "Recall should cite a supporting note.",
+        "Every recall operation has a hard limit.",
       )
       expect(page.sections[0]!.citations[0]!.noteId).toBe(note.id)
       expect(page.sections[0]!.citations[0]!.excerpt).toBe(
         "Every recall operation has a hard limit.",
       )
-      expect(page.markdown).toContain("Recall should cite a supporting note.")
+      expect(page.markdown).toContain("Every recall operation has a hard limit.")
       expect(page.markdown).toContain(`Source: [[${note.id}]]`)
+      expect(page.markdown).not.toContain("Every recall operation has no hard limit.")
       expect(page.markdown).not.toContain("Every deletion is safe without approval.")
       expect(page.markdown).not.toContain("An unknown note supports this claim.")
-      expect(page.markdown).toContain("3 synthesized sentences did not pass citation validation")
+      expect(page.markdown).toContain("4 synthesized sentences did not pass citation validation")
 
       const record = JSON.parse(
         await Bun.file(recordPath).text(),
@@ -404,11 +453,15 @@ describe("synthesized topic wiki", () => {
     try {
       await createNote(fixture, {
         title: "Many claims",
-        content: "Every recall operation has a hard limit. A second sentence.",
+        content: Array.from(
+          { length: 100 },
+          (_, index) => `Bounded claim ${index + 1}.`,
+        ).join(" "),
         topics: ["many"],
       })
       const recordPath = join(fixture.base, "argv-many.json")
       const service = await wiki(fixture, {
+        allowUnsandboxedAgent: true,
         synthesis: {
           kind: "agent",
           command: process.execPath,
@@ -425,6 +478,171 @@ describe("synthesized topic wiki", () => {
     } finally {
       cleanup(fixture)
     }
+  })
+
+  test("rejects an opposite claim paired with a real source span", async () => {
+    const fixture = await createFixture()
+    try {
+      const note = await createNote(fixture, {
+        title: "Caching safety",
+        content: "Caching is not dangerous for this workload.",
+        topics: ["caching-safety"],
+      })
+      const service = await wiki(fixture, {
+        synthesis: { kind: "model", modelId: "opposite-claim-model" },
+        modelAdapters: [
+          {
+            modelId: "opposite-claim-model",
+            synthesize: () =>
+              Effect.succeed({
+                sentences: [
+                  {
+                    text: "Caching is dangerous for this workload.",
+                    noteId: note.id,
+                    quote: "Caching is not dangerous for this workload.",
+                  },
+                ],
+              }),
+          },
+        ],
+      })
+
+      const page = await Effect.runPromise(
+        service.build({ topic: "caching-safety", mode: "synthesized" }),
+      )
+      expect(page.sections).toEqual([])
+      expect(page.markdown).not.toContain("Caching is dangerous")
+      expect(page.markdown).toContain("No synthesized sentences passed citation validation")
+      expect(page.markdown).toContain("1 omitted")
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("accepts only conservative extractive normalization, not paraphrase", async () => {
+    const fixture = await createFixture()
+    try {
+      const note = await createNote(fixture, {
+        title: "Caching claim",
+        content: "Caching is safe for this workload.",
+        topics: ["caching-claim"],
+      })
+      const service = await wiki(fixture, {
+        synthesis: { kind: "model", modelId: "normalization-model" },
+        modelAdapters: [
+          {
+            modelId: "normalization-model",
+            synthesize: () =>
+              Effect.succeed({
+                sentences: [
+                  {
+                    text: "\u201cCaching is safe for this workload.\u201d",
+                    noteId: note.id,
+                    quote: "Caching is safe for this workload.",
+                  },
+                  {
+                    text: "Caching is generally a safe optimization.",
+                    noteId: note.id,
+                    quote: "Caching is safe for this workload.",
+                  },
+                ],
+              }),
+          },
+        ],
+      })
+
+      const page = await Effect.runPromise(
+        service.build({ topic: "caching-claim", mode: "synthesized" }),
+      )
+      expect(page.sections).toHaveLength(1)
+      expect(page.markdown).toContain("Caching is safe for this workload.")
+      expect(page.markdown).not.toContain("generally a safe optimization")
+      expect(page.markdown).toContain("1 synthesized sentence did not pass citation validation")
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("an empty synthesizer result says it produced no supported output", async () => {
+    const fixture = await createFixture()
+    try {
+      await createNote(fixture, {
+        title: "Empty synthesis",
+        content: "A note exists but the synthesizer returns nothing.",
+        topics: ["empty-synthesis"],
+      })
+      const service = await wiki(fixture, {
+        synthesis: { kind: "model", modelId: "empty-model" },
+        modelAdapters: [
+          {
+            modelId: "empty-model",
+            synthesize: () => Effect.succeed({ sentences: [] }),
+          },
+        ],
+      })
+
+      const page = await Effect.runPromise(
+        service.build({ topic: "empty-synthesis", mode: "synthesized" }),
+      )
+      expect(page.noteCount).toBe(0)
+      expect(page.sections).toEqual([])
+      expect(page.markdown).toContain("returned no sentences supported by the selected notes")
+      expect(page.markdown).not.toContain("No notes matched this topic")
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("refuses an unsandboxed agent unless the unsafe opt-in is explicit", async () => {
+    const error = await failure(
+      runSynthesisAgent(
+        {
+          topic: "sandbox",
+          notes: [
+            {
+              id: "20261117213000-sandbox",
+              type: "permanent",
+              title: "Sandbox",
+              path: ".slipmem/20261117213000-sandbox.md",
+              body: "A note.",
+            },
+          ],
+        },
+        {
+          command: process.execPath,
+          args: [],
+          sandbox: null,
+        },
+      ),
+    )
+    expect(error._tag).toBe("WikiError")
+    if (error._tag === "WikiError") {
+      expect(error.code).toBe("synthesis-config")
+      expect(error.message).toContain("SLIPMEM_WIKI_AGENT_UNSAFE=1")
+      expect(error.message).toContain("no working OS sandbox")
+    }
+  })
+
+  test("builds a bubblewrap invocation without inheriting process secrets", () => {
+    const args = bubblewrapArgs({
+      command: "/usr/bin/node",
+      args: ["/tmp/agent.mjs"],
+      hidePaths: ["/home/dev/src/slipmem/.slipmem"],
+    })
+    expect(args).toContain("--unshare-all")
+    expect(args).toContain("--clearenv")
+    expect(args).toContain("--ro-bind")
+    expect(args).toContain("/home/dev/src/slipmem/.slipmem")
+    expect(args.slice(-2)).toEqual(["/usr/bin/node", "/tmp/agent.mjs"])
+
+    const env = agentEnvironment({
+      PATH: "/usr/bin",
+      HOME: "/home/dev",
+      SLIPMEM_OPENAI_API_KEY: "secret",
+    })
+    expect(env.PATH).toBe("/usr/bin")
+    expect(env.SLIPMEM_OPENAI_API_KEY).toBeUndefined()
+    expect(JSON.stringify(env)).not.toContain("secret")
   })
 
   test("fails closed for an unregistered model ID and never invents content", async () => {
@@ -522,6 +740,7 @@ describe("synthesized topic wiki", () => {
       })
       const recordPath = join(fixture.base, "argv-fail.json")
       const failing = await wiki(fixture, {
+        allowUnsandboxedAgent: true,
         synthesis: {
           kind: "agent",
           command: process.execPath,
@@ -538,6 +757,7 @@ describe("synthesized topic wiki", () => {
       }
 
       const badJson = await wiki(fixture, {
+        allowUnsandboxedAgent: true,
         synthesis: {
           kind: "agent",
           command: process.execPath,
@@ -569,7 +789,18 @@ describe("synthesized topic wiki", () => {
       kind: "agent",
       command: "/usr/bin/local-agent",
       args: ["--model", "fixture"],
+      unsafeUnsandboxed: false,
     })
+
+    const unsafe = await Effect.runPromise(
+      resolveSynthesisSelection({
+        SLIPMEM_WIKI_SYNTHESIS: "agent",
+        SLIPMEM_WIKI_AGENT: "/usr/bin/local-agent",
+        SLIPMEM_WIKI_AGENT_UNSAFE: "1",
+      }),
+    )
+    expect(unsafe.selection).toMatchObject({ unsafeUnsandboxed: true })
+    expect(unsafe.warning).toContain("disables the OS sandbox")
 
     const missing = await failure(
       resolveSynthesisSelection({ SLIPMEM_WIKI_SYNTHESIS: "agent" }),
