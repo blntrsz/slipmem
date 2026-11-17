@@ -4,12 +4,12 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./note-tools": "./src/note-tools.ts"
+    ".": "./src/index.ts"
   },
   "dependencies": {
     "@effect/sql-sqlite-bun": "catalog:",
     "@slipmem/core": "workspace:*",
+    "@slipmem/mcp": "workspace:*",
     "@slipmem/schemas": "workspace:*",
     "drizzle-orm": "catalog:",
     "effect": "catalog:"
