@@ -364,6 +364,66 @@ describe("SQLite to Markdown importer", () => {
     expect(manifestFor(error.report!)["status"]).toBe("failed")
   })
 
+  test("preserves large integers and blobs in notes and quarantine", () => {
+    const { directory, path } = createDatabase(`
+      CREATE TABLE permanent_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL,
+        extension_huge INTEGER,
+        extension_blob BLOB
+      );
+      INSERT INTO permanent_note VALUES
+        (
+          'exact-valid',
+          'Exact valid',
+          'Body kept.',
+          1794943845000,
+          1794943845000,
+          9223372036854775807,
+          x'00ff10'
+        ),
+        (
+          'exact-invalid',
+          '   ',
+          'Invalid text kept.',
+          1794943846000,
+          1794943846000,
+          -9223372036854775808,
+          x'deadbeef'
+        );
+    `)
+    const target = join(directory, "notes")
+
+    const error = caughtImport({
+      databasePath: path,
+      noteRoot: target,
+      now: () => FIXED_NOW,
+    })
+
+    expect(error.code).toBe("invalid-rows")
+    expect(error.report?.counts.writtenNotes).toBe(1)
+
+    const note = Effect.runSync(
+      readNoteFile(target, "20261117193045-exact-valid"),
+    )
+    expect(note?.unknown["legacyColumns"]).toEqual({
+      extension_huge: { $bigint: "9223372036854775807" },
+      extension_blob: { $base64: "AP8Q" },
+    })
+
+    const quarantine = JSON.parse(
+      readFileSync(error.report!.quarantine.files[0]!.path, "utf8"),
+    ) as Record<string, unknown>
+    expect(quarantine["legacyId"]).toBe("exact-invalid")
+    expect(quarantine["row"]).toMatchObject({
+      extension_huge: { $bigint: "-9223372036854775808" },
+      extension_blob: { $base64: "3q2+7w==" },
+    })
+  })
+
   test("refuses a non-empty root without merge and writes nothing", () => {
     const { directory, path } = createDatabase(fixtureSql("current.sql"))
     const target = join(directory, "notes")

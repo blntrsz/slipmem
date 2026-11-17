@@ -324,6 +324,13 @@ const sha256String = (value: string): string =>
 const sha256File = (path: string): string =>
   createHash("sha256").update(readFileSync(path)).digest("hex")
 
+/** Converts a SQLite INTEGER count read with safeIntegers enabled. */
+const countSqliteInteger = (value: unknown): number => {
+  if (typeof value === "bigint") return Number(value)
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  return 0
+}
+
 const canonicalBody = (body: string): string =>
   body.trim().replace(/\r\n?/g, "\n")
 
@@ -586,7 +593,10 @@ const createSourceBackup = (
 
   const bytes = statSync(backupPath).size
   const sha256 = sha256File(backupPath)
-  const verify = new Database(backupPath, { readonly: true })
+  const verify = new Database(backupPath, {
+    readonly: true,
+    safeIntegers: true,
+  })
   let integrity = ""
   const tableCounts: Record<string, number> = {}
   try {
@@ -603,12 +613,13 @@ const createSourceBackup = (
     }
 
     for (const table of plan.source.tables) {
-      const count =
+      const count = countSqliteInteger(
         verify
-          .query<{ readonly count: number }, []>(
+          .query<{ readonly count: unknown }, []>(
             `SELECT COUNT(*) AS count FROM "${table.name}"`,
           )
-          .get()?.count ?? 0
+          .get()?.count,
+      )
       tableCounts[table.name] = count
       if (count !== table.rowCount) {
         throw new Error(

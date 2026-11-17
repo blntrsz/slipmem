@@ -369,16 +369,43 @@ const sourceShape = (
   return shapes.has("extended") ? "extended" : "bootstrap"
 }
 
-const timestamp = (
-  value: SqliteValue,
-): Markdown.UtcTimestamp | null => {
-  if (typeof value !== "number" || !Number.isFinite(value)) return null
+/**
+ * Reads an epoch-millisecond value without losing integer identity.
+ *
+ * The source connection uses `safeIntegers`, so SQLite INTEGER values arrive as
+ * bigints. A valid JavaScript Date is always within the safe-integer range; a
+ * larger bigint is out of range and is reported as an invalid timestamp rather
+ * than rounded.
+ */
+const timestampMillis = (value: SqliteValue): number | null => {
+  let millis: number
+  if (typeof value === "bigint") {
+    if (
+      value > BigInt(Number.MAX_SAFE_INTEGER) ||
+      value < BigInt(Number.MIN_SAFE_INTEGER)
+    ) {
+      return null
+    }
+    millis = Number(value)
+  } else if (typeof value === "number" && Number.isFinite(value)) {
+    millis = value
+  } else {
+    return null
+  }
 
   try {
-    return Markdown.toUtcTimestamp(value)
+    Markdown.toUtcTimestamp(millis)
+    return millis
   } catch {
     return null
   }
+}
+
+/** Converts a SQLite INTEGER count (a bigint with safeIntegers) to a number. */
+const countValue = (value: unknown): number => {
+  if (typeof value === "bigint") return Number(value)
+  if (typeof value === "number" && Number.isFinite(value)) return value
+  return 0
 }
 
 const readProvenance = (
@@ -664,7 +691,9 @@ const planRow = (
   }
 
   const createdRaw = row["created_at"]
-  const created = timestamp(createdRaw ?? null)
+  const createdMillis = timestampMillis(createdRaw ?? null)
+  const created =
+    createdMillis === null ? null : Markdown.toUtcTimestamp(createdMillis)
   if (created === null) {
     problems.push(
       problem(
@@ -677,7 +706,9 @@ const planRow = (
   }
 
   const updatedRaw = row["updated_at"]
-  const updated = timestamp(updatedRaw ?? null)
+  const updatedMillis = timestampMillis(updatedRaw ?? null)
+  const updated =
+    updatedMillis === null ? null : Markdown.toUtcTimestamp(updatedMillis)
   if (updated === null) {
     problems.push(
       problem(
@@ -690,11 +721,9 @@ const planRow = (
   }
 
   if (
-    typeof createdRaw === "number" &&
-    Number.isFinite(createdRaw) &&
-    typeof updatedRaw === "number" &&
-    Number.isFinite(updatedRaw) &&
-    updatedRaw < createdRaw
+    createdMillis !== null &&
+    updatedMillis !== null &&
+    updatedMillis < createdMillis
   ) {
     problems.push(
       problem(
@@ -726,7 +755,7 @@ const planRow = (
     title,
     body,
     reference,
-    createdAt: createdRaw as number,
+    createdAt: createdMillis as number,
     created,
     updated,
     provenance: preservation.provenance,
@@ -781,7 +810,10 @@ export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
   const issues: Array<MigrationPlanIssue> = []
 
   try {
-    const database = new Database(databasePath, { readonly: true })
+    const database = new Database(databasePath, {
+      readonly: true,
+      safeIntegers: true,
+    })
     try {
       // Belt and braces: the connection is already read-only. This pragma also
       // protects against accidental writes from future edits to this module.
@@ -828,11 +860,13 @@ export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
           const missing = definition.requiredColumns.filter(
             (column) => !columns.includes(column),
           )
-          const rowCount = database
-            .query<{ readonly count: number }, []>(
-              `SELECT COUNT(*) AS count FROM "${definition.name}"`,
-            )
-            .get()?.count ?? 0
+          const rowCount = countValue(
+            database
+              .query<{ readonly count: unknown }, []>(
+                `SELECT COUNT(*) AS count FROM "${definition.name}"`,
+              )
+              .get()?.count,
+          )
           tables.push({
             name: definition.name,
             rowCount,

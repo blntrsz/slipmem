@@ -407,6 +407,50 @@ describe("SQLite migration planning", () => {
     ])
   })
 
+  test("preserves integers above 2^53 and blobs exactly", () => {
+    const { path } = createDatabase(`
+      CREATE TABLE permanent_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        extension_huge INTEGER,
+        extension_blob BLOB
+      );
+      INSERT INTO permanent_note VALUES
+        (
+          'exact-integer',
+          'Exact integer',
+          'Body kept exactly.',
+          1794943845000,
+          1794943845001,
+          9223372036854775807,
+          x'00ff10'
+        );
+    `)
+
+    const plan = planMigration({ databasePath: path })
+
+    expect(plan.counts.plannedNotes).toBe(1)
+    const note = noteFor(plan, "exact-integer")
+    expect(note.metadata.createdAt).toBe("2026-11-17T19:30:45Z")
+    expect(note.metadata.updatedAt).toBe("2026-11-17T19:30:45Z")
+    expect(note.preservation.columns["extension_huge"]).toBe(
+      9223372036854775807n,
+    )
+    expect(note.preservation.columns["extension_blob"]).toEqual(
+      new Uint8Array([0, 255, 16]),
+    )
+
+    // The exact bigint/blob identity participates in the deterministic hashes.
+    const second = planMigration({ databasePath: path })
+    expect(second.hash).toBe(plan.hash)
+    expect(noteFor(second, "exact-integer").sourceRowHash).toBe(
+      note.sourceRowHash,
+    )
+  })
+
   test("reports an incompatible table shape instead of failing", () => {
     const { path } = createDatabase(`
       CREATE TABLE fleeting_note (
