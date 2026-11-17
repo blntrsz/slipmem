@@ -193,6 +193,44 @@ assertions**; `bun run typecheck` and `bun run lint` pass; the full suite is
 **142 pass, 0 fail, 932 assertions, 16 files**. No surface imports the new
 repository yet, so the existing SQLite runtime is unchanged.
 
+## 3.3 Phase 1d - disposable SQLite FTS index and NoteService adapter
+
+This increment still leaves every surface on the existing SQLite services. It
+adds the index beside the repository and proves the recovery and external-edit
+contracts.
+
+Added:
+
+- `packages/core/src/markdown/search-index.ts`: `MarkdownSearchIndex` Effect
+  service and scoped Layer. The SQLite file lives under the per-root XDG cache
+  (or an explicit test/operator cache directory) with `0700` directory and
+  `0600` file permissions.
+- Schema: derived `notes` rows plus an FTS5 table with `unicode61` tokenizer.
+  Schema-version mismatch drops and recreates only the derived tables. If FTS5
+  creation fails, the service reports `linear` mode and keeps working.
+- `refresh` compares path, mtime, and size; changed files are re-parsed and
+  re-indexed, deleted files are removed, invalid files are dropped from the
+  index, and the FTS table is repaired if its row count drifts.
+- `rebuild` and `clear` are explicit recovery paths. `snapshot` exposes IDs and
+  content hashes for `checkNoteRoot` drift reporting.
+- Bounded `search` default 10 / hard maximum 50, 16 tokens, 512-character
+  query, type/topic/field filters, and ranked FTS ordering. The linear fallback
+  applies the same bounds and weighted matching without FTS5.
+- Bounded topic counts: default 50 / hard maximum 200, sorted by count then
+  slug.
+- `packages/core/src/note/markdown-note.service.ts`: a `NoteService` adapter
+  Layer over the repository and index, not wired into server, MCP, or web.
+- `search-index.test.ts`: FTS search across all three types, field/type/topic
+  filters, result and topic bounds, delete-and-rebuild identity, external edit
+  visibility, deleted-file removal, forced linear fallback, index drift, file
+  permissions, schema bump recovery, and the `NoteService` adapter.
+
+Evidence: `bun test packages/core/src/markdown/search-index.test.ts` **9 pass, 0
+fail, 48 assertions**; `bun run lint` passes. Focused core typecheck passes.
+At this commit boundary, unrelated in-progress `packages/cli` and
+`scripts/tour` work from other workers makes the root `bun run typecheck` and a
+couple of tour safety tests fail; no Phase 1 file is involved.
+
 
 ## 4. Incremental commit strategy
 
@@ -244,7 +282,7 @@ Status legend: **done** = implemented and tested against the real surface;
 | Phase 0 migration fixtures | Current, legacy, empty, invalid rows | done | executable SQL + row/column tests |
 | Phase 0 examples | CLI, API, MCP payloads | done | `acceptance/examples.json` tests |
 | STOR-01..08 | Flat `.slipmem/`, filenames, frontmatter, limits, collisions, unknown keys, atomic failure | done | Parser + `MarkdownNoteRepository` + `check`; `repository.test.ts` covers 01-08 |
-| TRUTH-01..04 | Disposable index, files-only recovery, external edits, no SQLite runtime | not started | Phase 1d, Phase 5 |
+| TRUTH-01..04 | Disposable index, files-only recovery, external edits, no SQLite runtime | partial | Index rebuild identity and external-edit refresh tested; repository restart tested; cutover remains Phase 5 |
 | SURFACE-01..05 | CLI/MCP/web parity, same tool schemas, ID routes, adapters | not started | Phases 2-4 |
 | APPROVE-01..09 | Pending permanent/delete, direct fleeting/literature, stale hash, no MCP approval | partial | Proposal/wiki schemas only; Phase 3 |
 | WIKI-01..07 | Bounded selection, citations, empty/conflict handling, no persisted page, injection-safe synthesis | partial | Wiki schemas only; Phases 4a-4b |
@@ -252,8 +290,9 @@ Status legend: **done** = implemented and tested against the real surface;
 | SEC-01..06 | Paths, size bounds, loopback, untrusted text, no Git actions, full check | partial | Bounds and patterns only; Phase 6 |
 | Definition of done | Full local loop and migration in section 13.8 | not started | Final acceptance run |
 
-This increment does **not** claim any STOR/TRUTH/SURFACE/APPROVE/WIKI/MIGRATE
-behavior; it makes those criteria testable.
+This Phase 1 set claims the parser, repository, check, and index behavior listed
+above. It does not claim CLI/MCP/web parity, approvals, wiki generation, or the
+SQLite cutover.
 
 ## 6. Architectural pointers
 
@@ -268,33 +307,41 @@ behavior; it makes those criteria testable.
   `packages/server/src/migrations.ts`, `packages/server/src/note-tools.ts`.
 - Existing limits and schema style: `packages/schemas/src/*-note.ts`.
 
-## 7. Open implementation choices for Phase 1
+## 7. Phase 1 implementation choices (resolved)
 
-- Safe YAML parser dependency. It must reject tags/custom constructors, preserve
-  unknown keys, and distinguish malformed YAML from invalid known fields. No YAML
-  parser is installed yet.
-- Atomic write mechanics and lock location under `.slipmem/.state/`.
-- FTS5 schema and cache path keying (`$XDG_CACHE_HOME/slipmem/<root-hash>`), plus
-  the bounded linear-scan fallback.
-- Exact error codes used by the repository and surfaced by CLI/MCP/web. The
-  fixture manifest codes are a starting vocabulary, not a public API promise.
+- **YAML:** `yaml@2.9.1` with the core schema, no executable constructors,
+  bounded aliases, unsafe-tag rejection, and a separate unknown-key record.
+  `Schema.decode` is not used for frontmatter round trips.
+- **Writes and locks:** same-directory temp file plus fsync and link/rename;
+  lock file at `.slipmem/.state/repository.lock`; in-process per-root semaphore.
+- **Deletes:** move to
+  `$XDG_STATE_HOME/slipmem/trash/<root-hash>/` by default, with a cross-device
+  copy fallback; never an in-place unlink.
+- **Index:** `$XDG_CACHE_HOME/slipmem/index/<root-hash>/index.sqlite`, FTS5 when
+  available, bounded linear scan otherwise; schema version mismatch is a
+  derived-table rebuild.
+- **Errors:** `MarkdownError` carries `area`, `code`, `path`, optional `field`,
+  and a message. Fixture manifest codes are preserved; new repository, path, and
+  index codes are additive and not yet a public API promise.
 
 ## 8. Recommended next bounded task
 
-Implement **Phase 1a: safe frontmatter parsing and read-only note mapping**.
+Implement the **first read-only surface wiring** on top of Phase 1, without
+cutting over the source of truth.
 
 Scope:
 
-1. Add a safe YAML/frontmatter parser in `packages/core/src/markdown/`.
-2. Map parsed metadata + body to `Note.Info` (or a Markdown-specific Info shape
-   if `type`/timestamps need a compatibility adapter) using the Phase 0
-   constants.
-3. Implement filename/ID/timestamp/type/reference/content-limit/conflict-marker
-   validation with actionable path and field errors.
-4. Replay `fixtures/phase0/notes` in tests: every valid fixture parses; every
-   invalid fixture fails with its manifest code. No file writes yet.
-5. Run `bun run check` and commit only the parser/mapping/tests (plus any
-   necessary dependency and lockfile change).
+1. Provide a small application factory that resolves the note root, builds
+   `MarkdownNoteRepositoryLive`, `MarkdownSearchIndexFromRepository`, and the
+   `MarkdownNoteService` adapter behind an explicit feature flag.
+2. Use it for one read-only path (CLI `list`/`show` or a health/list endpoint)
+   while SQLite remains the default for writes and all existing routes.
+3. Run `checkNoteRoot` with the index snapshot in that path and surface the
+   report without mutating notes.
+4. Prove the flag-off runtime is byte-for-byte the current SQLite behavior and
+   the flag-on path reads only `.slipmem/*.md`.
+5. Run the full `bun run check` and commit only the wiring and its tests.
 
-This slice is bounded, proves the frozen corpus against real parsing, and
-unblocks Phase 1b repository tests without committing to storage cutover.
+Approval proposals, migration cutover, wiki generation, and MCP write policy
+remain later phases. The repository/index interfaces are ready; the next worker
+should not duplicate parser, path, locking, or ranking rules.
