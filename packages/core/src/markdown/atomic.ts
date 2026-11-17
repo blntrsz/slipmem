@@ -2,8 +2,10 @@ import { Effect } from "effect"
 import { randomUUID } from "node:crypto"
 import {
   closeSync,
+  fchmodSync,
   fsyncSync,
   linkSync,
+  lstatSync,
   openSync,
   renameSync,
   statSync,
@@ -41,6 +43,20 @@ const isAlreadyExists = (cause: unknown): boolean =>
   (cause as { code?: unknown }).code === "EEXIST"
 
 /**
+ * The permission bits of the file being replaced. A rename would otherwise
+ * substitute the temporary file's mode and silently widen or narrow access to
+ * a note that an operator or umask deliberately protected.
+ */
+const existingFileMode = (path: string): number | undefined => {
+  try {
+    const stats = lstatSync(path)
+    return stats.isFile() ? stats.mode & 0o777 : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Writes a note through a same-directory temporary file, fsync, and rename (or
  * link for create-only writes). A failed validation or failed write leaves the
  * previous file untouched and removes the temporary file.
@@ -56,10 +72,22 @@ export const atomicWriteFile = (
       directory,
       `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`,
     )
+    // Only an overwrite can preserve a mode; a create must not inherit the
+    // permissions of an unrelated file that happens to share the path.
+    const preservedMode = options.overwrite ? existingFileMode(path) : undefined
 
     let descriptor: number | null = null
     try {
-      descriptor = openSync(temporary, "wx", options.mode ?? 0o644)
+      descriptor = openSync(
+        temporary,
+        "wx",
+        preservedMode ?? options.mode ?? 0o644,
+      )
+      if (preservedMode !== undefined) {
+        // open(2) masks the mode with the process umask, so restore the exact
+        // bits the previous file had before it is renamed into place.
+        fchmodSync(descriptor, preservedMode)
+      }
       const bytes = Buffer.from(content, "utf8")
       let offset = 0
       while (offset < bytes.length) {

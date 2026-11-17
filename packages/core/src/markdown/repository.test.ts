@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Exit } from "effect"
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -8,6 +9,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -232,6 +234,40 @@ describe("Markdown note repository CRUD", () => {
       )
       expect(tooLong.code).toBe("content-too-long")
       expect(readFileSync(source, "utf8")).toBe(before)
+      expect(readdirSync(fixture.root).some((name) => name.endsWith(".tmp"))).toBe(
+        false,
+      )
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("preserves an existing restrictive file mode on update", async () => {
+    const fixture = setup()
+    try {
+      const repo = await repository(fixture)
+      const created = await Effect.runPromise(
+        repo.create({
+          type: "fleeting",
+          title: "Private note",
+          content: "Only the owner may read this.",
+        }),
+      )
+      const path = join(fixture.root, created.filename)
+      chmodSync(path, 0o600)
+
+      await Effect.runPromise(
+        repo.update({ id: created.id, content: "Still private after an update." }),
+      )
+      expect(statSync(path).mode & 0o777).toBe(0o600)
+
+      chmodSync(path, 0o640)
+      await Effect.runPromise(
+        repo.update({ id: created.id, title: "Private note updated" }),
+      )
+      expect(statSync(path).mode & 0o777).toBe(0o640)
+
+      // No temporary file is left behind with a different mode.
       expect(readdirSync(fixture.root).some((name) => name.endsWith(".tmp"))).toBe(
         false,
       )
