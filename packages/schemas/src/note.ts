@@ -56,6 +56,23 @@ export const ListInput = Schema.Struct({}).annotate({ identifier: "Note.ListInpu
 export interface ListTitlesInput extends Schema.Schema.Type<typeof ListTitlesInput> {}
 export const ListTitlesInput = Schema.Struct({}).annotate({ identifier: "Note.ListTitlesInput" })
 
+// A search can match any text field a note has. Literature notes add
+// `reference`; kinds without one simply never match that field.
+export const SearchField = Schema.Literals(["title", "content", "reference"])
+export type SearchField = typeof SearchField.Type
+
+// Search is cross-kind by default. `fields`, `kinds`, and `limit` are optional
+// filters; omitting them searches every text field of every kind and applies
+// the service's default result bound. An explicit empty `fields` or `kinds`
+// array matches nothing.
+export interface SearchInput extends Schema.Schema.Type<typeof SearchInput> {}
+export const SearchInput = Schema.Struct({
+  query: Schema.String,
+  fields: Schema.optional(Schema.Array(SearchField)),
+  kinds: Schema.optional(Schema.Array(Kind)),
+  limit: Schema.optional(Schema.Int),
+}).annotate({ identifier: "Note.SearchInput" })
+
 // Title results are intentionally lighter than Info: they carry enough to
 // identify a note and render a list without loading its content. The kind is
 // needed because ids are only guaranteed to be unique within their own table.

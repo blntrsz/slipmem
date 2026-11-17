@@ -8,6 +8,7 @@ export interface NoteShape {
   readonly listTitles: (
     input: Note.ListTitlesInput,
   ) => Effect.Effect<ReadonlyArray<Note.TitleInfo>>
+  readonly search: (input: Note.SearchInput) => Effect.Effect<ReadonlyArray<Note.Info>>
 }
 
 export class NoteService extends Context.Service<NoteService, NoteShape>()(

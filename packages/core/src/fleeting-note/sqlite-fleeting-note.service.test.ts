@@ -4,6 +4,7 @@ import { FleetingNote } from "@slipmem/schemas/fleeting-note"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core"
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect"
 import { NoteDatabaseLive } from "../note-database"
+import { migrateNoteDatabase } from "../test-support/note-database"
 import { FleetingNoteNotFound, FleetingNoteService } from "./fleeting-note.service"
 import { SQLiteFleetingNoteService } from "./sqlite-fleeting-note.service"
 
@@ -12,7 +13,7 @@ const defects = (exit: Exit.Exit<unknown, unknown>) =>
 
 const memoryLayer = () =>
   SQLiteFleetingNoteService.pipe(
-    Layer.provide(NoteDatabaseLive),
+    Layer.provideMerge(NoteDatabaseLive),
     Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
   )
 
@@ -20,8 +21,7 @@ test("SQLite fleeting note service persists notes", async () => {
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    const sql = yield* SqliteClient.SqliteClient
-    yield* sql`CREATE TABLE fleeting_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
+    yield* migrateNoteDatabase
     const service = yield* FleetingNoteService
 
     const beforeCreate = Date.now()

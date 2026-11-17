@@ -4,6 +4,7 @@ import { LiteratureNote } from "@slipmem/schemas/literature-note"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core"
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect"
 import { NoteDatabaseLive } from "../note-database"
+import { migrateNoteDatabase } from "../test-support/note-database"
 import { LiteratureNoteNotFound, LiteratureNoteService } from "./literature-note.service"
 import { SQLiteLiteratureNoteService } from "./sqlite-literature-note.service"
 
@@ -12,7 +13,7 @@ const defects = (exit: Exit.Exit<unknown, unknown>) =>
 
 const memoryLayer = () =>
   SQLiteLiteratureNoteService.pipe(
-    Layer.provide(NoteDatabaseLive),
+    Layer.provideMerge(NoteDatabaseLive),
     Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
   )
 
@@ -20,8 +21,7 @@ test("SQLite literature note service persists notes", async () => {
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    const sql = yield* SqliteClient.SqliteClient
-    yield* sql`CREATE TABLE literature_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, reference TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
+    yield* migrateNoteDatabase
     const service = yield* LiteratureNoteService
 
     const beforeCreate = Date.now()

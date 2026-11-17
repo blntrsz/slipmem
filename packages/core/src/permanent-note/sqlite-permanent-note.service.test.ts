@@ -4,6 +4,7 @@ import { PermanentNote } from "@slipmem/schemas/permanent-note"
 import { EffectDrizzleQueryError } from "drizzle-orm/effect-core"
 import { Cause, Effect, Exit, Layer, Option, Schema } from "effect"
 import { NoteDatabaseLive } from "../note-database"
+import { migrateNoteDatabase } from "../test-support/note-database"
 import { PermanentNoteNotFound, PermanentNoteService } from "./permanent-note.service"
 import { SQLitePermanentNoteService } from "./sqlite-permanent-note.service"
 
@@ -12,7 +13,7 @@ const defects = (exit: Exit.Exit<unknown, unknown>) =>
 
 const memoryLayer = () =>
   SQLitePermanentNoteService.pipe(
-    Layer.provide(NoteDatabaseLive),
+    Layer.provideMerge(NoteDatabaseLive),
     Layer.provideMerge(SqliteClient.layer({ filename: ":memory:" })),
   )
 
@@ -20,8 +21,7 @@ test("SQLite permanent note service persists notes", async () => {
   const layer = memoryLayer()
 
   await Effect.runPromise(Effect.gen(function* () {
-    const sql = yield* SqliteClient.SqliteClient
-    yield* sql`CREATE TABLE permanent_note (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL, created_at REAL NOT NULL, updated_at REAL NOT NULL)`
+    yield* migrateNoteDatabase
     const service = yield* PermanentNoteService
 
     const beforeCreate = Date.now()
