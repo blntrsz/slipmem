@@ -16,7 +16,7 @@ export const writeJson = (io: CliIo, value: unknown): void => {
   io.out(`${JSON.stringify(value, null, 2)}\n`)
 }
 
-export const writeLine = (io: CliIo, text = ""): void => {
+export const writeLine = (io: Pick<CliIo, "out">, text = ""): void => {
   io.out(`${text}\n`)
 }
 

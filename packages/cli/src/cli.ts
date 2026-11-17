@@ -10,13 +10,14 @@ import { checkCommand } from "./commands/check.js"
 import { editCommand } from "./commands/edit.js"
 import { initCommand } from "./commands/init.js"
 import { listCommand } from "./commands/list.js"
+import { migrateCommand } from "./commands/migrate.js"
 import { newCommand } from "./commands/new.js"
 import { searchCommand } from "./commands/search.js"
 import { showCommand } from "./commands/show.js"
 import { topicsCommand } from "./commands/topics.js"
 import { wikiCommand } from "./commands/wiki.js"
 import type { CliContext } from "./context.js"
-import { CliUnavailableError, CliUsageError, usageError } from "./errors.js"
+import { CliMigrationError, CliUnavailableError, CliUsageError, usageError } from "./errors.js"
 import {
   PROGRAM,
   VERSION,
@@ -35,6 +36,7 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   topicsCommand,
   checkCommand,
   wikiCommand,
+  migrateCommand,
 ]
 
 const commandByName = (
@@ -49,7 +51,7 @@ const wantsJson = (argv: ReadonlyArray<string>): boolean =>
 interface FailureEnvelope {
   readonly ok: false
   readonly error: {
-    readonly kind: "usage" | "unavailable" | "validation" | "internal"
+    readonly kind: "usage" | "unavailable" | "validation" | "migration" | "internal"
     readonly code: string
     readonly message: string
     readonly command?: string
@@ -88,6 +90,16 @@ const reportFailure = (
         code: error.code,
         message: error.message,
         feature: error.feature,
+      },
+    }
+  } else if (error instanceof CliMigrationError) {
+    code = 1
+    envelope = {
+      ok: false,
+      error: {
+        kind: "migration",
+        code: error.code,
+        message: error.message,
       },
     }
   } else if (error instanceof MarkdownError) {

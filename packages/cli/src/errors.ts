@@ -33,4 +33,20 @@ export const unavailable = (
 ): CliUnavailableError =>
   new CliUnavailableError({ feature, message, code })
 
-export type CliFailure = CliUsageError | CliUnavailableError
+/**
+ * A migration failure that has no structured import report, such as an
+ * unreadable source database. Failures with a report are printed as a failed
+ * report so the caller still receives counts, malformed rows, and warnings.
+ */
+export class CliMigrationError extends Data.TaggedError("CliMigrationError")<{
+  readonly message: string
+  readonly code: string
+}> {}
+
+export const migrationError = (
+  message: string,
+  code: string,
+): CliMigrationError => new CliMigrationError({ message, code })
+
+export type CliFailure = CliUsageError | CliUnavailableError | CliMigrationError
+
