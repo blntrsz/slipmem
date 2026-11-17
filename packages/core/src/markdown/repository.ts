@@ -159,6 +159,56 @@ const repositoryError = (
 ): MarkdownError =>
   markdownError({ area: "repository", code, path, message })
 
+const timestampError = (
+  path: string,
+  field: "createdAt" | "updatedAt",
+  message: string,
+): MarkdownError =>
+  markdownError({
+    area: "metadata",
+    code: "timestamp-invalid",
+    path,
+    field,
+    message,
+  })
+
+/**
+ * Validates that an epoch-millisecond value names a real instant in the range
+ * JavaScript dates can format. `Date` throws a RangeError outside ±8.64e15 ms;
+ * letting that escape would surface as a defect instead of an actionable
+ * Markdown error.
+ */
+const validateTimestamp = (
+  path: string,
+  field: "createdAt" | "updatedAt",
+  value: number,
+): Effect.Effect<number, MarkdownError> =>
+  Effect.gen(function* () {
+    if (!Number.isFinite(value)) {
+      return yield* Effect.fail(
+        timestampError(
+          path,
+          field,
+          `${field} must be a finite epoch millisecond value.`,
+        ),
+      )
+    }
+
+    try {
+      Markdown.toUtcTimestamp(value)
+    } catch {
+      return yield* Effect.fail(
+        timestampError(
+          path,
+          field,
+          `${field} is outside the supported UTC timestamp range.`,
+        ),
+      )
+    }
+
+    return value
+  })
+
 const normalizeTitle = (path: string, title: string): Effect.Effect<string, MarkdownError> =>
   Effect.gen(function* () {
     const normalized = title.trim()
@@ -475,28 +525,16 @@ export const makeMarkdownNoteRepository = (
         const body = yield* normalizeContent(root, input.content)
         const topics = yield* normalizeTopics(root, input.topics)
         const reference = normalizeReference(input.reference)
-        const createdAtMs = input.createdAt ?? clock()
-        if (!Number.isFinite(createdAtMs)) {
-          return yield* Effect.fail(
-            metadataError(
-              root,
-              "timestamp-invalid",
-              "createdAt",
-              "Creation time must be a finite epoch millisecond value.",
-            ),
-          )
-        }
-        const updatedAtMs = input.updatedAt ?? createdAtMs
-        if (!Number.isFinite(updatedAtMs)) {
-          return yield* Effect.fail(
-            metadataError(
-              root,
-              "timestamp-invalid",
-              "updatedAt",
-              "Update time must be a finite epoch millisecond value.",
-            ),
-          )
-        }
+        const createdAtMs = yield* validateTimestamp(
+          root,
+          "createdAt",
+          input.createdAt ?? clock(),
+        )
+        const updatedAtMs = yield* validateTimestamp(
+          root,
+          "updatedAt",
+          input.updatedAt ?? createdAtMs,
+        )
 
         return yield* withRepositoryLock(
           root,
@@ -603,9 +641,13 @@ export const makeMarkdownNoteRepository = (
                 ? current.metadata.reference
                 : normalizeReference(input.reference)
           const nowMs = clock()
-          const updatedAtMs = Number.isFinite(nowMs)
-            ? Math.max(nowMs, current.info.updatedAt, current.info.createdAt)
-            : Math.max(current.info.updatedAt, current.info.createdAt)
+          const updatedAtMs = yield* validateTimestamp(
+            current.path,
+            "updatedAt",
+            Number.isFinite(nowMs)
+              ? Math.max(nowMs, current.info.updatedAt, current.info.createdAt)
+              : Math.max(current.info.updatedAt, current.info.createdAt),
+          )
 
           const metadata: Markdown.NoteMetadata = {
             schema: Markdown.SCHEMA_VERSION,

@@ -194,6 +194,69 @@ describe("Markdown note repository CRUD", () => {
     }
   })
 
+  test("reports out-of-range timestamps as typed failures, not defects", async () => {
+    const fixture = setup()
+    try {
+      const maxDate = 8.64e15
+      const repo = await repository(fixture)
+
+      const created = await failure(
+        repo.create({
+          type: "fleeting",
+          title: "Far future",
+          content: "Body.",
+          createdAt: maxDate + 1,
+        }),
+      )
+      expect(created.code).toBe("timestamp-invalid")
+      expect(created.field).toBe("createdAt")
+
+      const updated = await failure(
+        repo.create({
+          type: "fleeting",
+          title: "Far future update",
+          content: "Body.",
+          updatedAt: maxDate + 1,
+        }),
+      )
+      expect(updated.code).toBe("timestamp-invalid")
+      expect(updated.field).toBe("updatedAt")
+
+      const brokenClock = await repository(fixture, () => Number.MAX_SAFE_INTEGER)
+      const clockError = await failure(
+        brokenClock.create({
+          type: "fleeting",
+          title: "Clock far future",
+          content: "Body.",
+        }),
+      )
+      expect(clockError.code).toBe("timestamp-invalid")
+      expect(clockError.field).toBe("createdAt")
+
+      expect(
+        readdirSync(fixture.root).filter((name) => name.endsWith(".md")),
+      ).toEqual([])
+
+      const safe = await Effect.runPromise(
+        repo.create({
+          type: "fleeting",
+          title: "Safe timestamp",
+          content: "Original body.",
+        }),
+      )
+      const path = join(fixture.root, safe.filename)
+      const before = readFileSync(path, "utf8")
+      const updateError = await failure(
+        brokenClock.update({ id: safe.id, content: "Replacement body." }),
+      )
+      expect(updateError.code).toBe("timestamp-invalid")
+      expect(updateError.field).toBe("updatedAt")
+      expect(readFileSync(path, "utf8")).toBe(before)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("updates in place, preserves unknown metadata, and writes nothing on failure", async () => {
     const fixture = setup()
     try {
