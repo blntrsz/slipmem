@@ -1090,7 +1090,7 @@ export const importMigration = (
         dryRun: false,
         startedAt,
         completedAt: timestampOf(now()),
-        root: currentRoot,
+        root: inspectRoot(root),
       })
       throw new MigrationImportError(code, message, report, cause)
     }
@@ -1577,7 +1577,7 @@ export const importMigration = (
       dryRun: false,
       startedAt,
       completedAt: timestampOf(now()),
-      root: currentRoot,
+      root: inspectRoot(root),
     })
   }
 

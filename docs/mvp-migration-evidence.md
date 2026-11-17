@@ -288,7 +288,7 @@ Focused importer tests:
 $ bun test packages/core/src/migration/migration-import.test.ts
  11 pass
  0 fail
- 157 expect() calls
+ 159 expect() calls
 Ran 11 tests across 1 file.
 ```
 
@@ -298,7 +298,7 @@ Planner plus importer:
 $ bun test packages/core/src/migration
  19 pass
  0 fail
- 281 expect() calls
+ 283 expect() calls
 Ran 19 tests across 2 files.
 ```
 

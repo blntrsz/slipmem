@@ -134,6 +134,10 @@ describe("SQLite to Markdown importer", () => {
 
     expect(report.status).toBe("imported")
     expect(report.ok).toBe(true)
+    expect(report.root.nonEmpty).toBe(true)
+    expect(report.root.entries).toContain(
+      "20261117193045-current-fleeting.md",
+    )
     expect(report.counts).toMatchObject({
       sourceRows: 3,
       plannedNotes: 3,
