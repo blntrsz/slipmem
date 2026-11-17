@@ -41,6 +41,20 @@ const isDirectory = (path: string): boolean => {
   }
 }
 
+/**
+ * Ancestor discovery must also notice a broken `.slipmem` symlink. `stat`
+ * follows the link and reports nothing, which would hide the configured
+ * repository behind a misleading "not found" error.
+ */
+const isDirectoryOrSymlink = (path: string): boolean => {
+  try {
+    const stats = lstatSync(path)
+    return stats.isDirectory() || stats.isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
 const parent = (path: string): string | null => {
   const next = dirname(path)
   return next === path ? null : next
@@ -51,7 +65,7 @@ export const findAncestorNoteRoot = (start: string): string | null => {
   let current: string | null = resolve(start)
   while (current !== null) {
     const candidate = join(current, NOTE_ROOT_DIRECTORY)
-    if (isDirectory(candidate)) {
+    if (isDirectoryOrSymlink(candidate)) {
       return candidate
     }
     current = parent(current)

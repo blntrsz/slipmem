@@ -115,6 +115,23 @@ describe("note root resolution", () => {
     }
   })
 
+  test("reports a broken ancestor .slipmem symlink as a symlink, not missing", async () => {
+    const base = temporaryRoot()
+    try {
+      const workspace = join(base, "workspace")
+      mkdirSync(workspace, { recursive: true })
+      symlinkSync(join(base, "missing-target"), join(base, ".slipmem"))
+
+      const error = await failure(
+        resolveNoteRoot({ cwd: workspace, env: {} }),
+      )
+      expect(error.code).toBe("symlink")
+      expect(error.path).toBe(join(base, ".slipmem"))
+    } finally {
+      cleanup(base)
+    }
+  })
+
   test("rejects a symlinked SLIPMEM_DIR root instead of following it", async () => {
     const base = temporaryRoot()
     try {
