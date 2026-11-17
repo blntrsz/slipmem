@@ -345,10 +345,18 @@ const parseReference = (
     return reference.length === 0 ? undefined : reference
   })
 
+/**
+ * Known provenance fields plus any nested application-defined keys. The frozen
+ * schema names `source` and `actor`; future writers may add `model`, `run`, or
+ * another value, and a repository update must not silently discard it.
+ */
+export type ProvenanceValue = Markdown.Provenance &
+  Readonly<Record<string, unknown>>
+
 const parseProvenance = (
   path: string,
   value: unknown,
-): Effect.Effect<Markdown.Provenance | undefined, MarkdownError> =>
+): Effect.Effect<ProvenanceValue | undefined, MarkdownError> =>
   Effect.gen(function* () {
     if (value === undefined || value === null) {
       return undefined
@@ -384,13 +392,25 @@ const parseProvenance = (
       )
     }
 
-    if (source === undefined && actor === undefined) {
+    const extras: Record<string, unknown> = {}
+    for (const [key, item] of Object.entries(value)) {
+      if (key !== "source" && key !== "actor") {
+        extras[key] = item
+      }
+    }
+
+    if (
+      source === undefined &&
+      actor === undefined &&
+      Object.keys(extras).length === 0
+    ) {
       return {}
     }
 
     return {
       ...(source === undefined ? {} : { source }),
       ...(actor === undefined ? {} : { actor }),
+      ...extras,
     }
   })
 

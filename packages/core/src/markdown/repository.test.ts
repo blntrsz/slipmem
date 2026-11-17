@@ -343,6 +343,43 @@ describe("Markdown note repository CRUD", () => {
     }
   })
 
+  test("preserves unknown nested provenance fields on update", async () => {
+    const fixture = setup()
+    try {
+      const id = "20261117193045-model-provenance"
+      const path = join(fixture.root, `${id}.md`)
+      writeFileSync(
+        path,
+        `---\nschema: 1\nid: ${id}\ntype: fleeting\ntitle: Model provenance\ncreatedAt: "2026-11-17T19:30:45Z"\nupdatedAt: "2026-11-17T19:30:45Z"\nprovenance:\n  source: mcp\n  actor: agent:fixture\n  model: local-test-model\n  run:\n    id: run-7\n---\n\nOriginal body.\n`,
+      )
+
+      const repo = await repository(fixture, () =>
+        Date.parse("2026-11-17T23:00:00Z"),
+      )
+      const updated = await Effect.runPromise(
+        repo.update({ id, content: "Updated body." }),
+      )
+
+      const provenance = updated.metadata.provenance as
+        | Record<string, unknown>
+        | undefined
+      expect(provenance).toMatchObject({
+        source: "mcp",
+        actor: "agent:fixture",
+        model: "local-test-model",
+        run: { id: "run-7" },
+      })
+
+      const text = readFileSync(path, "utf8")
+      expect(text).toContain("model: local-test-model")
+      expect(text).toContain("run:")
+      expect(text).toContain("id: run-7")
+      expect(text).toContain("Updated body.")
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("deletes by moving the note to a backup outside the root", async () => {
     const fixture = setup()
     try {
