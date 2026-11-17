@@ -1,6 +1,9 @@
 import {
+  ApprovalService,
+  ApprovalServiceLive,
   MarkdownNoteRepositoryLive,
   MarkdownSearchIndexFromRepository,
+  WikiServiceLive,
   type ParsedMarkdownNote,
 } from "@slipmem/core"
 import type { Note } from "@slipmem/schemas/note"
@@ -19,17 +22,29 @@ export interface MarkdownLayerOptions {
   readonly now?: () => number
 }
 
-/** Repository plus disposable search index for one note root. */
+/**
+ * Repository, disposable search index, approval queue, and read-only wiki
+ * service for one note root. The wiki and approval services receive the same
+ * repository instance as the API, so every surface observes the same files.
+ */
 export const makeMarkdownLayer = (options: MarkdownLayerOptions) => {
   const repository = MarkdownNoteRepositoryLive({
     root: options.root,
     ...(options.now === undefined ? {} : { now: options.now }),
   })
-  const index = MarkdownSearchIndexFromRepository(
-    options.cacheDir === undefined ? {} : { cacheDir: options.cacheDir },
+  const services = Layer.mergeAll(
+    MarkdownSearchIndexFromRepository(
+      options.cacheDir === undefined ? {} : { cacheDir: options.cacheDir },
+    ),
+    WikiServiceLive(
+      options.now === undefined ? {} : { now: options.now },
+    ),
+    ApprovalServiceLive(
+      options.now === undefined ? {} : { now: options.now },
+    ),
   ).pipe(Layer.provide(repository))
 
-  return Layer.merge(repository, index)
+  return Layer.merge(repository, services)
 }
 
 /**

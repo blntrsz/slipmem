@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import {
   initializeNoteRoot,
+  makeApprovalService,
   makeMarkdownNoteRepository,
 } from "@slipmem/core"
 import { Effect } from "effect"
@@ -410,6 +411,186 @@ test("files written by another surface are visible without restart", async () =>
       readonly results: ReadonlyArray<{ readonly id: string }>
     }
     expect(results.results.map((result) => result.id)).toContain(external.id)
+  })
+})
+
+test("wiki pages are cited, derived, and available as structured JSON or Markdown", async () => {
+  await withApi(async (api, root) => {
+    const created = await api.handler(
+      request("/api/notes", "POST", {
+        type: "permanent",
+        title: "Bounded recall",
+        content: "Every list, search, and recall operation has a hard maximum.",
+        topics: ["agent-memory"],
+      }),
+    )
+    const note = await readNote(created)
+
+    const filesBefore = (await readdir(root.root)).filter((name) =>
+      name.endsWith(".md"),
+    )
+
+    const structured = await api.handler(
+      request("/api/wiki/agent-memory?limit=5"),
+    )
+    expect(structured.status).toBe(200)
+    const page = (await structured.json()) as {
+      readonly topic: string
+      readonly mode: string
+      readonly noteCount: number
+      readonly sections: ReadonlyArray<{
+        readonly heading: string
+        readonly citations: ReadonlyArray<{
+          readonly noteId: string
+          readonly path: string
+        }>
+      }>
+      readonly sources: ReadonlyArray<{ readonly id: string }>
+      readonly markdown: string
+    }
+    expect(page).toMatchObject({
+      topic: "agent-memory",
+      mode: "extractive",
+      noteCount: 1,
+    })
+    expect(page.sections).toHaveLength(1)
+    expect(page.sections[0]!.citations[0]).toMatchObject({
+      noteId: note.id,
+    })
+    expect(page.sections[0]!.citations[0]!.path).toContain(note.id)
+    expect(page.sources[0]!.id).toBe(note.id)
+    expect(page.markdown).toContain(note.id)
+
+    const markdown = await api.handler(
+      request("/api/wiki/agent-memory?format=markdown"),
+    )
+    expect(markdown.status).toBe(200)
+    expect(markdown.headers.get("content-type")).toContain("text/markdown")
+    expect(await markdown.text()).toContain("## Bounded recall")
+
+    const empty = await api.handler(request("/api/wiki/no-such-topic"))
+    expect(empty.status).toBe(200)
+    expect(((await empty.json()) as { noteCount: number }).noteCount).toBe(0)
+
+    const filesAfter = (await readdir(root.root)).filter((name) =>
+      name.endsWith(".md"),
+    )
+    expect(filesAfter).toEqual(filesBefore)
+  })
+})
+
+test("pending human review exposes a diff and approves or rejects without MCP approval", async () => {
+  await withApi(async (api, root) => {
+    const repository = await Effect.runPromise(
+      makeMarkdownNoteRepository({ root: root.root }),
+    )
+    const approval = await Effect.runPromise(
+      makeApprovalService(repository, { now: () => Date.UTC(2026, 10, 17, 21, 0, 0) }),
+    )
+
+    const createPending = await Effect.runPromise(
+      approval.submitMcp({
+        operation: "create",
+        type: "permanent",
+        title: "Agent proposal",
+        content: "Only a human may make this permanent.",
+        actor: "agent-test",
+      }),
+    )
+    expect(createPending.status).toBe("pending_approval")
+    const createProposalId =
+      createPending.status === "pending_approval"
+        ? createPending.proposalId
+        : ""
+
+    const rejectSeed = await Effect.runPromise(
+      approval.submitMcp({
+        operation: "create",
+        type: "permanent",
+        title: "Rejected proposal",
+        content: "This never becomes a note.",
+      }),
+    )
+    const rejectProposalId =
+      rejectSeed.status === "pending_approval" ? rejectSeed.proposalId : ""
+
+    const pendingResponse = await api.handler(request("/api/pending"))
+    expect(pendingResponse.status).toBe(200)
+    const pending = (await pendingResponse.json()) as {
+      readonly proposals: ReadonlyArray<{
+        readonly id: string
+        readonly operation: string
+        readonly noteId: string
+        readonly diff: string
+        readonly stale: boolean
+        readonly expired: boolean
+      }>
+    }
+    expect(pending.proposals).toHaveLength(2)
+    const proposal = pending.proposals.find(
+      (item) => item.id === createProposalId,
+    )!
+    expect(proposal).toMatchObject({
+      operation: "create",
+      stale: false,
+      expired: false,
+    })
+    expect(proposal.diff).toContain("+")
+    expect(proposal.diff).toContain("Only a human may make this permanent.")
+
+    // Pending proposals never appear as notes.
+    const listBefore = await api.handler(request("/api/notes"))
+    expect(await readNotes(listBefore)).toHaveLength(0)
+
+    const approveResponse = await api.handler(
+      request(`/api/pending/${createProposalId}/approve`, "POST"),
+    )
+    expect(approveResponse.status).toBe(200)
+    const approved = (await approveResponse.json()) as {
+      readonly status: string
+      readonly note: ApiNoteResponse
+    }
+    expect(approved.status).toBe("applied")
+    expect(approved.note).toMatchObject({
+      title: "Agent proposal",
+      type: "permanent",
+    })
+
+    // The approved note is visible through the same ID route and search index.
+    const detail = await api.handler(
+      request(`/api/notes/${approved.note.id}`),
+    )
+    expect((await readNote(detail)).id).toBe(approved.note.id)
+    const search = await api.handler(request("/api/search?q=permanent"));
+    const hits = (await search.json()) as {
+      readonly results: ReadonlyArray<{ readonly id: string }>
+    }
+    expect(hits.results.map((hit) => hit.id)).toContain(approved.note.id)
+
+    const rejectResponse = await api.handler(
+      request(`/api/pending/${rejectProposalId}/reject`, "POST"),
+    )
+    expect(rejectResponse.status).toBe(200)
+    expect(await rejectResponse.json()).toEqual({
+      status: "rejected",
+      proposalId: rejectProposalId,
+    })
+
+    const remaining = await api.handler(request("/api/pending"))
+    expect(
+      ((await remaining.json()) as { readonly proposals: ReadonlyArray<unknown> })
+        .proposals,
+    ).toHaveLength(0)
+
+    const finalNotes = await readNotes(await api.handler(request("/api/notes")))
+    expect(finalNotes.map((note) => note.title)).toEqual(["Agent proposal"])
+
+    const crossOriginApprove = await api.handler(
+      request(`/api/pending/${createProposalId}/approve`, "POST", undefined, {
+        origin: "https://evil.example",
+      }),
+    )
+    expect(crossOriginApprove.status).toBe(403)
   })
 })
 

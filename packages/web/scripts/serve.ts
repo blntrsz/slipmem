@@ -1,6 +1,8 @@
 import { dirname, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 
+import { nonLoopbackWarning, resolveBindConfig } from "@slipmem/server"
+
 interface BuildManifest {
   readonly client: string
   readonly server: string
@@ -23,11 +25,14 @@ const serverModule = (await import(pathToFileURL(fetchHandlerPath).href)) as {
   readonly default: { readonly fetch: (request: Request) => Promise<Response> }
 }
 
-const port = Number(process.env.PORT ?? 3000)
-// The API and MCP endpoint have no authentication. Bind to loopback by
-// default so a local notebook is not writable by every host on the network.
-// Set HOST=0.0.0.0 explicitly to expose it.
-const hostname = process.env.HOST ?? "127.0.0.1"
+// Loopback is the default because the API and MCP endpoint have no
+// authentication and note files are plaintext. Setting HOST is an explicit,
+// documented decision to expose them to the network.
+const { host, port, loopback } = resolveBindConfig()
+
+if (!loopback) {
+  console.error(nonLoopbackWarning(host))
+}
 
 const staticResponse = async (request: Request): Promise<Response | undefined> => {
   if (request.method !== "GET" && request.method !== "HEAD") {
@@ -54,7 +59,7 @@ const staticResponse = async (request: Request): Promise<Response | undefined> =
 
 const server = Bun.serve({
   port,
-  hostname,
+  hostname: host,
   async fetch(request) {
     const staticFile = await staticResponse(request)
     if (staticFile !== undefined) {
@@ -64,4 +69,4 @@ const server = Bun.serve({
   },
 })
 
-console.log(`slipmem web listening on http://${hostname}:${server.port}`)
+console.log(`slipmem web listening on http://${host}:${server.port}`)

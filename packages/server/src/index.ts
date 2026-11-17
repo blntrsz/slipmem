@@ -13,6 +13,7 @@ export {
   type NoteRootPathOptions,
 } from "./config"
 export {
+  makeMcpHttp,
   mcpInstructions,
   mcpServerName,
   mcpServerVersion,

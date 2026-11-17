@@ -1,11 +1,15 @@
 import { Markdown } from "@slipmem/schemas/markdown"
 import { Note as NoteSchema } from "@slipmem/schemas/note"
 import {
+  ApprovalError,
+  ApprovalService,
   DEFAULT_LIST_LIMIT,
   MarkdownError,
   MarkdownNoteRepository,
   MarkdownSearchIndex,
   MAX_SEARCH_QUERY_LENGTH,
+  WikiError,
+  WikiService,
   type MarkdownNoteRepositoryShape,
   type MarkdownSearchIndexShape,
   type ParsedMarkdownNote,
@@ -68,14 +72,62 @@ const fromMarkdownError = (error: MarkdownError): ApiError =>
       : `${error.message} (${error.field})`,
   })
 
+const approvalStatus = (error: ApprovalError): number =>
+  Match.value(error.code).pipe(
+    Match.when("proposal-not-found", () => 404),
+    Match.when("target-missing", () => 404),
+    Match.when("proposal-expired", () => 409),
+    Match.when("stale-base", () => 409),
+    Match.when("target-exists", () => 409),
+    Match.when("proposal-id-conflict", () => 409),
+    Match.when("proposal-queue-full", () => 429),
+    Match.when("proposal-write-failed", () => 500),
+    Match.when("proposal-read-failed", () => 500),
+    Match.when("repository-failure", () => 500),
+    Match.when("apply-failed", () => 500),
+    Match.orElse(() => 400),
+  )
+
+const fromApprovalError = (error: ApprovalError): ApiError =>
+  new ApiError({
+    status: approvalStatus(error),
+    code: error.code,
+    message: error.field === undefined
+      ? error.message
+      : `${error.message} (${error.field})`,
+  })
+
+const fromWikiError = (error: WikiError): ApiError =>
+  new ApiError({
+    status:
+      error.code === "repository-failure"
+        ? 500
+        : error.code === "synthesis-config" ||
+            error.code === "synthesis-adapter-unsupported"
+          ? 501
+          : 400,
+    code: error.code,
+    message: error.field === undefined
+      ? error.message
+      : `${error.message} (${error.field})`,
+  })
+
 const route = <R>(
-  effect: Effect.Effect<HttpServerResponse.HttpServerResponse, ApiError | MarkdownError, R>,
+  effect: Effect.Effect<
+    HttpServerResponse.HttpServerResponse,
+    ApiError | MarkdownError | ApprovalError | WikiError,
+    R
+  >,
 ) =>
   effect.pipe(
     Effect.catchTags({
       ApiError: (error) => Effect.succeed(errorResponse(error)),
       MarkdownError: (error) =>
         Effect.succeed(errorResponse(fromMarkdownError(error))),
+      ApprovalError: (error) =>
+        Effect.succeed(errorResponse(fromApprovalError(error))),
+      WikiError: (error) =>
+        Effect.succeed(errorResponse(fromWikiError(error))),
     }),
   )
 
@@ -396,6 +448,8 @@ export const MarkdownApiRoutes = Layer.unwrap(
   Effect.gen(function* () {
     const repository = yield* MarkdownNoteRepository
     const index = yield* MarkdownSearchIndex
+    const approval = yield* ApprovalService
+    const wiki = yield* WikiService
 
     const health = (request: HttpServerRequest.HttpServerRequest) =>
       route(
@@ -637,6 +691,136 @@ export const MarkdownApiRoutes = Layer.unwrap(
         }),
       )
 
+    const wikiPage = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          const params = yield* HttpRouter.params
+          const url = requestUrl(request)
+          const rawTopic = params.topic
+          if (rawTopic === undefined || Markdown.slugifyTopic(rawTopic) === "") {
+            return yield* fail(
+              400,
+              "invalid-topic",
+              "A topic must normalize to a lowercase kebab-case slug.",
+            )
+          }
+
+          const rawMode = queryValue(url, "mode")
+          const mode =
+            rawMode === undefined
+              ? undefined
+              : yield* Schema.decodeUnknownEffect(Markdown.WikiMode)(
+                  rawMode,
+                ).pipe(
+                  Effect.mapError(
+                    () =>
+                      new ApiError({
+                        status: 400,
+                        code: "invalid-mode",
+                        message: "mode must be extractive or synthesized.",
+                      }),
+                  ),
+                )
+          const limit = yield* parseLimit(url)
+          const includeFleeting = url.searchParams.get("includeFleeting") === "true"
+
+          const page = yield* wiki.build({
+            topic: rawTopic,
+            ...(limit === undefined ? {} : { limit }),
+            ...(mode === undefined ? {} : { mode }),
+            ...(includeFleeting ? { includeFleeting } : {}),
+          })
+
+          if (url.searchParams.get("format") === "markdown") {
+            return HttpServerResponse.text(page.markdown, {
+              contentType: "text/markdown; charset=utf-8",
+              headers: {
+                "cache-control": "no-store",
+                "x-content-type-options": "nosniff",
+              },
+            })
+          }
+
+          return json(page)
+        }),
+      )
+
+    const pending = () =>
+      route(
+        Effect.gen(function* () {
+          const report = yield* approval.review()
+          return json({
+            proposals: report.proposals.map((item) => ({
+              id: item.proposal.id,
+              operation: item.proposal.operation,
+              noteId: item.proposal.noteId,
+              path: item.proposal.path,
+              summary: item.summary,
+              createdAt: item.proposal.createdAt,
+              expiresAt: item.proposal.expiresAt,
+              ...(item.proposal.actor === undefined
+                ? {}
+                : { actor: item.proposal.actor }),
+              stale: item.stale,
+              expired: item.expired,
+              diff: item.diff,
+              ...(item.proposal.operation === "delete"
+                ? {}
+                : { content: item.proposal.content }),
+            })),
+            invalid: report.invalid.map((error) => ({
+              code: error.code,
+              message: error.message,
+            })),
+            removed: report.removed,
+          })
+        }),
+      )
+
+    const approve = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          yield* assertSameOrigin(request)
+          const params = yield* HttpRouter.params
+          const proposalId = params.proposalId
+          if (proposalId === undefined || proposalId.length === 0) {
+            return yield* fail(400, "invalid-proposal", "Missing proposal id.")
+          }
+          const applied = yield* approval.apply(proposalId)
+          return json(
+            applied.operation === "delete"
+              ? {
+                  status: applied.status,
+                  proposalId: applied.proposalId,
+                  operation: applied.operation,
+                  noteId: applied.noteId,
+                  backupPath: applied.backupPath,
+                }
+              : {
+                  status: applied.status,
+                  proposalId: applied.proposalId,
+                  operation: applied.operation,
+                  noteId: applied.noteId,
+                  note: toApiNote(applied.note),
+                },
+          )
+        }),
+      )
+
+    const reject = (request: HttpServerRequest.HttpServerRequest) =>
+      route(
+        Effect.gen(function* () {
+          yield* assertSameOrigin(request)
+          const params = yield* HttpRouter.params
+          const proposalId = params.proposalId
+          if (proposalId === undefined || proposalId.length === 0) {
+            return yield* fail(400, "invalid-proposal", "Missing proposal id.")
+          }
+          const rejected = yield* approval.reject(proposalId)
+          return json(rejected)
+        }),
+      )
+
     return Layer.mergeAll(
       HttpRouter.add("GET", "/api/health", health),
       HttpRouter.add("GET", "/api/notes", list),
@@ -652,6 +836,10 @@ export const MarkdownApiRoutes = Layer.unwrap(
       HttpRouter.add("DELETE", "/api/notes/:type/:id", removeByType),
       HttpRouter.add("GET", "/api/search", search),
       HttpRouter.add("GET", "/api/topics", topics),
+      HttpRouter.add("GET", "/api/wiki/:topic", wikiPage),
+      HttpRouter.add("GET", "/api/pending", pending),
+      HttpRouter.add("POST", "/api/pending/:proposalId/approve", approve),
+      HttpRouter.add("POST", "/api/pending/:proposalId/reject", reject),
     )
   }),
 )

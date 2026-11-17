@@ -1,628 +1,542 @@
 import { expect, test } from "bun:test"
-import { Note } from "@slipmem/schemas/note"
 import { Array, Effect, Option, Schema } from "effect"
 import { AsyncData, Scene, Story } from "foldkit"
 import { Server } from "foldkit/experimental"
+import { fromString } from "foldkit/url"
 
+import { ApiNote } from "./api"
 import {
-  CreateNote,
   DeleteNote,
   EditorState,
+  LoadNote,
   LoadNotes,
+  LoadPending,
+  LoadSearch,
+  LoadTopics,
+  LoadWiki,
   Message,
   Model,
-  UpdateNote,
+  NavigateInternal,
+  SaveNote,
+  formError,
   init,
   update,
   view,
 } from "./main"
+import { AppRoute } from "./route"
 
-const decodeNote = (input: unknown): Note.Info =>
-  Schema.decodeUnknownSync(Note.Info)(input)
+const decodeNote = (input: unknown): ApiNote =>
+  Schema.decodeUnknownSync(ApiNote)(input)
 
-const fleeting = decodeNote({
-  type: "fleeting",
-  id: "fleeting-1",
-  title: "A quick thought",
-  content: "Capture it before it goes.",
-  createdAt: 1,
-  updatedAt: 3,
-})
-
-const literature = decodeNote({
-  type: "literature",
-  id: "literature-1",
-  title: "A source",
-  content: "A quote from a book.",
-  reference: "Book, chapter 2",
-  createdAt: 1,
-  updatedAt: 2,
-})
-
-const permanent = decodeNote({
-  type: "permanent",
-  id: "permanent-1",
-  title: "An evergreen idea",
-  content: "Write it down properly.",
-  createdAt: 1,
-  updatedAt: 1,
-})
-
-const loadedModel = (
-  notes: ReadonlyArray<Note.Info> = [fleeting, literature, permanent],
-  overrides: Partial<Model> = {},
-): Model =>
-  Model.make({
-    notes: AsyncData.Success({ data: notes }),
-    selectedKind: "fleeting",
-    editor: EditorState.Closed(),
-    lastError: Option.none(),
-    loadRequestId: 0,
-    saveRequestId: 0,
-    deletedNoteKeys: [],
+const note = (
+  type: "fleeting" | "literature" | "permanent",
+  id: string,
+  title: string,
+  content: string,
+  overrides: Record<string, unknown> = {},
+): ApiNote =>
+  decodeNote({
+    type,
+    id,
+    title,
+    content,
+    topics: ["agent-memory"],
+    path: `/notes/${id}.md`,
+    contentHash: "hash",
+    createdAt: 1,
+    updatedAt: 2,
+    ...(type === "literature" ? { reference: "Book" } : {}),
     ...overrides,
   })
 
-const notesFrom = (model: Model): ReadonlyArray<Note.Info> =>
+const fleeting = note(
+  "fleeting",
+  "20261117193045-quick-thought",
+  "A quick thought",
+  "Capture it before it goes.",
+  { updatedAt: 3 },
+)
+
+const permanent = note(
+  "permanent",
+  "20261117201500-bounded-recall",
+  "Bounded recall",
+  "Every recall operation has a hard maximum.",
+)
+
+const literature = note(
+  "literature",
+  "20261117213000-a-source",
+  "A source",
+  "A quote from a book.",
+  { reference: "Book, chapter 2" },
+)
+
+const homeRoute = AppRoute.Home({
+  type: Option.none(),
+  topic: Option.none(),
+})
+
+const baseModel = (
+  route: AppRoute = homeRoute,
+  overrides: Partial<Model> = {},
+): Model =>
+  Model.make({
+    route,
+    notes: AsyncData.Idle(),
+    note: AsyncData.Idle(),
+    search: AsyncData.Idle(),
+    topics: AsyncData.Idle(),
+    wiki: AsyncData.Idle(),
+    pending: AsyncData.Idle(),
+    health: AsyncData.Idle(),
+    editor: EditorState.Closed(),
+    searchInput: "",
+    lastError: Option.none(),
+    notesRequestId: 0,
+    noteRequestId: 0,
+    searchRequestId: 0,
+    topicsRequestId: 0,
+    wikiRequestId: 0,
+    pendingRequestId: 0,
+    healthRequestId: 0,
+    saveRequestId: 0,
+    deleteRequestId: 0,
+    ...overrides,
+  })
+
+const notesOf = (model: Model): ReadonlyArray<ApiNote> =>
   AsyncData.getOrElse(model.notes, () => [])
 
-const noteTitles = (model: Model): ReadonlyArray<string> =>
-  Array.map(notesFrom(model), (note) => note.title)
+const url = (value: string) =>
+  Option.getOrThrowWith(
+    fromString(`http://localhost${value}`),
+    () => new Error(`Invalid URL ${value}`),
+  )
 
-test("init starts loading notes", () => {
-  const result = init()
+test("init enters the requested route and issues one bounded load command", () => {
+  const home = init(url("/?type=permanent"))
+  expect(home.model.route._tag).toBe("Home")
+  expect(home.model.notes._tag).toBe("Loading")
+  expect(Array.map(home.commands ?? [], (command) => command.name)).toEqual([
+    "LoadNotes",
+  ])
 
-  expect(result.model.notes._tag).toBe("Idle")
-  expect(
-    Array.head(result.commands ?? []).pipe(
-      Option.map((command) => command.name),
-    ),
-  ).toEqual(Option.some("LoadNotes"))
+  const detail = init(url(`/notes/${permanent.id}`))
+  expect(detail.model.route._tag).toBe("NoteDetail")
+  expect(Array.map(detail.commands ?? [], (command) => command.name)).toEqual([
+    "LoadNote",
+  ])
+
+  const edit = init(url(`/notes/${permanent.id}/edit`))
+  expect(edit.model.route._tag).toBe("EditNote")
+  expect(edit.model.editor._tag).toBe("Closed")
+
+  const review = init(url("/review"))
+  expect(Array.map(review.commands ?? [], (command) => command.name)).toEqual([
+    "LoadPending",
+  ])
+
+  const wiki = init(url("/wiki/agent-memory?mode=synthesized"))
+  expect(wiki.model.route._tag).toBe("Wiki")
+  expect(Array.map(wiki.commands ?? [], (command) => command.name)).toEqual([
+    "LoadWiki",
+  ])
+
+  const topics = init(url("/topics"))
+  expect(Array.map(topics.commands ?? [], (command) => command.name)).toEqual([
+    "LoadTopics",
+  ])
+
+  const search = init(url("/search?q=recall"))
+  expect(Array.map(search.commands ?? [], (command) => command.name)).toEqual([
+    "LoadSearch",
+  ])
+
+  const health = init(url("/health"))
+  expect(Array.map(health.commands ?? [], (command) => command.name)).toEqual([
+    "LoadHealth",
+  ])
+
+  const missing = init(url("/no/such/page"))
+  expect(missing.model.route._tag).toBe("NotFound")
+  expect(missing.commands ?? []).toHaveLength(0)
 })
 
-test("switching note kinds changes the filter and closes the editor", () => {
+test("changing routes closes stale editors and starts the new load", () => {
   Story.story(
     update,
-    Story.given(loadedModel()),
-    Story.message(Message.ClickedKind({ kind: "literature" })),
+    Story.given(baseModel()),
+    Story.message(Message.ChangedUrl({ url: url(`/notes/${permanent.id}/edit`) })),
     Story.model((model) => {
-      expect(model.selectedKind).toBe("literature")
+      expect(model.route._tag).toBe("EditNote")
       expect(model.editor._tag).toBe("Closed")
+      expect(model.note._tag).toBe("Loading")
+    }),
+    Story.Command.expectHas(LoadNote),
+    Story.Command.resolve(
+      LoadNote,
+      Message.SucceededLoadNote({ requestId: 1, note: Option.none() }),
+    ),
+  )
+})
+
+test("a loaded note opens the edit form with note metadata as text", () => {
+  Story.story(
+    update,
+    Story.given(
+      baseModel(AppRoute.EditNote({ noteId: literature.id }), {
+        noteRequestId: 1,
+      }),
+    ),
+    Story.message(
+      Message.SucceededLoadNote({
+        requestId: 1,
+        note: Option.some(literature),
+      }),
+    ),
+    Story.model((model) => {
+      expect(model.editor._tag).toBe("Open")
+      const editor = model.editor as Extract<
+        typeof model.editor,
+        { _tag: "Open" }
+      >
+      expect(editor.type).toBe("literature")
+      expect(editor.form.title).toBe("A source")
+      expect(editor.form.reference).toBe("Book, chapter 2")
+      expect(editor.form.topics).toBe("agent-memory")
     }),
     Story.Command.expectNone(),
   )
 })
 
-test("creating a note validates against the shared schema and emits a command", () => {
-  const created = decodeNote({
-    type: "fleeting",
-    id: "fleeting-new",
-    title: "New note",
-    content: "Hello",
-    createdAt: 4,
-    updatedAt: 4,
-  })
+test("the editor validates content limits, references, and topics locally", () => {
+  expect(
+    formError("fleeting", {
+      title: " ",
+      content: "body",
+      reference: "",
+      topics: "",
+    }),
+  ).toEqual(Option.some("Title is required."))
 
+  expect(
+    formError("fleeting", {
+      title: "Title",
+      content: "a".repeat(1001),
+      reference: "",
+      topics: "",
+    }),
+  ).toEqual(Option.some("fleeting notes are limited to 1000 characters."))
+
+  expect(
+    formError("literature", {
+      title: "Title",
+      content: "body",
+      reference: "",
+      topics: "",
+    }),
+  ).toEqual(Option.some("Literature notes require a reference."))
+
+  expect(
+    formError("permanent", {
+      title: "Title",
+      content: "body",
+      reference: "",
+      topics: "日本語",
+    }),
+  ).toEqual(Option.some("Every topic needs at least one letter or digit."))
+
+  expect(
+    formError("permanent", {
+      title: "Title",
+      content: "body",
+      reference: "",
+      topics: "agent-memory, retrieval",
+    }),
+  ).toEqual(Option.none())
+})
+
+test("saving a new note takes the request id, shows saving, and navigates to the note", () => {
   Story.story(
     update,
-    Story.given(loadedModel()),
-    Story.message(Message.ClickedNewNote()),
-    Story.message(Message.UpdatedTitle({ title: "New note" })),
-    Story.message(Message.UpdatedContent({ content: "Hello" })),
-    Story.message(Message.ClickedSavedNote()),
+    Story.given(
+      baseModel(AppRoute.NewNote({ type: Option.some("permanent") }), {
+        editor: EditorState.Open({
+          type: "permanent",
+          maybeId: Option.none(),
+          form: { title: "", content: "", reference: "", topics: "" },
+        }),
+      }),
+    ),
+    Story.message(Message.UpdatedTitle({ value: "A durable idea" })),
+    Story.message(Message.UpdatedContent({ value: "Write it down properly." })),
+    Story.message(Message.UpdatedTopics({ value: "agent-memory" })),
+    Story.message(Message.SubmittedEditor()),
     Story.model((model) => {
       expect(model.editor._tag).toBe("Saving")
+      expect(model.saveRequestId).toBe(1)
     }),
-    Story.Command.expectExact(CreateNote),
+    Story.Command.expectHas(SaveNote),
     Story.Command.resolve(
-      CreateNote,
-      Message.SucceededSaveNote({ requestId: 1, note: created }),
+      SaveNote,
+      Message.SucceededSaveNote({ requestId: 1, note: permanent }),
     ),
     Story.model((model) => {
       expect(model.editor._tag).toBe("Closed")
-      expect(model.selectedKind).toBe("fleeting")
-      expect(notesFrom(model)).toContainEqual(created)
+      expect(Option.getOrNull(AsyncData.getOrElse(model.note, () => Option.none())))
+        .toMatchObject({ id: permanent.id })
+      expect(notesOf(model).map((item) => item.id)).toEqual([permanent.id])
     }),
-    Story.Command.expectNone(),
-  )
-})
-
-test("a literature note requires a reference", () => {
-  Story.story(
-    update,
-    Story.given(loadedModel([literature], { selectedKind: "literature" })),
-    Story.message(Message.ClickedNewNote()),
-    Story.message(Message.UpdatedTitle({ title: "Source" })),
-    Story.message(Message.UpdatedContent({ content: "Quote" })),
-    Story.message(Message.ClickedSavedNote()),
-    Story.model((model) => {
-      expect(model.editor._tag).toBe("Open")
-      expect(Option.getOrNull(model.lastError)).toContain(
-        "Reference is required for literature notes.",
-      )
-    }),
-    Story.Command.expectNone(),
-  )
-})
-
-test("the editor enforces the shared per-kind content limit", () => {
-  Story.story(
-    update,
-    Story.given(loadedModel()),
-    Story.message(Message.ClickedNewNote()),
-    Story.message(Message.UpdatedTitle({ title: "Too long" })),
-    Story.message(Message.UpdatedContent({ content: "a".repeat(1001) })),
-    Story.message(Message.ClickedSavedNote()),
-    Story.model((model) => {
-      expect(model.editor._tag).toBe("Open")
-      expect(Option.getOrNull(model.lastError)).toContain(
-        "Content must be 1000 characters or fewer.",
-      )
-    }),
-    Story.Command.expectNone(),
-  )
-})
-
-test("a stale load result cannot overwrite a newer request", () => {
-  // Two refreshes overlap here. `update` is used directly because Story and
-  // Scene intentionally stop before a new Message while a Command is pending.
-  const firstRefresh = update(loadedModel(), Message.ClickedRefreshNotes())
-  const secondRefresh = update(
-    firstRefresh.model,
-    Message.ClickedRefreshNotes(),
-  )
-
-  expect(secondRefresh.model.loadRequestId).toBe(2)
-  expect(AsyncData.isRefreshing(secondRefresh.model.notes)).toBe(true)
-  expect(noteTitles(secondRefresh.model)).toEqual([
-    "A quick thought",
-    "A source",
-    "An evergreen idea",
-  ])
-
-  const stale = update(
-    secondRefresh.model,
-    Message.SucceededLoadNotes({ requestId: 1, notes: [permanent] }),
-  )
-  expect(noteTitles(stale.model)).toEqual([
-    "A quick thought",
-    "A source",
-    "An evergreen idea",
-  ])
-
-  const latest = update(
-    stale.model,
-    Message.SucceededLoadNotes({ requestId: 2, notes: [literature] }),
-  )
-  expect(noteTitles(latest.model)).toEqual(["A source"])
-})
-
-test("a stale save result cannot close a newer editor", () => {
-  const created = decodeNote({
-    type: "fleeting",
-    id: "fleeting-new",
-    title: "Saved first",
-    content: "First body",
-    createdAt: 4,
-    updatedAt: 4,
-  })
-
-  const opened = update(loadedModel(), Message.ClickedNewNote())
-  const titled = update(
-    opened.model,
-    Message.UpdatedTitle({ title: "Saved first" }),
-  )
-  const written = update(
-    titled.model,
-    Message.UpdatedContent({ content: "First body" }),
-  )
-  const saving = update(written.model, Message.ClickedSavedNote())
-
-  const reopened = update(saving.model, Message.ClickedNewNote())
-  const retitled = update(
-    reopened.model,
-    Message.UpdatedTitle({ title: "Still editing" }),
-  )
-  const resolved = update(
-    retitled.model,
-    Message.SucceededSaveNote({ requestId: 1, note: created }),
-  )
-
-  expect(resolved.model.editor._tag).toBe("Open")
-  expect(
-    EditorState.match(resolved.model.editor, {
-      Closed: () => "",
-      Saving: () => "",
-      Open: ({ draft }) => draft.title,
-    }),
-  ).toBe("Still editing")
-  expect(notesFrom(resolved.model)).toContainEqual(created)
-})
-
-test("a successful save settles an in-flight refresh and ignores its result", () => {
-  const created = decodeNote({
-    type: "fleeting",
-    id: "fleeting-new",
-    title: "Saved during refresh",
-    content: "Body",
-    createdAt: 4,
-    updatedAt: 4,
-  })
-
-  const refreshed = update(loadedModel(), Message.ClickedRefreshNotes())
-  expect(AsyncData.isRefreshing(refreshed.model.notes)).toBe(true)
-
-  const opened = update(refreshed.model, Message.ClickedNewNote())
-  const titled = update(
-    opened.model,
-    Message.UpdatedTitle({ title: "Saved during refresh" }),
-  )
-  const written = update(
-    titled.model,
-    Message.UpdatedContent({ content: "Body" }),
-  )
-  const saving = update(written.model, Message.ClickedSavedNote())
-  const saved = update(
-    saving.model,
-    Message.SucceededSaveNote({ requestId: 1, note: created }),
-  )
-
-  expect(AsyncData.isSuccess(saved.model.notes)).toBe(true)
-  expect(noteTitles(saved.model)).toContain("Saved during refresh")
-
-  const stale = update(
-    saved.model,
-    Message.SucceededLoadNotes({ requestId: 1, notes: [permanent] }),
-  )
-  expect(AsyncData.isSuccess(stale.model.notes)).toBe(true)
-  expect(noteTitles(stale.model)).toContain("Saved during refresh")
-  expect(noteTitles(stale.model)).not.toEqual(["An evergreen idea"])
-})
-
-test("a successful save also settles a stale list", () => {
-  const created = decodeNote({
-    type: "fleeting",
-    id: "fleeting-stale",
-    title: "Saved after a failed refresh",
-    content: "Body",
-    createdAt: 4,
-    updatedAt: 4,
-  })
-
-  const refreshed = update(loadedModel(), Message.ClickedRefreshNotes())
-  const failed = update(
-    refreshed.model,
-    Message.FailedLoadNotes({ requestId: 1, message: "Network down" }),
-  )
-  expect(AsyncData.isStale(failed.model.notes)).toBe(true)
-
-  const saved = update(
-    failed.model,
-    Message.SucceededSaveNote({ requestId: 1, note: created }),
-  )
-
-  expect(AsyncData.isSuccess(saved.model.notes)).toBe(true)
-  expect(noteTitles(saved.model)).toContain("Saved after a failed refresh")
-  expect(noteTitles(saved.model)).toHaveLength(4)
-})
-
-test("a successful delete settles an in-flight refresh and ignores its result", () => {
-  const refreshed = update(loadedModel(), Message.ClickedRefreshNotes())
-  expect(AsyncData.isRefreshing(refreshed.model.notes)).toBe(true)
-
-  const deleted = update(
-    refreshed.model,
-    Message.SucceededDeleteNote({ kind: "fleeting", id: fleeting.id }),
-  )
-
-  expect(AsyncData.isSuccess(deleted.model.notes)).toBe(true)
-  expect(
-    Array.some(notesFrom(deleted.model), (note) => note.id === fleeting.id),
-  ).toBe(false)
-
-  const stale = update(
-    deleted.model,
-    Message.SucceededLoadNotes({ requestId: 1, notes: [fleeting] }),
-  )
-  expect(AsyncData.isSuccess(stale.model.notes)).toBe(true)
-  expect(
-    Array.some(notesFrom(stale.model), (note) => note.id === fleeting.id),
-  ).toBe(false)
-})
-
-test("save and delete responses in either order keep the note deleted", () => {
-  const updatedFleeting = decodeNote({
-    ...fleeting,
-    title: "Changed",
-    content: "Changed body",
-    updatedAt: 10,
-  })
-  const deleteMessage = Message.SucceededDeleteNote({
-    kind: "fleeting",
-    id: fleeting.id,
-  })
-  const saveMessage = Message.SucceededSaveNote({
-    requestId: 1,
-    note: updatedFleeting,
-  })
-
-  const startSaving = (): Model => {
-    const editing = update(
-      loadedModel([fleeting, literature]),
-      Message.ClickedEditNote({ kind: "fleeting", id: fleeting.id }),
-    )
-    const titled = update(
-      editing.model,
-      Message.UpdatedTitle({ title: "Changed" }),
-    )
-    const written = update(
-      titled.model,
-      Message.UpdatedContent({ content: "Changed body" }),
-    )
-    const saving = update(written.model, Message.ClickedSavedNote())
-    expect(saving.model.editor._tag).toBe("Saving")
-    return saving.model
-  }
-
-  const hasFleeting = (model: Model): boolean =>
-    Array.some(notesFrom(model), (note) => note.id === fleeting.id)
-
-  // The save response arrives first, then the delete removes the note.
-  const savedFirst = update(startSaving(), saveMessage)
-  const deletedSecond = update(savedFirst.model, deleteMessage)
-  expect(hasFleeting(deletedSecond.model)).toBe(false)
-
-  // The delete response arrives first. The save was already in flight, so its
-  // later result must not put the note back.
-  const deletedFirst = update(startSaving(), deleteMessage)
-  expect(deletedFirst.model.editor._tag).toBe("Closed")
-  const savedSecond = update(deletedFirst.model, saveMessage)
-  expect(hasFleeting(savedSecond.model)).toBe(false)
-
-  // The tombstone only suppresses the result that was in flight at delete
-  // time; a later save is still applied normally.
-  const reopened = update(savedSecond.model, Message.ClickedNewNote())
-  const titled = update(
-    reopened.model,
-    Message.UpdatedTitle({ title: "A later note" }),
-  )
-  const written = update(
-    titled.model,
-    Message.UpdatedContent({ content: "Still allowed" }),
-  )
-  const savingAgain = update(written.model, Message.ClickedSavedNote())
-  const laterNote = decodeNote({
-    type: "fleeting",
-    id: "fleeting-later",
-    title: "A later note",
-    content: "Still allowed",
-    createdAt: 20,
-    updatedAt: 20,
-  })
-  const savedLater = update(
-    savingAgain.model,
-    Message.SucceededSaveNote({ requestId: 2, note: laterNote }),
-  )
-  expect(noteTitles(savedLater.model)).toContain("A later note")
-})
-
-test("saving one kind replaces only the matching kind and id", () => {
-  const sameId = "shared-id"
-  const fleetingSame = decodeNote({
-    type: "fleeting",
-    id: sameId,
-    title: "Fleeting same id",
-    content: "Old",
-    createdAt: 1,
-    updatedAt: 1,
-  })
-  const literatureSame = decodeNote({
-    type: "literature",
-    id: sameId,
-    title: "Literature same id",
-    content: "Old",
-    reference: "Source",
-    createdAt: 1,
-    updatedAt: 2,
-  })
-  const literatureUpdated = decodeNote({
-    ...literatureSame,
-    title: "Literature updated",
-    updatedAt: 5,
-  })
-
-  Story.story(
-    update,
-    Story.given(loadedModel([fleetingSame, literatureSame])),
-    Story.message(Message.ClickedEditNote({ kind: "literature", id: sameId })),
-    Story.message(Message.UpdatedTitle({ title: "Literature updated" })),
-    Story.message(Message.ClickedSavedNote()),
+    Story.Command.expectHas(NavigateInternal),
     Story.Command.resolve(
-      UpdateNote,
-      Message.SucceededSaveNote({ requestId: 1, note: literatureUpdated }),
+      NavigateInternal,
+      Message.CompletedNavigateInternal(),
     ),
-    Story.model((model) => {
-      expect(notesFrom(model)).toEqual([literatureUpdated, fleetingSame])
-    }),
   )
 })
 
-test("deleting one kind and id leaves a note with the same id in another kind", () => {
-  const sameId = "shared-id"
-  const fleetingSame = decodeNote({
-    type: "fleeting",
-    id: sameId,
-    title: "Fleeting same id",
-    content: "Keep me",
-    createdAt: 1,
-    updatedAt: 1,
-  })
-  const literatureSame = decodeNote({
-    type: "literature",
-    id: sameId,
-    title: "Literature same id",
-    content: "Keep me too",
-    reference: "Source",
-    createdAt: 1,
-    updatedAt: 2,
-  })
-
+test("delete requires the confirmation route, then removes the note from the list", () => {
   Story.story(
     update,
-    Story.given(loadedModel([fleetingSame, literatureSame])),
-    Story.message(Message.ClickedDeleteNote({ kind: "fleeting", id: sameId })),
+    Story.given(
+      baseModel(AppRoute.DeleteNote({ noteId: fleeting.id }), {
+        notes: AsyncData.Success({ data: [fleeting, permanent] }),
+        note: AsyncData.Success({ data: Option.some(fleeting) }),
+      }),
+    ),
+    Story.message(Message.ConfirmedDelete()),
+    Story.model((model) => {
+      expect(model.deleteRequestId).toBe(1)
+    }),
+    Story.Command.expectHas(DeleteNote),
     Story.Command.resolve(
       DeleteNote,
-      Message.SucceededDeleteNote({ kind: "fleeting", id: sameId }),
+      Message.SucceededDeleteNote({ requestId: 1, noteId: fleeting.id }),
     ),
     Story.model((model) => {
-      expect(notesFrom(model)).toEqual([literatureSame])
+      expect(notesOf(model).map((item) => item.id)).toEqual([permanent.id])
+      expect(Option.isNone(AsyncData.getOrElse(model.note, () => Option.some(fleeting)))).toBe(true)
     }),
-  )
-})
-
-test("a failed refresh keeps data and does not duplicate the error alert", () => {
-  Story.story(
-    update,
-    Story.given(loadedModel()),
-    Story.message(Message.ClickedRefreshNotes()),
+    Story.Command.expectHas(NavigateInternal),
     Story.Command.resolve(
-      LoadNotes({ requestId: 1 }),
-      Message.FailedLoadNotes({ requestId: 1, message: "Network down" }),
+      NavigateInternal,
+      Message.CompletedNavigateInternal(),
     ),
-    Story.model((model) => {
-      expect(AsyncData.isStale(model.notes)).toBe(true)
-      expect(noteTitles(model)).toHaveLength(3)
-      expect(Option.isNone(model.lastError)).toBe(true)
-    }),
   )
 })
 
-test("view escapes note text instead of rendering markup", async () => {
-  const malicious = decodeNote({
-    type: "fleeting",
-    id: "fleeting-xss",
-    title: '<script>alert("title")</script>',
-    content: '<img src=x onerror="alert(1)">',
-    createdAt: 1,
-    updatedAt: 1,
-  })
-  const model = loadedModel([malicious])
-
-  const rendered = await Effect.runPromise(
-    Server.renderToString(
-      { init: () => ({ model }), view },
-      { isHydratable: false },
-    ),
+test("the home list renders IDs, topics, and note text as escaped content", () => {
+  const dangerous = note(
+    "fleeting",
+    "20261117220000-injection",
+    "Injection attempt",
+    "<script>alert('x')</script>",
   )
-
-  expect(rendered.html).toContain("&lt;script&gt;")
-  expect(rendered.html).not.toContain('<script>alert("title")</script>')
-  expect(rendered.html).not.toContain('<img src=x onerror="alert(1)">')
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(homeRoute, {
+        notes: AsyncData.Success({ data: [dangerous, permanent] }),
+      }),
+    ),
+    Scene.expect(Scene.role("link", { name: "Injection attempt" })).toExist(),
+    Scene.expect(Scene.text("Bounded recall")).toExist(),
+    Scene.expect(Scene.role("link", { name: "agent-memory" })).toExist(),
+    Scene.expect(Scene.selector("script")).toBeAbsent(),
+  )
 })
 
-test("view renders the selected kind and its notes", async () => {
-  const rendered = await Effect.runPromise(
+test("the detail view is ID-based and renders the full note as text", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(AppRoute.NoteDetail({ noteId: permanent.id }), {
+        note: AsyncData.Success({ data: Option.some(permanent) }),
+      }),
+    ),
+    Scene.expect(Scene.role("heading", { name: "Bounded recall" })).toExist(),
+    Scene.expect(Scene.text("Every recall operation has a hard maximum.")).toExist(),
+    Scene.expect(Scene.text(permanent.id)).toExist(),
+    Scene.expect(Scene.text(permanent.path)).toExist(),
+    Scene.expect(Scene.role("link", { name: "Edit" })).toExist(),
+    Scene.expect(Scene.role("link", { name: "Delete" })).toExist(),
+  )
+})
+
+test("the delete confirmation names the note and warns about the backup move", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(AppRoute.DeleteNote({ noteId: permanent.id }), {
+        note: AsyncData.Success({ data: Option.some(permanent) }),
+      }),
+    ),
+    Scene.expect(Scene.role("heading", { name: "Delete this note?" })).toExist(),
+    Scene.expect(Scene.text(/moved out of the note root/)).toExist(),
+    Scene.expect(Scene.role("button", { name: "Delete note" })).toExist(),
+    Scene.expect(Scene.role("link", { name: "Cancel" })).toExist(),
+  )
+})
+
+test("search results render the note ID, path, and excerpt", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(AppRoute.Search({ q: Option.some("recall"), type: Option.none() }), {
+        search: AsyncData.Success({
+          data: [
+            {
+              note: permanent,
+              id: permanent.id,
+              path: permanent.path,
+              score: 5,
+            },
+          ],
+        }),
+      }),
+    ),
+    Scene.expect(Scene.role("heading", { name: "Search" })).toExist(),
+    Scene.expect(Scene.role("link", { name: "Bounded recall" })).toExist(),
+    Scene.expect(Scene.text(`ID ${permanent.id}`)).toExist(),
+    Scene.expect(Scene.text(permanent.path)).toExist(),
+  )
+})
+
+test("topics render counts and link to cited topic pages", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(AppRoute.Topics(), {
+        topics: AsyncData.Success({
+          data: [{ topic: "agent-memory", noteCount: 2 }],
+        }),
+      }),
+    ),
+    Scene.expect(Scene.role("heading", { name: "Topics" })).toExist(),
+    Scene.expect(Scene.text("agent-memory")).toExist(),
+    Scene.expect(Scene.text("2 notes")).toExist(),
+    Scene.expect(Scene.role("link", { name: "Open topic page" })).toExist(),
+  )
+})
+
+test("wiki sections and citations render without persisted HTML", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(
+        AppRoute.Wiki({ topic: "agent-memory", mode: Option.none() }),
+        {
+          wiki: AsyncData.Success({
+            data: {
+              topic: "agent-memory",
+              generatedAt: "2026-11-17T20:10:00Z",
+              mode: "extractive",
+              noteCount: 1,
+              sources: [
+                {
+                  id: permanent.id as never,
+                  path: permanent.path,
+                  type: "permanent",
+                  title: permanent.title,
+                  updatedAt: "2026-11-17T19:35:02Z",
+                },
+              ],
+              sections: [
+                {
+                  heading: "Bounded recall",
+                  markdown: "> Every recall operation has a hard maximum.",
+                  citations: [
+                    {
+                      noteId: permanent.id as never,
+                      path: permanent.path,
+                      excerpt: "Every recall operation has a hard maximum.",
+                    },
+                  ],
+                },
+              ],
+              markdown: "# Topic: agent-memory\n\n> Every recall operation has a hard maximum.",
+            },
+          }),
+        },
+      ),
+    ),
+    Scene.expect(Scene.role("heading", { name: "Topic: agent-memory" })).toExist(),
+    Scene.expect(Scene.text(/Derived on demand/)).toExist(),
+    Scene.expect(Scene.role("link", { name: permanent.id })).toExist(),
+    Scene.expect(Scene.selector("script")).toBeAbsent(),
+  )
+})
+
+test("the review queue shows an inspectable diff and approve/reject controls", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(AppRoute.Review(), {
+        pending: AsyncData.Success({
+          data: {
+            proposals: [
+              {
+                id: "proposal-20261117210000-deadbeef",
+                operation: "create",
+                noteId: permanent.id,
+                path: `/notes/${permanent.id}.md`,
+                summary: "Create a permanent note",
+                createdAt: "2026-11-17T21:00:00Z",
+                expiresAt: "2026-11-24T21:00:00Z",
+                actor: "agent-test",
+                stale: false,
+                expired: false,
+                diff: "+title: Bounded recall\n+Every recall operation has a hard maximum.",
+              },
+            ],
+            invalid: [],
+          },
+        }),
+      }),
+    ),
+    Scene.expect(Scene.role("heading", { name: "Review" })).toExist(),
+    Scene.expect(Scene.text("Create a permanent note")).toExist(),
+    Scene.expect(Scene.role("button", { name: "Approve" })).toExist(),
+    Scene.expect(Scene.role("button", { name: "Reject" })).toExist(),
+    Scene.expect(Scene.text("+title: Bounded recall")).toExist(),
+  )
+})
+
+test("the server renders the route shell before browser commands run", () => {
+  const rendered = Effect.runSync(
     Server.renderToString(
-      { init: () => ({ model: loadedModel() }), view },
-      { isHydratable: false },
+      { routing: {}, init, view },
+      { url: `http://localhost/notes/${permanent.id}`, isHydratable: false },
     ),
   )
 
   expect(rendered.html).toContain("Slipmem")
-  expect(rendered.html).toContain("A quick thought")
-  expect(rendered.html).not.toContain("A source")
-  expect(rendered.html).toContain("New note")
-  expect(rendered.html).toContain("Edit")
-  expect(rendered.html).toContain("Delete")
+  expect(rendered.html).toContain("Loading note...")
 })
 
-test("kind filters expose their selected state to assistive technology", () => {
-  Scene.scene(
-    { update, view },
-    Scene.given(loadedModel()),
-    Scene.expect(
-      Scene.role("button", { name: /^Fleeting/, pressed: true }),
-    ).toExist(),
-    Scene.expect(
-      Scene.role("button", { name: /^Literature/, pressed: false }),
-    ).toExist(),
-    Scene.click(Scene.role("button", { name: /^Literature/ })),
-    Scene.expect(
-      Scene.role("button", { name: /^Literature/, pressed: true }),
-    ).toExist(),
-    Scene.expect(Scene.text("A source")).toExist(),
-    Scene.expect(Scene.text("A quick thought")).toBeAbsent(),
-  )
-})
-
-test("the editor labels every field and keeps the list visible while refreshing", () => {
+test("health reports the Markdown root and the local security posture", () => {
   Scene.scene(
     { update, view },
     Scene.given(
-      loadedModel([fleeting], {
-        notes: AsyncData.Refreshing({ data: [fleeting] }),
+      baseModel(AppRoute.Health(), {
+        health: AsyncData.Success({
+          data: {
+            ok: true,
+            service: "slipmem",
+            noteRoot: "/workspace/.slipmem",
+            index: {
+              mode: "fts5",
+              path: "/home/user/.cache/slipmem/index/index.sqlite",
+              noteCount: 3,
+            },
+          },
+        }),
       }),
     ),
-    Scene.expect(Scene.text("Refreshing notes...")).toExist(),
-    Scene.expect(Scene.text("A quick thought")).toExist(),
-    Scene.click(Scene.role("button", { name: "New note" })),
-    Scene.expect(Scene.selector("#note-title")).toHaveAccessibleName("Title"),
-    Scene.expect(Scene.selector("#note-content")).toHaveAccessibleName("Content"),
-  )
-})
-
-test("the literature editor associates its reference field", () => {
-  Scene.scene(
-    { update, view },
-    Scene.given(loadedModel([literature], { selectedKind: "literature" })),
-    Scene.click(Scene.role("button", { name: "New note" })),
-    Scene.expect(Scene.selector("#note-title")).toHaveAccessibleName("Title"),
-    Scene.expect(Scene.selector("#note-content")).toHaveAccessibleName("Content"),
-    Scene.expect(Scene.selector("#note-reference")).toHaveAccessibleName(
-      "Reference",
-    ),
-  )
-})
-
-test("the scene submits a valid draft through the form", () => {
-  const created = decodeNote({
-    type: "fleeting",
-    id: "fleeting-new",
-    title: "Captured",
-    content: "A body",
-    createdAt: 4,
-    updatedAt: 4,
-  })
-
-  Scene.scene(
-    { update, view },
-    Scene.given(loadedModel()),
-    Scene.click(Scene.role("button", { name: "New note" })),
-    Scene.type(Scene.selector("#note-title"), "Captured"),
-    Scene.type(Scene.selector("#note-content"), "A body"),
-    Scene.click(Scene.role("button", { name: "Save note" })),
-    Scene.Command.expectHas(CreateNote),
-    Scene.Command.resolve(
-      CreateNote,
-      Message.SucceededSaveNote({ requestId: 1, note: created }),
-    ),
-    Scene.expect(Scene.text("Captured")).toExist(),
-    Scene.expect(Scene.text("Saving fleeting note")).toBeAbsent(),
-  )
-})
-
-test("the scene shows a schema validation error without sending a command", () => {
-  Scene.scene(
-    { update, view },
-    Scene.given(loadedModel([], { selectedKind: "literature" })),
-    Scene.click(Scene.role("button", { name: "New note" })),
-    Scene.type(Scene.selector("#note-title"), "A source"),
-    Scene.type(Scene.selector("#note-content"), "A quote"),
-    Scene.click(Scene.role("button", { name: "Save note" })),
-    Scene.expect(Scene.role("alert")).toContainText(
-      "Reference is required for literature notes.",
-    ),
-    Scene.Command.expectNone(),
+    Scene.expect(Scene.role("heading", { name: "Health" })).toExist(),
+    Scene.expect(Scene.text("/workspace/.slipmem")).toExist(),
+    Scene.expect(Scene.text("fts5")).toExist(),
+    Scene.expect(Scene.text(/unauthenticated/)).toExist(),
   )
 })

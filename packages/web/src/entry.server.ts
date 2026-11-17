@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { Server } from "foldkit/experimental"
 
-import { makeApiHandler, resolveDatabasePath } from "@slipmem/server"
+import { makeApiHandler, resolveNoteRootPath } from "@slipmem/server"
 
 import { init, view } from "./main"
 
@@ -11,8 +11,8 @@ type ApiHandler = ReturnType<typeof makeApiHandler>
 
 // Vite's development SSR runner re-evaluates this module after edits without
 // disposing its previous instance. Keep the current handler on `globalThis` so
-// the new instance can close the old SQLite connection before replacing it,
-// and close the current handler on shutdown.
+// the new instance can close the old search index before replacing it, and
+// close the current handler on shutdown.
 type ServerGlobals = typeof globalThis & {
   __slipmemApiHandler?: ApiHandler
   __slipmemShutdownRegistered?: boolean
@@ -31,7 +31,10 @@ if (previousApi !== undefined) {
   void previousApi.dispose()
 }
 
-const api = makeApiHandler(resolveDatabasePath())
+// Markdown is the only source of truth. A missing `.slipmem/` is reported with
+// the `slipmem init` guidance instead of silently creating a repository or
+// falling back to the retired SQLite note tables.
+const api = makeApiHandler(resolveNoteRootPath())
 serverGlobals.__slipmemApiHandler = api
 
 if (serverGlobals.__slipmemShutdownRegistered !== true) {
@@ -46,15 +49,12 @@ if (serverGlobals.__slipmemShutdownRegistered !== true) {
 }
 
 const isApiRequest = (pathname: string): boolean =>
-  pathname === "/api" ||
-  pathname.startsWith("/api/") ||
-  pathname === "/mcp" ||
-  pathname.startsWith("/mcp/")
+  pathname === "/api" || pathname.startsWith("/api/")
 
 /**
- * One Web fetch handler serves the Foldkit page, the JSON API, and the
- * streamable HTTP MCP endpoint. The dev host and the built server entry both
- * reach this function, so there is no separate API process to start.
+ * One Web fetch handler serves the Foldkit page and the JSON API. The dev host
+ * and the built server entry both reach this function, so there is no separate
+ * API process to start and no browser-only source of truth.
  */
 export const renderPage = (request: Request): Promise<Server.EntryResult> =>
   Effect.runPromise(
@@ -66,12 +66,16 @@ export const renderPage = (request: Request): Promise<Server.EntryResult> =>
         return Server.Responded(response)
       }
 
-      const renderedApplication = yield* Server.renderToString({ init, view })
+      const renderedApplication = yield* Server.renderToString(
+        { routing: {}, init, view },
+        { url: request.url },
+      )
 
       return Server.Rendered(renderedApplication, {
         headers: {
           "cache-control": "no-store",
           "x-content-type-options": "nosniff",
+          "referrer-policy": "same-origin",
         },
       })
     }),
