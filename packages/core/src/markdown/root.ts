@@ -3,11 +3,12 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from "node:fs"
 import { homedir } from "node:os"
-import { dirname, join, resolve, sep } from "node:path"
+import { basename, dirname, join, resolve, sep } from "node:path"
 import { createHash } from "node:crypto"
 import { MarkdownError, markdownError } from "./errors.js"
 
@@ -276,3 +277,43 @@ export const isPathInside = (child: string, parentPath: string): boolean => {
     childResolved.startsWith(`${parentResolved}${sep}`)
   )
 }
+
+export const isSymbolicLinkPath = (path: string): boolean => {
+  try {
+    return lstatSync(path).isSymbolicLink()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Resolves every existing component of a possibly-not-yet-created path. This is
+ * the containment check for state and cache directories: a lexical check would
+ * treat `backups -> .slipmem` as safely outside even though the write lands
+ * inside the note root.
+ */
+export const realPathOf = (path: string): string => {
+  let current = resolve(path)
+  const suffix: string[] = []
+
+  for (;;) {
+    try {
+      return join(realpathSync(current), ...suffix)
+    } catch (cause) {
+      // A broken or looping symlink is not a path we can prove safe.
+      if (isSymbolicLinkPath(current)) {
+        throw cause
+      }
+      const next = dirname(current)
+      if (next === current) {
+        throw cause
+      }
+      suffix.unshift(basename(current))
+      current = next
+    }
+  }
+}
+
+/** True when the real, symlink-resolved paths are inside one another. */
+export const isRealPathInside = (child: string, parentPath: string): boolean =>
+  isPathInside(realPathOf(child), realPathOf(parentPath))

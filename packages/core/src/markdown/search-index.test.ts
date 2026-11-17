@@ -4,12 +4,14 @@ import { NoteService } from "../note/note.service"
 import { MarkdownNoteService } from "../note/markdown-note.service"
 import { Effect, Exit, Layer } from "effect"
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   utimesSync,
   writeFileSync,
@@ -403,6 +405,71 @@ describe("disposable FTS search index", () => {
       expect(error.area).toBe("index")
       expect(error.code).toBe("index-error")
       expect(existsSync(join(fixture.root, "cache"))).toBe(false)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("refuses a cache directory symlinked into the note root before chmod or create", async () => {
+    const fixture = setup()
+    try {
+      chmodSync(fixture.root, 0o755)
+      const linkedCache = join(fixture.base, "linked-cache")
+      symlinkSync(fixture.root, linkedCache)
+
+      const error = await failure(
+        makeMarkdownSearchIndex({
+          root: fixture.root,
+          cacheDir: linkedCache,
+        }),
+      )
+      expect(error.area).toBe("index")
+      expect(error.code).toBe("index-error")
+      expect(error.message).toContain("note root")
+      expect(statSync(fixture.root).mode & 0o777).toBe(0o755)
+      expect(existsSync(join(fixture.root, INDEX_FILENAME))).toBe(false)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("resolves a cache path through an ancestor symlink before creating it", async () => {
+    const fixture = setup()
+    try {
+      const outer = join(fixture.base, "outer-cache-link")
+      symlinkSync(fixture.root, outer)
+
+      const error = await failure(
+        makeMarkdownSearchIndex({
+          root: fixture.root,
+          cacheDir: join(outer, "nested", "cache"),
+        }),
+      )
+      expect(error.area).toBe("index")
+      expect(error.message).toContain("symlink")
+      expect(existsSync(join(fixture.root, "nested"))).toBe(false)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("refuses a symlinked index file", async () => {
+    const fixture = setup()
+    try {
+      mkdirSync(fixture.cache, { recursive: true })
+      const realIndex = join(fixture.base, "elsewhere.sqlite")
+      const db = new Database(realIndex, { create: true })
+      db.close()
+      symlinkSync(realIndex, join(fixture.cache, INDEX_FILENAME))
+
+      const error = await failure(
+        makeMarkdownSearchIndex({
+          root: fixture.root,
+          cacheDir: fixture.cache,
+        }),
+      )
+      expect(error.area).toBe("index")
+      expect(error.message).toContain("must not be a symbolic link")
     } finally {
       cleanup(fixture)
     }

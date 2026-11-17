@@ -35,6 +35,8 @@ import {
 import {
   defaultBackupDirectory,
   isPathInside,
+  isRealPathInside,
+  isSymbolicLinkPath,
   rootSymlinkError,
   STATE_DIRECTORY,
 } from "./root.js"
@@ -347,6 +349,30 @@ const ensureBackupDirectory = (root: string, backupDir: string): string => {
   if (isPathInside(backupDir, root)) {
     throw new Error("The backup directory must be outside the note root.")
   }
+
+  // A lexical check alone cannot see `backups -> .slipmem`. Resolve the real
+  // path before creating or moving anything, and never chmod or write through
+  // a final symlink supplied as the backup directory.
+  if (isSymbolicLinkPath(backupDir)) {
+    throw new Error(
+      "The backup directory must not be a symbolic link; point it at a real directory outside the note root.",
+    )
+  }
+
+  let resolvesInsideRoot: boolean
+  try {
+    resolvesInsideRoot = isRealPathInside(backupDir, root)
+  } catch (cause) {
+    throw new Error(
+      `Could not resolve the backup directory safely: ${cause instanceof Error ? cause.message : String(cause)}`,
+    )
+  }
+  if (resolvesInsideRoot) {
+    throw new Error(
+      "The backup directory resolves inside the note root through a symlink; choose a real directory outside the note root.",
+    )
+  }
+
   mkdirSync(backupDir, { recursive: true, mode: 0o700 })
   return backupDir
 }

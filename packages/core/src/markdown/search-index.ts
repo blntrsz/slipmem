@@ -19,6 +19,8 @@ import {
 import {
   defaultIndexCacheDirectory,
   isPathInside,
+  isRealPathInside,
+  isSymbolicLinkPath,
 } from "./root.js"
 
 export const INDEX_SCHEMA_VERSION = 1
@@ -150,11 +152,62 @@ interface SearchRow extends NoteRow {
 const indexError = (path: string, message: string): MarkdownError =>
   markdownError({ area: "index", code: "index-error", path, message })
 
+const cacheDirectory = (config: MarkdownSearchIndexConfig): string =>
+  resolve(config.cacheDir ?? defaultIndexCacheDirectory(config.root))
+
 const indexPath = (config: MarkdownSearchIndexConfig): string =>
-  join(
-    resolve(config.cacheDir ?? defaultIndexCacheDirectory(config.root)),
-    INDEX_FILENAME,
-  )
+  join(cacheDirectory(config), INDEX_FILENAME)
+
+/**
+ * The disposable index may not be redirected into the note root through a
+ * symlink, and it must not chmod or open through a linked cache path. Missing
+ * directories are checked through their nearest real ancestor so creation
+ * cannot land inside the root either.
+ */
+const validateLocation = (
+  root: string,
+  cacheDir: string,
+): MarkdownError | null => {
+  if (isPathInside(cacheDir, root)) {
+    return indexError(
+      cacheDir,
+      "The disposable index must live outside the note root.",
+    )
+  }
+
+  let resolvesInsideRoot: boolean
+  try {
+    resolvesInsideRoot = isRealPathInside(cacheDir, root)
+  } catch (cause) {
+    return indexError(
+      cacheDir,
+      `Could not resolve the index cache directory safely: ${cause instanceof Error ? cause.message : String(cause)}`,
+    )
+  }
+  if (resolvesInsideRoot) {
+    return indexError(
+      cacheDir,
+      "The index cache directory resolves inside the note root through a symlink; point cacheDir at a real directory outside the note root.",
+    )
+  }
+
+  if (isSymbolicLinkPath(cacheDir)) {
+    return indexError(
+      cacheDir,
+      "The index cache directory must not be a symbolic link; point cacheDir at a real directory.",
+    )
+  }
+
+  const databasePath = join(cacheDir, INDEX_FILENAME)
+  if (existsSync(databasePath) && lstatSync(databasePath).isSymbolicLink()) {
+    return indexError(
+      databasePath,
+      "The index file must not be a symbolic link; remove it and rebuild the index.",
+    )
+  }
+
+  return null
+}
 
 const ensureUserOnlyDirectory = (path: string): void => {
   mkdirSync(path, { recursive: true, mode: 0o700 })
@@ -416,13 +469,9 @@ export const makeMarkdownSearchIndex = (
   Effect.gen(function* () {
     const root = resolve(config.root)
     const path = indexPath(config)
-    if (isPathInside(path, root)) {
-      return yield* Effect.fail(
-        indexError(
-          path,
-          "The disposable index must live outside the note root.",
-        ),
-      )
+    const locationError = validateLocation(root, cacheDirectory(config))
+    if (locationError !== null) {
+      return yield* Effect.fail(locationError)
     }
     const database = yield* Effect.try({
       try: () => openDatabase(root, path),

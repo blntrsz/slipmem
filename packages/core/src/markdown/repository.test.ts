@@ -434,6 +434,66 @@ describe("Markdown repository path, symlink, size, and lock guards", () => {
     }
   })
 
+  test("refuses a backup directory that is a symlink into the note root", async () => {
+    const fixture = setup()
+    try {
+      const repo = await repository(fixture)
+      const created = await Effect.runPromise(
+        repo.create({
+          type: "fleeting",
+          title: "Keep me",
+          content: "Deletion must not move this inside the note root.",
+        }),
+      )
+
+      const linkedBackup = join(fixture.base, "linked-backups")
+      symlinkSync(fixture.root, linkedBackup)
+      const unsafe = await Effect.runPromise(
+        makeMarkdownNoteRepository({
+          root: fixture.root,
+          backupDir: linkedBackup,
+        }),
+      )
+
+      const error = await failure(unsafe.delete(created.id))
+      expect(error.area).toBe("repository")
+      expect(error.code).toBe("backup-failed")
+      expect(existsSync(join(fixture.root, created.filename))).toBe(true)
+      expect(
+        readdirSync(fixture.root).filter((name) => name.endsWith(".md")),
+      ).toEqual([created.filename])
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("resolves a backup directory through an ancestor symlink before writing", async () => {
+    const fixture = setup()
+    try {
+      const repo = await repository(fixture)
+      const created = await Effect.runPromise(
+        repo.create({ type: "fleeting", title: "Ancestor", content: "Body." }),
+      )
+
+      const outer = join(fixture.base, "outer-link")
+      symlinkSync(fixture.root, outer)
+      const unsafe = await Effect.runPromise(
+        makeMarkdownNoteRepository({
+          root: fixture.root,
+          backupDir: join(outer, "nested", "backups"),
+        }),
+      )
+
+      const error = await failure(unsafe.delete(created.id))
+      expect(error.code).toBe("backup-failed")
+      expect(error.message).toContain("resolves inside the note root")
+      expect(existsSync(join(fixture.root, created.filename))).toBe(true)
+      expect(existsSync(join(fixture.root, "nested"))).toBe(false)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("rejects note files larger than 1 MiB on read", async () => {
     const fixture = setup()
     try {
