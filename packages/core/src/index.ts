@@ -170,3 +170,8 @@ export {
   type MigrationVerificationNote,
   type MigrationVerificationReport,
 } from "./migration/migration-import"
+
+// Approval and wiki are additive core services. They consume the narrow parts
+// of `MarkdownNoteRepository` they need and do not change SQLite behavior.
+export * from "./approval/index"
+export * from "./wiki/index"
