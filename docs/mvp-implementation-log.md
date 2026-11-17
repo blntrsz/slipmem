@@ -237,6 +237,31 @@ and `scripts/tour` work from other workers made the root typecheck and a couple
 of tour safety tests fail. Those workers have since committed and the root
 typecheck passes; see the final handoff gate.
 
+## 3.4 Phase 1 handoff gate
+
+Phase 1 slices are committed as:
+
+- `9620de9` safe parser and fixture replay
+- `a8ecca9` root resolution, repository CRUD, lock, backups, and `check`
+- `13340eb` disposable FTS index and `NoteService` adapter
+- `36a3e7c` parser/path/index hardening
+
+Full gate at this boundary: `bun run check` passes - oxlint, root and web
+typecheck, `bun test` **191 pass, 0 fail, 1147 assertions, 21 files**, and the
+Vite client/SSR web build. The existing server, MCP, and web runtime still use
+SQLite; no surface was cut over.
+
+Interfaces ready for the next worker:
+
+- `resolveNoteRoot`, `initializeNoteRoot`, `MarkdownNoteRepositoryLive`
+- `MarkdownNoteRepository` (`list`, `listNotes`, `listTitles`, `get`, `getInfo`,
+  `create`, `update`, `delete`, `scan`)
+- `checkNoteRoot` and `indexFingerprints`
+- `MarkdownSearchIndexLive` / `MarkdownSearchIndexFromRepository`
+  (`refresh`, `rebuild`, `clear`, `search`, `searchNotes`, `listTopics`,
+  `snapshot`, `status`)
+- `MarkdownNoteService` implementing the existing `NoteService` contract
+
 
 ## 4. Incremental commit strategy
 
