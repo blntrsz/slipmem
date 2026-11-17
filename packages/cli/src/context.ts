@@ -1,9 +1,11 @@
 import {
   defaultBackupDirectory,
+  defaultIndexCacheDirectory,
   makeMarkdownNoteRepository,
   resolveNoteRoot,
   type MarkdownError,
   type MarkdownNoteRepositoryShape,
+  type MarkdownSearchIndexConfig,
   type NoteRootResolution,
 } from "@slipmem/core"
 import { Effect } from "effect"
@@ -107,3 +109,12 @@ export const openRepository = (
     now: context.now,
     backupDir: defaultBackupDirectory(root, context.env),
   })
+
+/** The disposable index always lives outside the note root. */
+export const indexConfig = (
+  context: CliContext,
+  root: string,
+): MarkdownSearchIndexConfig => ({
+  root,
+  cacheDir: defaultIndexCacheDirectory(root, context.env),
+})

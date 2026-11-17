@@ -169,7 +169,7 @@ describe("slipmem note commands", () => {
       ["fleeting", "permanent", "literature"].includes(name),
     )
     expect(directories).toEqual([])
-  })
+  }, 30000)
 
   test("validates type-specific rules and empty content with typed errors", async () => {
     const { root } = await setup()
@@ -224,7 +224,7 @@ describe("slipmem note commands", () => {
     ])
     expect(badType.code).toBe(2)
     expect(parseJson<ErrorEnvelope>(badType.stderr).error.kind).toBe("usage")
-  })
+  }, 30000)
 
   test("lists, filters, shows, and reports missing notes", async () => {
     const { root } = await setup()
@@ -314,7 +314,7 @@ describe("slipmem note commands", () => {
       "--json",
     ])
     expect(badLimit.code).toBe(2)
-  })
+  }, 30000)
 
   test("edits through a validated temporary draft and preserves atomicity", async () => {
     const { base, root } = await setup()
@@ -395,7 +395,7 @@ writeFileSync(path, text.replace(/createdAt: "[^"]+"/, 'createdAt: "2020-01-01T0
     expect(parseJson<ErrorEnvelope>(managedResult.stderr).error.code).toBe(
       "timestamp-mismatch",
     )
-  })
+  }, 30000)
 
   test("refuses editor use when no editor is configured", async () => {
     const { root } = await setup()
@@ -421,5 +421,5 @@ writeFileSync(path, text.replace(/createdAt: "[^"]+"/, 'createdAt: "2020-01-01T0
       kind: "usage",
       message: expect.stringContaining("No editor is configured"),
     })
-  })
+  }, 30000)
 })

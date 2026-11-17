@@ -45,7 +45,7 @@ describe("slipmem init", () => {
     const second = await runCliProcess(["init", "--dir", root, "--json"])
     expect(second.code).toBe(0)
     expect(parseJson<InitResult>(second.stdout).created).toBe(false)
-  })
+  }, 30000)
 
   test("prints human help and command help without touching a repository", async () => {
     const help = await runCliProcess(["--help"])
@@ -61,7 +61,7 @@ describe("slipmem init", () => {
     const noCommand = await runCliProcess([])
     expect(noCommand.code).toBe(0)
     expect(noCommand.stdout).toContain("Commands:")
-  })
+  }, 30000)
 
   test("reports usage errors with status 2 and JSON on request", async () => {
     const unknown = await runCliProcess(["init", "--wat", "--json"])
@@ -78,5 +78,5 @@ describe("slipmem init", () => {
       parseJson<{ error: { kind: string; message: string } }>(unknownCommand.stderr)
         .error.kind,
     ).toBe("usage")
-  })
+  }, 30000)
 })

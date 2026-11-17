@@ -6,11 +6,14 @@ import {
   type ParsedArguments,
 } from "./args.js"
 import type { CommandDefinition } from "./commands/command.js"
+import { checkCommand } from "./commands/check.js"
 import { editCommand } from "./commands/edit.js"
 import { initCommand } from "./commands/init.js"
 import { listCommand } from "./commands/list.js"
 import { newCommand } from "./commands/new.js"
+import { searchCommand } from "./commands/search.js"
 import { showCommand } from "./commands/show.js"
+import { topicsCommand } from "./commands/topics.js"
 import type { CliContext } from "./context.js"
 import { CliUnavailableError, CliUsageError, usageError } from "./errors.js"
 import {
@@ -27,6 +30,9 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   listCommand,
   showCommand,
   editCommand,
+  searchCommand,
+  topicsCommand,
+  checkCommand,
 ]
 
 const commandByName = (
