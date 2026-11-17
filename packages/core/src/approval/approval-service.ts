@@ -104,6 +104,8 @@ export interface ApprovalReviewReport {
   readonly invalid: ReadonlyArray<ApprovalError>
   /** Expired proposals removed by this review, if cleanup was enabled. */
   readonly removed: ReadonlyArray<string>
+  /** Old malformed proposal files moved to bounded local quarantine. */
+  readonly quarantined: ReadonlyArray<string>
 }
 
 export type ApprovalApplication =
@@ -169,6 +171,27 @@ const repositoryFailure = (
     path: error.path,
     message: `Could not ${action}: ${error.message}`,
   })
+
+/**
+ * Maps the repository's under-lock compare-and-swap failure to the approval
+ * stale-base contract. The repository check is the authoritative one: a writer
+ * can land between an earlier `review`/`apply` read and the actual mutation.
+ */
+const applyRepositoryFailure = (
+  action: string,
+  proposal: { readonly id: string; readonly noteId: string },
+  error: { readonly code: string; readonly message: string; readonly path?: string },
+): ApprovalError =>
+  error.code === "stale-base"
+    ? approvalError({
+        code: "stale-base",
+        proposalId: proposal.id,
+        noteId: proposal.noteId,
+        path: error.path,
+        message:
+          "The note changed after this proposal was created, so its base hash no longer matches. Nothing was written; ask the agent to propose again from the current note.",
+      })
+    : repositoryFailure(action, error)
 
 const invalidRequest = (
   message: string,
@@ -623,8 +646,12 @@ export const makeApprovalService = (
       options: { readonly cleanupExpired?: boolean } = {},
     ): Effect.Effect<ApprovalReviewReport, ApprovalError> =>
       Effect.gen(function* () {
-        const removed =
-          options.cleanupExpired === false ? [] : yield* store.cleanupExpired(now())
+        const cleanup =
+          options.cleanupExpired === false
+            ? { removed: [], quarantined: [] }
+            : yield* store.cleanupExpired(now())
+        const removed = cleanup.removed
+        const quarantined = cleanup.quarantined
         const edge = Markdown.toUtcTimestamp(now()).isoTimestamp
         const scan = yield* store.scan()
         const proposals: ApprovalReviewItem[] = []
@@ -656,7 +683,7 @@ export const makeApprovalService = (
           })
         }
 
-        return { proposals, invalid: scan.invalid, removed }
+        return { proposals, invalid: scan.invalid, removed, quarantined }
       })
 
     const apply = (
@@ -824,9 +851,15 @@ export const makeApprovalService = (
         }
 
         if (proposal.operation === "delete") {
-          const deleted = yield* repository.delete(proposal.noteId).pipe(
-            Effect.mapError((error) => repositoryFailure("apply the delete proposal", error)),
-          )
+          const deleted = yield* repository
+            .delete(proposal.noteId, {
+              expectedContentHash: proposal.baseHash,
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                applyRepositoryFailure("apply the delete proposal", proposal, error),
+              ),
+            )
           yield* store.remove(proposalId)
           return {
             status: "applied",
@@ -894,9 +927,12 @@ export const makeApprovalService = (
             ...(proposed.metadata.aliases === undefined
               ? {}
               : { aliases: proposed.metadata.aliases }),
+            expectedContentHash: proposal.baseHash,
           })
           .pipe(
-            Effect.mapError((error) => repositoryFailure("apply the update proposal", error)),
+            Effect.mapError((error) =>
+              applyRepositoryFailure("apply the update proposal", proposal, error),
+            ),
           )
 
         yield* store.remove(proposalId)
@@ -929,7 +965,7 @@ export const makeApprovalService = (
     const cleanupExpired = (
       nowMs?: number,
     ): Effect.Effect<ReadonlyArray<string>, ApprovalError> =>
-      store.cleanupExpired(nowMs)
+      store.cleanupExpired(nowMs).pipe(Effect.map((result) => result.removed))
 
     return {
       root: repository.root,

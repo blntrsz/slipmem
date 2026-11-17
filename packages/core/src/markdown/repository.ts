@@ -86,6 +86,22 @@ export interface UpdateMarkdownNoteInput {
   readonly aliases?: ReadonlyArray<string>
   /** Fields to merge into the preserved unknown frontmatter record. */
   readonly unknown?: Readonly<Record<string, unknown>>
+  /**
+   * Compare-and-swap guard. When set, the update only proceeds if the current
+   * whole-file SHA-256 still equals this value. The comparison happens again
+   * under the repository lock, so an edit that lands after a caller's earlier
+   * check is never overwritten.
+   */
+  readonly expectedContentHash?: string
+}
+
+export interface DeleteMarkdownNoteOptions {
+  /**
+   * Compare-and-swap guard. When set, the delete only proceeds if the current
+   * whole-file SHA-256 still equals this value. The comparison happens under
+   * the repository lock, immediately before the backup move.
+   */
+  readonly expectedContentHash?: string
 }
 
 export interface DeleteMarkdownNoteResult {
@@ -135,6 +151,7 @@ export interface MarkdownNoteRepositoryShape {
   ) => Effect.Effect<ParsedMarkdownNote, MarkdownError>
   readonly delete: (
     id: string,
+    options?: DeleteMarkdownNoteOptions,
   ) => Effect.Effect<DeleteMarkdownNoteResult, MarkdownError>
   readonly scan: () => Effect.Effect<RepositoryScan, MarkdownError>
 }
@@ -154,10 +171,34 @@ const metadataError = (
 
 const repositoryError = (
   path: string,
-  code: "repository-root-missing" | "not-found" | "backup-failed" | "write-failed",
+  code:
+    | "repository-root-missing"
+    | "not-found"
+    | "backup-failed"
+    | "write-failed"
+    | "stale-base",
   message: string,
 ): MarkdownError =>
   markdownError({ area: "repository", code, path, message })
+
+/**
+ * Rejects a mutation when the caller's expected whole-file hash no longer
+ * matches. This runs inside `withRepositoryLock` so the read, comparison, and
+ * write form one critical section.
+ */
+const assertExpectedContentHash = (
+  note: ParsedMarkdownNote,
+  expected: string | undefined,
+): Effect.Effect<void, MarkdownError> =>
+  expected === undefined || note.contentHash === expected
+    ? Effect.void
+    : Effect.fail(
+        repositoryError(
+          note.path,
+          "stale-base",
+          "The note changed after this operation was prepared, so its base content hash no longer matches. Nothing was written; retry from the current note.",
+        ),
+      )
 
 const timestampError = (
   path: string,
@@ -621,6 +662,8 @@ export const makeMarkdownNoteRepository = (
             )
           }
 
+          yield* assertExpectedContentHash(current, input.expectedContentHash)
+
           const type = input.type ?? current.metadata.type
           const title =
             input.title === undefined
@@ -691,6 +734,7 @@ export const makeMarkdownNoteRepository = (
 
     const remove = (
       id: string,
+      options: DeleteMarkdownNoteOptions = {},
     ): Effect.Effect<DeleteMarkdownNoteResult, MarkdownError> =>
       withRepositoryLock(
         root,
@@ -701,6 +745,8 @@ export const makeMarkdownNoteRepository = (
               repositoryError(root, "not-found", `Note '${id}' was not found.`),
             )
           }
+
+          yield* assertExpectedContentHash(note, options.expectedContentHash)
 
           const target = yield* Effect.try({
             try: () => backupNote(root, note, backupDir, clock()),

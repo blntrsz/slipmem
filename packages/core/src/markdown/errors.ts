@@ -38,6 +38,7 @@ export type MarkdownErrorCode =
   | "not-found"
   | "repository-locked"
   | "repository-root-missing"
+  | "stale-base"
   | "write-failed"
   | "backup-failed"
   | "index-error"

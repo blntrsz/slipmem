@@ -55,6 +55,7 @@ export {
   type CheckNoteRootOptions,
   type CheckSeverity,
   type CreateMarkdownNoteInput,
+  type DeleteMarkdownNoteOptions,
   type DeleteMarkdownNoteResult,
   type IndexFingerprint,
   type IndexRefreshStats,

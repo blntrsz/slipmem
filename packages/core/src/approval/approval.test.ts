@@ -7,6 +7,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs"
 import { join } from "node:path"
@@ -19,6 +20,7 @@ import {
   lineDiff,
   makeApprovalService,
   MAX_DIFF_CHARS,
+  MAX_QUARANTINED_PROPOSALS,
   type ApprovalError,
   type ApprovalServiceShape,
   type McpWriteInput,
@@ -496,6 +498,235 @@ describe("approval lifecycle", () => {
         expect(error.code).toBe("stale-base")
       }
       expect(existsSync(note.path)).toBe(true)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("apply rechecks the update base hash under the repository lock", async () => {
+    const fixture = await createFixture()
+    try {
+      const permanent = await Effect.runPromise(
+        fixture.repository.create({
+          type: "permanent",
+          title: "Racy update",
+          content: "Base version.",
+        }),
+      )
+      const update = await submit(fixture, {
+        operation: "update",
+        id: permanent.id,
+        content: "Approved version.",
+      })
+      if (update.status !== "pending_approval") {
+        throw new Error("expected pending")
+      }
+
+      // The wrapper injects a concurrent repository write immediately before
+      // the approved mutation reaches the repository. The pre-check already
+      // passed, so only the under-lock CAS can catch this interleaving.
+      let injected = false
+      const racing = {
+        ...fixture.repository,
+        update: (input: Parameters<typeof fixture.repository.update>[0]) =>
+          Effect.gen(function* () {
+            if (!injected) {
+              injected = true
+              yield* fixture.repository.update({
+                id: permanent.id,
+                content: "Concurrent edit wins.",
+              })
+            }
+            return yield* fixture.repository.update(input)
+          }),
+      }
+      const service = await Effect.runPromise(
+        makeApprovalService(racing, {
+          now: () => fixture.clock.value,
+          actor: "test-agent",
+          env: {},
+        }),
+      )
+
+      const error = await failure(service.apply(update.proposalId))
+      expect(error._tag).toBe("ApprovalError")
+      if (error._tag === "ApprovalError") {
+        expect(error.code).toBe("stale-base")
+      }
+      const stored = await Effect.runPromise(fixture.repository.get(permanent.id))
+      expect(stored._tag).toBe("Some")
+      if (stored._tag === "Some") {
+        expect(stored.value.body).toBe("Concurrent edit wins.")
+      }
+      expect(pendingFiles(fixture.pending)).toHaveLength(1)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("apply rechecks the delete base hash under the repository lock", async () => {
+    const fixture = await createFixture()
+    try {
+      const note = await Effect.runPromise(
+        fixture.repository.create({
+          type: "permanent",
+          title: "Racy delete",
+          content: "Keep a concurrent edit.",
+        }),
+      )
+      const result = await submit(fixture, {
+        operation: "delete",
+        id: note.id,
+      })
+      if (result.status !== "pending_approval") {
+        throw new Error("expected pending")
+      }
+
+      let injected = false
+      const racing = {
+        ...fixture.repository,
+        delete: (
+          id: string,
+          options?: Parameters<typeof fixture.repository.delete>[1],
+        ) =>
+          Effect.gen(function* () {
+            if (!injected) {
+              injected = true
+              yield* fixture.repository.update({
+                id,
+                content: "Concurrent edit survives the delete.",
+              })
+            }
+            return yield* fixture.repository.delete(id, options)
+          }),
+      }
+      const service = await Effect.runPromise(
+        makeApprovalService(racing, {
+          now: () => fixture.clock.value,
+          actor: "test-agent",
+          env: {},
+        }),
+      )
+
+      const error = await failure(service.apply(result.proposalId))
+      expect(error._tag).toBe("ApprovalError")
+      if (error._tag === "ApprovalError") {
+        expect(error.code).toBe("stale-base")
+      }
+      expect(existsSync(note.path)).toBe(true)
+      const stored = await Effect.runPromise(fixture.repository.get(note.id))
+      expect(stored._tag).toBe("Some")
+      if (stored._tag === "Some") {
+        expect(stored.value.body).toBe("Concurrent edit survives the delete.")
+      }
+      expect(pendingFiles(fixture.pending)).toHaveLength(1)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("rejects future-dated and over-long proposal timing", async () => {
+    const fixture = await createFixture({ ttlMs: 60_000 })
+    try {
+      const first = await submit(fixture, {
+        operation: "create",
+        type: "permanent",
+        title: "Future dated",
+        content: "A proposal must expire on the local clock.",
+      })
+      if (first.status !== "pending_approval") {
+        throw new Error("expected pending")
+      }
+      const firstPath = join(fixture.pending, `${first.proposalId}.json`)
+      const firstRaw = JSON.parse(readFileSync(firstPath, "utf8")) as Record<
+        string,
+        unknown
+      >
+      writeFileSync(
+        firstPath,
+        JSON.stringify({
+          ...firstRaw,
+          createdAt: "2099-01-01T00:00:00Z",
+          expiresAt: "2099-01-02T00:00:00Z",
+        }),
+        "utf8",
+      )
+
+      const second = await submit(fixture, {
+        operation: "create",
+        type: "permanent",
+        title: "Long expiry",
+        content: "A proposal cannot outlive its configured TTL.",
+      })
+      if (second.status !== "pending_approval") {
+        throw new Error("expected pending")
+      }
+      const secondPath = join(fixture.pending, `${second.proposalId}.json`)
+      const secondRaw = JSON.parse(readFileSync(secondPath, "utf8")) as Record<
+        string,
+        unknown
+      >
+      writeFileSync(
+        secondPath,
+        JSON.stringify({
+          ...secondRaw,
+          expiresAt: "2099-01-01T00:00:00Z",
+        }),
+        "utf8",
+      )
+
+      const review = await Effect.runPromise(fixture.service.review())
+      expect(review.proposals).toHaveLength(0)
+      expect(review.invalid).toHaveLength(2)
+
+      const futureError = await failure(fixture.service.apply(first.proposalId))
+      expect(futureError._tag).toBe("ApprovalError")
+      if (futureError._tag === "ApprovalError") {
+        expect(futureError.code).toBe("invalid-proposal")
+      }
+      const expiryError = await failure(fixture.service.apply(second.proposalId))
+      expect(expiryError._tag).toBe("ApprovalError")
+      if (expiryError._tag === "ApprovalError") {
+        expect(expiryError.code).toBe("invalid-proposal")
+      }
+      expect(noteFiles(fixture.root)).toEqual([])
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("quarantines old malformed proposals with a bounded directory", async () => {
+    const fixture = await createFixture({ ttlMs: 1_000 })
+    try {
+      mkdirSync(fixture.pending, { recursive: true })
+      const old = new Date(Date.parse("2026-11-17T20:00:00Z"))
+      for (let index = 0; index < MAX_QUARANTINED_PROPOSALS + 5; index++) {
+        const path = join(
+          fixture.pending,
+          `proposal-20261117200000-bad${String(index).padStart(5, "0")}.json`,
+        )
+        writeFileSync(path, "{not json", "utf8")
+        utimesSync(path, old, old)
+      }
+
+      // Cleanup is deliberately capped per run; run it until the backlog is
+      // drained, then verify truncation retention is bounded as well.
+      for (let pass = 0; pass < 10; pass++) {
+        await Effect.runPromise(fixture.service.review())
+      }
+
+      expect(pendingFiles(fixture.pending)).toEqual([])
+      const quarantine = join(
+        fixture.root,
+        ".state",
+        "quarantine",
+        "pending",
+      )
+      expect(pendingFiles(quarantine).length).toBeLessThanOrEqual(
+        MAX_QUARANTINED_PROPOSALS,
+      )
+      expect(pendingFiles(quarantine).length).toBeGreaterThan(0)
+      expect(noteFiles(fixture.root)).toEqual([])
     } finally {
       cleanup(fixture)
     }
