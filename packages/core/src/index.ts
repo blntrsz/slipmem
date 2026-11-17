@@ -159,6 +159,7 @@ export {
   type MigrationImportReport,
   type MigrationImportStatus,
   type MigrationImportWarning,
+  type MigrationInterruptedRun,
   type MigrationManifestIssue,
   type MigrationNoteSerializer,
   type MigrationPreservedValue,
