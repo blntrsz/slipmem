@@ -1,10 +1,10 @@
-import type { MarkdownError } from "@slipmem/core"
+import type { MarkdownError, WikiError } from "@slipmem/core"
 import type { Effect } from "effect"
 import type { OptionSpec, ParsedArguments } from "../args.js"
 import type { CliContext } from "../context.js"
 import type { CliFailure } from "../errors.js"
 
-export type CommandError = CliFailure | MarkdownError
+export type CommandError = CliFailure | MarkdownError | WikiError
 
 export type CommandRunner = (
   parsed: ParsedArguments,

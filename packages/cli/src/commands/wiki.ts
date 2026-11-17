@@ -1,6 +1,7 @@
 import {
   atomicWriteFile,
   isPathInside,
+  makeWikiService,
 } from "@slipmem/core"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { Effect } from "effect"
@@ -11,10 +12,9 @@ import {
   stringOption,
 } from "../args.js"
 import { openRepository, resolveRoot } from "../context.js"
-import { CliUsageError, unavailable, usageError } from "../errors.js"
+import { unavailable, usageError } from "../errors.js"
 import { parseLimit } from "../note-values.js"
 import { writeJson, writeLine } from "../output.js"
-import { buildExtractiveWiki } from "../wiki.js"
 import type { CommandDefinition } from "./command.js"
 
 const topicFrom = (positionals: ReadonlyArray<string>): string => {
@@ -32,10 +32,10 @@ export const wikiCommand: CommandDefinition = {
     "wiki <topic> [--limit <n>] [--mode extractive] [--include-fleeting] [--out <path>] [--json]",
   details: [
     "Selects permanent and literature notes whose topics or text match the",
-    "normalized topic, then quotes each selected note verbatim with its ID and",
-    "file citation. Nothing is written under .slipmem/; stdout is the default.",
-    "Synthesized mode requires the core citation validator and is reported as",
-    "unavailable rather than silently downgraded.",
+    "normalized topic through the shared core WikiService, then quotes each",
+    "selected note verbatim with its ID and file citation. Nothing is written",
+    "under .slipmem/; stdout is the default.",
+    "Synthesized mode is reported as unavailable rather than downgraded.",
   ],
   options: {
     limit: { type: "number", valueName: "n" },
@@ -65,7 +65,7 @@ export const wikiCommand: CommandDefinition = {
         return yield* Effect.fail(
           unavailable(
             "wiki-synthesis",
-            "Synthesized wiki generation is not available in this build. Use --mode extractive; the citation-validated synthesizer is a later phase and no page was written.",
+            "Synthesized wiki generation is not available through the CLI in this build. Use --mode extractive; the CLI does not silently downgrade a synthesized request and no page was written.",
             "synthesis-unavailable",
           ),
         )
@@ -81,24 +81,16 @@ export const wikiCommand: CommandDefinition = {
 
       const resolved = yield* resolveRoot(context, stringOption(parsed, "dir"))
       const repository = yield* openRepository(context, resolved.root)
-      const scan = yield* repository.scan()
-      const result = yield* Effect.try({
-        try: () =>
-          buildExtractiveWiki({
-            root: resolved.root,
-            topic,
-            notes: scan.notes,
-            limit,
-            includeFleeting,
-            nowMs: context.now(),
-          }),
-        catch: (cause) =>
-          cause instanceof CliUsageError
-            ? cause
-            : usageError(
-                cause instanceof Error ? cause.message : String(cause),
-                "wiki",
-              ),
+      const service = yield* makeWikiService(repository, {
+        now: context.now,
+        env: context.env,
+        mode: "extractive",
+      })
+      const page = yield* service.build({
+        topic,
+        limit,
+        mode: "extractive",
+        includeFleeting,
       })
 
       let outputPath: string | undefined
@@ -112,7 +104,7 @@ export const wikiCommand: CommandDefinition = {
             ),
           )
         }
-        yield* atomicWriteFile(outputPath, result.markdown, { overwrite: true })
+        yield* atomicWriteFile(outputPath, page.markdown, { overwrite: true })
       }
 
       if (parsed.options.json === true) {
@@ -120,15 +112,15 @@ export const wikiCommand: CommandDefinition = {
           ok: true,
           root: resolved.root,
           ...(outputPath === undefined ? {} : { out: outputPath }),
-          page: result.page,
+          page,
         })
       } else if (outputPath !== undefined) {
         writeLine(
           context.io,
-          `Wrote a cited page with ${result.page.noteCount} note${result.page.noteCount === 1 ? "" : "s"} to ${outputPath}`,
+          `Wrote a cited page with ${page.noteCount} note${page.noteCount === 1 ? "" : "s"} to ${outputPath}`,
         )
       } else {
-        context.io.out(result.markdown)
+        context.io.out(`${page.markdown}\n`)
       }
 
       return 0

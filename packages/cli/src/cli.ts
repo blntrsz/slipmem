@@ -1,4 +1,4 @@
-import { MarkdownError } from "@slipmem/core"
+import { MarkdownError, WikiError } from "@slipmem/core"
 import { Effect } from "effect"
 import {
   GLOBAL_OPTIONS,
@@ -112,6 +112,18 @@ const reportFailure = (
         message: error.message,
         area: error.area,
         path: error.path,
+        ...(error.field === undefined ? {} : { field: error.field }),
+      },
+    }
+  } else if (error instanceof WikiError) {
+    code = 1
+    envelope = {
+      ok: false,
+      error: {
+        kind: "validation",
+        code: error.code,
+        message: error.message,
+        ...(error.path === undefined ? {} : { path: error.path }),
         ...(error.field === undefined ? {} : { field: error.field }),
       },
     }

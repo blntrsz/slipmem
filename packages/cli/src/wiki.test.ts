@@ -140,9 +140,11 @@ describe("slipmem wiki (extractive)", () => {
     expect(wiki.page.sections).toHaveLength(2)
     for (const section of wiki.page.sections) {
       expect(section.citations).toHaveLength(1)
-      expect(section.citations[0]!.excerpt).toContain(section.markdown)
+      const excerpt = section.citations[0]!.excerpt
+      expect(excerpt).toBeDefined()
+      expect(section.markdown).toContain(excerpt!)
     }
-    expect(wiki.page.markdown).toContain("# Topic: agent memory")
+    expect(wiki.page.markdown).toContain("# Topic: agent-memory")
     expect(wiki.page.markdown).toContain(`[[${bounded}]]`)
     expect(wiki.page.markdown).toContain(`[[${citation}]]`)
     expect(wiki.page.markdown).toContain("## Sources")
