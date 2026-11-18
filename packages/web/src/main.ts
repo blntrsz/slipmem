@@ -88,6 +88,32 @@ const emptyForm: NoteForm = {
   tags: "",
 }
 
+/**
+ * One parser for both local validation and the write payload. Empty comma
+ * segments are ignored, which matches the CLI's `--tag` handling and lets
+ * users leave a trailing comma without a server-side rejection.
+ */
+export const parseFormTags = (value: string): ReadonlyArray<string> =>
+  value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0)
+
+/**
+ * The web form always sends an explicit `tags` array, including `[]` when the
+ * field is blank. The API treats a missing `tags` as "preserve existing", so
+ * omitting it here made clearing every tag impossible from the editor.
+ */
+export const draftFromForm = (
+  type: NoteType,
+  form: NoteForm,
+): NoteDraft => ({
+  title: form.title,
+  content: form.content,
+  ...(type === "literature" ? { reference: form.reference } : {}),
+  tags: parseFormTags(form.tags),
+})
+
 export const EditorState = defineTaggedUnion({
   Closed: {},
   Open: {
@@ -271,14 +297,7 @@ export const SaveNote = Command.define("SaveNote", {
   },
   messages: [Message.SucceededSaveNote, Message.FailedSaveNote],
   execute: ({ requestId, noteId, type, form }) => {
-    const draft: NoteDraft = {
-      title: form.title,
-      content: form.content,
-      ...(type === "literature" ? { reference: form.reference } : {}),
-      ...(form.tags.trim() === ""
-        ? {}
-        : { tags: form.tags.split(",").map((tag) => tag.trim()) }),
-    }
+    const draft = draftFromForm(type, form)
 
     const save = Option.match(noteId, {
       onNone: () => createNote(type, draft),
@@ -710,10 +729,7 @@ export const formError = (type: NoteType, form: NoteForm): Option.Option<string>
   if (type === "literature" && form.reference.trim() === "") {
     return Option.some("Literature notes require a reference.")
   }
-  const tags = form.tags
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter((tag) => tag.length > 0)
+  const tags = parseFormTags(form.tags)
   if (tags.some((tag) => Markdown.slugifyTag(tag) === "")) {
     return Option.some("Every tag needs at least one letter or digit.")
   }

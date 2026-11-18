@@ -10,13 +10,27 @@ const decodes = (
   input: unknown,
 ): boolean => Schema.decodeUnknownOption(schema)(input)._tag === "Some"
 
-test("the shared draft accepts an optional reference", () => {
+test("the shared draft accepts an optional reference and tags", () => {
   expect(decodes(Note.Draft, { title: "Title", content: "Body" })).toBe(true)
   expect(
     decodes(Note.Draft, {
       title: "Title",
       content: "Body",
       reference: "Source",
+    }),
+  ).toBe(true)
+  expect(
+    decodes(Note.Draft, {
+      title: "Title",
+      content: "Body",
+      tags: [],
+    }),
+  ).toBe(true)
+  expect(
+    decodes(Note.Draft, {
+      title: "Title",
+      content: "Body",
+      tags: ["agent-memory"],
     }),
   ).toBe(true)
   expect(decodes(Note.Draft, { title: "Title" })).toBe(false)

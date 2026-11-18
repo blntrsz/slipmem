@@ -46,6 +46,9 @@ export const Draft = Schema.Struct({
   title: Schema.String,
   content: Schema.String,
   reference: Schema.optional(Schema.String),
+  // Always present in web form payloads: an explicit empty array clears tags
+  // on update instead of meaning "preserve the existing metadata".
+  tags: Schema.optional(Schema.Array(Schema.String)),
 }).annotate({ identifier: "Note.Draft" })
 
 // Lists are currently unfiltered. Keep an explicit empty input so every

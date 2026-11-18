@@ -14,8 +14,10 @@ import {
   Model,
   NavigateInternal,
   SaveNote,
+  draftFromForm,
   formError,
   init,
+  parseFormTags,
   update,
   view,
 } from "./main"
@@ -251,6 +253,50 @@ test("the editor validates content limits, references, and tags locally", () => 
       tags: "agent-memory, retrieval",
     }),
   ).toEqual(Option.none())
+
+  expect(
+    formError("permanent", {
+      title: "Title",
+      content: "body",
+      reference: "",
+      tags: "agent-memory, , retrieval, ",
+    }),
+  ).toEqual(Option.none())
+})
+
+test("the editor normalizes tag input once for validation and the write payload", () => {
+  expect(parseFormTags(" agent-memory, retrieval, ")).toEqual([
+    "agent-memory",
+    "retrieval",
+  ])
+  expect(parseFormTags(" , , ")).toEqual([])
+
+  expect(
+    draftFromForm("permanent", {
+      title: "A durable idea",
+      content: "Write it down properly.",
+      reference: "",
+      tags: "",
+    }),
+  ).toEqual({
+    title: "A durable idea",
+    content: "Write it down properly.",
+    tags: [],
+  })
+
+  expect(
+    draftFromForm("literature", {
+      title: "A source",
+      content: "Quoted.",
+      reference: "Book, chapter 2",
+      tags: "agent-memory, , retrieval",
+    }),
+  ).toEqual({
+    title: "A source",
+    content: "Quoted.",
+    reference: "Book, chapter 2",
+    tags: ["agent-memory", "retrieval"],
+  })
 })
 
 test("saving a new note takes the request id, shows saving, and navigates to the note", () => {
