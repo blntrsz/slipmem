@@ -175,6 +175,13 @@ won when all three existed; `SLIPMEM_DB_PATH` won when it was set without
 created when missing, and `SLIPMEM_DB_PATH=:memory:` exited 2 as non-migratable.
 Source bytes stayed unchanged in each import.
 
+The same source order is used by `legacy list`/`legacy show`. Those commands
+printed the one-release read-only warning, returned bounded rows from the shared
+core reader, and left the source hash, directory contents, and note root
+unchanged. JSON output tagged unsafe integers and BLOBs. A missing row exited 1,
+and `--dir` was rejected because the command is a database view, not a note-root
+operation.
+
 ```sh
 bun run slipmem -- migrate sqlite --db "$BASE/current.db" --dry-run --dir "$BASE/notes"
 bun run slipmem -- migrate sqlite --db "$BASE/current.db" --dir "$BASE/notes"
@@ -351,6 +358,8 @@ bun run slipmem -- wiki <topic> --mode synthesized --agent "<bun> <fixture-agent
 SLIPMEM_DIR=<root> bun run slipmem -- mcp        # MCP initialize over stdio
 SLIPMEM_DIR=<root> PORT=<port> bun run slipmem -- web
 bun run slipmem -- migrate sqlite --db <db> --dry-run --dir <disposable>
+bun run slipmem -- legacy list --db <db> --json
+bun run slipmem -- legacy show --db <db> --type permanent --id <legacy-id> --json
 bun run slipmem -- migrate sqlite --db <db> --dir <disposable>
 bun run slipmem -- migrate sqlite --db <db> --merge --dir <disposable>
 bun run slipmem -- review --dir <disposable>
@@ -370,10 +379,10 @@ documented gaps:
 
 ```text
 $ bun test packages/cli
- 49 pass
+ 52 pass
  0 fail
- 416 expect() calls
-Ran 49 tests across 13 files.
+ 453 expect() calls
+Ran 52 tests across 14 files.
 ```
 
 The added launch coverage runs from a disposable directory outside the

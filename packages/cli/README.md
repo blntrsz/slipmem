@@ -44,7 +44,8 @@ SLIPMEM_DIR=/tmp/slipmem-demo bun run slipmem -- new --type permanent \
 | `review` | List pending agent proposals with summaries, diffs, and stale/expired flags. |
 | `approve <proposal-id>` | Apply a proposal after revalidating its base hash, expiry, and note rules. |
 | `reject <proposal-id>` | Remove a proposal without changing any note. |
-| `migrate sqlite --db <path> [--dry-run] [--merge]` | Plan or import legacy SQLite notes with a verified backup and manifest. |
+| `migrate sqlite [--db <path>] [--dry-run] [--merge]` | Plan or import legacy SQLite notes with a verified backup and manifest. |
+| `legacy list` / `legacy show` | Read the retired SQLite database through the one-release, read-only compatibility view. |
 | `mcp` / `web` | Thin wrappers around the existing MCP stdio and Vite development entry points. They resolve the note root first and pass it to the child as `SLIPMEM_DIR`. |
 
 Add `--json` to any command for a machine-readable result. Validation errors
@@ -187,6 +188,26 @@ collisions), prints each sampled note's actual `targetPath`, and lists interrupt
 run manifests. A live owner is reported, never overwritten. JSON output preserves
 unsafe SQLite integers and BLOBs as `$bigint`/`$base64` tags instead of rounding
 them.
+
+## Read-only legacy compatibility
+
+`legacy list` and `legacy show` expose the retired SQLite rows for one release
+without importing them. They share the migration source resolution (`--db`, then
+`SLIPMEM_DB_PATH`, then the XDG data database) and the same core read-only
+snapshot reader. They never write notes, manifests, quarantine, or repair rows;
+`.slipmem/` remains the source of truth. `legacy` does not take `--dir`.
+
+```sh
+bun run slipmem -- legacy list --db ./legacy.db --type literature --limit 25
+bun run slipmem -- legacy show --db ./legacy.db --type permanent --id legacy-id
+bun run slipmem -- legacy list --type permanent --json
+```
+
+Both forms print or return the `one-release-read-only` warning. List defaults to
+25 rows, caps at 100, and bounds `offset` to 0..100000. Show requires `--type`
+because legacy IDs are only unique per table. A missing row exits 1 without
+writing. JSON tags unsafe integers and BLOBs the same way the migration manifest
+does.
 
 ## Security notes
 

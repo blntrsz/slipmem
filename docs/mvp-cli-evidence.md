@@ -40,6 +40,7 @@ rejects unknown, duplicate, and malformed options before any core call.
 | `cache` | `makeMarkdownSearchIndex.clear` | `cache clear` deletes only derived index rows; notes and local state are untouched. |
 | `wiki` | `makeWikiService` extractive or synthesized | Cited sections; excludes fleeting unless `--include-fleeting`; `--agent` runs an argv array without a shell; `--model` needs a core adapter; `--out` is real-path guarded outside the root. |
 | `migrate` | `importMigration` (planner + importer) | `--db`, then `SLIPMEM_DB_PATH`, then the XDG data default. Dry run writes nothing; real import backs up, verifies, writes manifest, refuses non-empty root without `--merge`. |
+| `legacy` | `listLegacyNotes` / `getLegacyNote` | One-release, bounded, read-only SQLite view. Same source resolution; no note-root access, import, or write. |
 | `review` | `makeApprovalService.review` | Human-only; summaries, diffs, stale/expired flags. |
 | `approve` | `makeApprovalService.apply` | Revalidates base hash/expiry; stale proposals fail without writing. |
 | `reject` | `makeApprovalService.reject` | Removes only the proposal. |
@@ -75,6 +76,26 @@ the index from notes.
 `$XDG_DATA_HOME/slipmem/slipmem.db` (`~/.local/share/slipmem/slipmem.db` when
 XDG is unset). The CLI never creates the source directory or database, and
 rejects `:memory:` because it is not file-backed. Explicit `--db` always wins.
+
+## Read-only legacy compatibility
+
+`slipmem legacy list` and `slipmem legacy show` expose the core
+`listLegacyNotes`/`getLegacyNote` reader; the CLI does not parse SQLite or
+duplicate its validation. Both use the same `--db` → `SLIPMEM_DB_PATH` → XDG
+source resolver as `migrate`, copy the source through the core read-only
+snapshot, and never call `importMigration` or resolve/write a note root.
+
+- The human output always starts with the one-release read-only warning; JSON
+  adds the same `warning` string beside the core report's
+  `compatibility: "one-release-read-only"`, `readOnly: true`, and
+  `read-only-one-release` warning.
+- `list` is bounded to 1..100 rows (default 25) and offset 0..100000. `show`
+  requires `--type` and a non-empty ID of at most 512 characters because legacy
+  IDs are unique per table.
+- A missing `show` row exits 1 with `legacy-not-found` and still writes nothing.
+- `--dir` is rejected: this command reads only the retired database.
+- JSON values use `$bigint`, `$base64`, and `$number` tags for values JavaScript
+  cannot represent exactly, matching the migration manifest contract.
 
 ## Synthesized wiki
 
@@ -131,10 +152,10 @@ CLI suite:
 
 ```text
 $ bun test packages/cli
- 49 pass
+ 52 pass
  0 fail
- 416 expect() calls
-Ran 49 tests across 13 files.
+ 453 expect() calls
+Ran 52 tests across 14 files.
 ```
 
 Full repository gate:
@@ -147,13 +168,13 @@ $ bunx tsc --noEmit
 (no errors)
 
 $ bun test
- 370 pass
+ 378 pass
  0 fail
- 3140 expect() calls
-Ran 370 tests across 44 files.
+ 3237 expect() calls
+Ran 378 tests across 45 files.
 
 $ bun run check
-(lint, typecheck, 370 tests, and web client/SSR build all pass)
+(lint, typecheck, 378 tests, and web client/SSR build all pass)
 ```
 
 Root script smoke test:
@@ -182,6 +203,9 @@ Acceptance coverage in `packages/cli/src/*.test.ts`:
 - `cache.test.ts`: safe clear only the derived rows, note readability after
   clear, rebuild on the next search, clear before an index exists, human output,
   and unknown action rejection.
+- `legacy.test.ts`: bounded list/show, one-release warning, JSON source and
+  row mapping, `$bigint`/`$base64` tags, default XDG source, read-only source
+  hash, missing row/source behavior, option bounds, and `--dir` refusal.
 - `wiki.test.ts`: cited extractive page, fleeting opt-in, limit, empty result,
   `--out` outside root, refusal inside root (including symlinked parents and
   missing parents), configured agent synthesis over argv, environment-selected
@@ -221,10 +245,11 @@ Acceptance coverage in `packages/cli/src/*.test.ts`:
 | `ee6705a` | Truthful migration verification status before any write |
 | `84d02ab` | Effective collisions, actual skipped paths, interrupted-run report, portable JSON tags |
 | `866aae9` | CLI README and operator/evidence documentation refresh |
-| `9694dc9` | Safe `cache clear` through the core index API |
+| `5002d7b` | Safe `cache clear` through the core index API |
 | `043de62` | Migration source defaults: `--db`, `SLIPMEM_DB_PATH`, XDG data |
+| `9d299fe` | Reject an empty explicit `--db`; budget the default-source test |
+| `56d009c` | Read-only `legacy list` / `legacy show` over the core reader |
 | `057c83f` | Web health launch test and approval-test time budgets |
-| `b794d03` | Operator and CLI docs for cache clear and migration defaults |
 
 ## API blockers / follow-ups
 

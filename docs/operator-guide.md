@@ -17,6 +17,7 @@ and are not written as if they work.
 | CLI recall | **available** | `search`, `topics`, `check` including `check --rebuild-index`, and `cache clear` |
 | CLI wiki | **available** | `wiki` writes a cited extractive page to stdout or `--out`; opt-in synthesized pages use a sandboxed local agent or a registered model adapter |
 | CLI migration | **available** | `migrate sqlite [--db <path>] [--dry-run] [--merge]`, defaulting to `SLIPMEM_DB_PATH` then the XDG data database |
+| CLI legacy view | **available, read-only** | `legacy list` / `legacy show` read the retired SQLite database for one release; never imports or writes |
 | CLI approvals | **available** | `review`, `approve`, `reject` over the shared approval service |
 | stdio MCP | **available** | bounded read tools plus policy-enforced write tools over `.slipmem/` |
 | MCP approvals | **proposal side available** | permanent writes and all deletes create pending proposals; no MCP tool can approve them |
@@ -565,7 +566,47 @@ Inspect the manifest under `.state/migrations/<run-id>/` before removing
 anything. The migration backup is local state: it is gitignored, so copy it
 elsewhere if it is part of your rollback plan.
 
-## 8. Local MCP access for agents
+## 8. Read-only legacy database view (one release)
+
+The retired SQLite note tables remain readable through an explicit compatibility
+command. This is **not** startup behavior and **not** a second source of truth:
+Markdown under `.slipmem/` is authoritative. The command copies the source
+database and its `-wal`/`-journal` into a private temporary directory, opens only
+the copy read-only, and never imports, repairs, deletes, or writes rows, note
+files, manifests, or quarantine.
+
+```sh
+# List bounded rows across all legacy tables
+bun run slipmem -- legacy list --db /path/to/slipmem.db
+
+# Filter and page the list
+bun run slipmem -- legacy list --type literature --limit 25 --offset 0
+
+# Show one row; type is required because legacy IDs are unique per table
+bun run slipmem -- legacy show --type permanent --id legacy-permanent \
+  --db /path/to/slipmem.db
+
+# JSON includes the read-only warning and the complete raw row
+bun run slipmem -- legacy list --type permanent --json
+```
+
+Without `--db`, the same source order as migration applies: `SLIPMEM_DB_PATH`,
+then `$XDG_DATA_HOME/slipmem/slipmem.db` (`~/.local/share` by default). The
+command never creates the source. `legacy` does not accept `--dir`; it is a
+database view, not a note-root command.
+
+Both subcommands print a `LEGACY READ-ONLY (one release)` warning. `list`
+defaults to 25 rows and caps at 100; `offset` is bounded to 0..100000. `show`
+requires `--type` and a non-empty `--id`. A missing row exits 1 without creating
+anything. JSON output tags values that JavaScript cannot represent exactly:
+unsafe integers as `{"$bigint":"..."}`, BLOBs as `{"$base64":"..."}`, and
+non-finite numbers as `{"$number":"..."}`.
+
+This path is documented for one release so an operator can compare a retired
+database with migrated Markdown. Use `migrate` to create notes; do not use
+`legacy` as a write path.
+
+## 9. Local MCP access for agents
 
 ### Current configuration
 
@@ -744,7 +785,7 @@ SLIPMEM_DIR=/path/to/notes bun run slipmem -- mcp
 bun run slipmem -- mcp --dir /path/to/notes
 ```
 
-## 9. Local HTTP security
+## 10. Local HTTP security
 
 The local web/API surface is unauthenticated by design for a single-user
 machine. It is not a multi-user service.
@@ -800,7 +841,7 @@ authentication, no accounts, and no TLS. Do not expose the current HTTP surface
 to a network you do not fully trust, even if the UI loads successfully.
 
 
-## 10. Troubleshooting
+## 11. Troubleshooting
 
 | Symptom | Cause | Action |
 | --- | --- | --- |
@@ -822,12 +863,15 @@ to a network you do not fully trust, even if the UI loads successfully.
 | `--out` rejected before writing | Output parent missing, or a symlink resolves into the note root | Create the parent directory and choose a regular path outside `.slipmem/` |
 | `root-not-empty` from migration | Target already has notes | Add `--merge` after reviewing the dry run |
 | Migration source file not found | `--db` omitted and neither `SLIPMEM_DB_PATH` nor the XDG default exists | Pass `--db <path>` or set `SLIPMEM_DB_PATH`; migration never creates a source |
+| `legacy` says the source is missing | The default SQLite database was moved or never created | Pass `--db` or set `SLIPMEM_DB_PATH`; the read-only view never creates a source |
+| `legacy show` returns not found | Legacy IDs are unique per table | Pass the correct `--type`; IDs can repeat across fleeting, permanent, and literature |
+| `legacy` rejects `--dir` | It is a database-only compatibility view | Use `--db` or the environment variables; `--dir` is for Markdown note commands |
 | Index seems empty after `cache clear` | The clear command intentionally deletes only derived rows | Run `search` or `check --rebuild-index` to repopulate from notes |
 | `source-changed` before notes | A writer changed the database before the backup or writes | Stop writers, verify the source, rerun; no notes were written |
 | `source-changed` after notes | The final source fingerprint changed after writes | Inspect the manifest; valid notes, backup, and quarantine remain; stop writers before any retry |
 | `interrupted-run` / `interrupted-run-active` | An earlier import left a `running` manifest, or its owner is still alive | Review "Interrupted runs"; merge imports missing rows, and never stop a live owner by deleting its manifest |
 
-## 11. Documentation gaps
+## 12. Documentation gaps
 
 There is no remaining planned command in this workstream. `cache clear` and the
 default migration source resolution are available and covered by CLI tests.
