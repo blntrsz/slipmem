@@ -1,31 +1,38 @@
 # Repository memory evidence
 
-Status: evidence for the dogfood note set in `.slipmem/`, corrected on
-2026-11-18. This document records the sources and checks behind the notes. It is
-not a second note source and does not restate the note bodies.
+Status: evidence for the dogfood note set in `.slipmem/`, corrected and then
+expanded with separate domain reference notes on 2026-11-18. This document
+records the sources and checks behind the notes. It is not a second note source
+and does not restate the note bodies. Domain-note details are in
+[`docs/domain-memory-evidence.md`](domain-memory-evidence.md).
 
 ## Baseline and scope
 
 - Code baseline: **`1d5a7a4`** (`Treat a null tags field as absent in legacy
   parsing`). This is the last code fix in the tags review and the tree the
   notes were checked against. The first evidence pass named `84933b8`, which
-  is docs-only and predates the parser fix; that baseline was wrong.
+  is docs-only and predates the parser fix; that baseline was wrong. The domain
+  expansion was authored against tree `ca449a6`; no application code changed,
+  so the code baseline remains `1d5a7a4`.
 - The tour/docs snapshot is `8094950`. The live plan later moved to canonical
   `tags` in `7cbc446`.
-- Changed paths: `.slipmem/**`, this file, and
+- This expansion changes `.slipmem/**`, this file, and
+  `docs/domain-memory-evidence.md`. The earlier correction also touched
   `docs/repository-memory-review-fixes.md`.
 - No source, schema, app, test, or historical evidence document was edited.
 - `.slipmem/.state/` and the XDG cache are ignored and were not committed.
-- The notes were rewritten through `bun run slipmem -- edit` with a temporary
-  editor helper. IDs, `createdAt`, titles, tags, and
+- The original notes were rewritten through `bun run slipmem -- edit` with a
+  temporary editor helper. IDs, `createdAt`, titles, tags, and
   `provenance.source: cli` / `actor: user` were preserved; the repository
-  advanced `updatedAt`.
-- The current plan is canonical `tags`; the two literature notes intentionally
-  pin `8094950`, the source snapshot they summarize.
+  advanced `updatedAt`. The eight domain notes were created through
+  `bun run slipmem -- new` with repeated `--tag`.
+- The current plan is canonical `tags`; the two literature notes pin `8094950`,
+  the source snapshot they summarize. Their `reference` metadata is now a
+  commit-pinned GitHub URL rather than a repository-relative path.
 
 ## Captured note set
 
-Eight notes: six permanent and two literature.
+The original set has eight notes: six permanent and two literature.
 
 | ID | Type | Tags | Primary evidence |
 | --- | --- | --- | --- |
@@ -38,13 +45,20 @@ Eight notes: six permanent and two literature.
 | `20261118022818-source-mvp-plan-principles-architecture-and-security` | literature | `source`, `architecture`, `domain` | `docs/mvp-plan.md` §4, §6, §8, §9, §12 at `8094950` |
 | `20261118022819-source-operator-guide-storage-and-trust-boundary` | literature | `source`, `security`, `operations` | `docs/operator-guide.md` §2, §3, §9, §10 at `8094950` |
 
-Literature notes carry a stable repository-relative `reference`:
+The domain expansion adds eight permanent notes, one file per implemented
+domain: fleeting notes, permanent notes, literature notes, tags, approvals and
+proposals, cited wiki, search and index, and note identity and lifecycle. The
+`.slipmem/README.md` domain map links them. They are documentation notes whose
+type is permanent; a note about fleeting notes is not itself fleeting.
 
-- `docs/mvp-plan.md §4, §6, §8, §9, §12 (repository commit 8094950)`
-- `docs/operator-guide.md §2, §3, §9, §10 (repository commit 8094950)`
+Literature notes carry a commit-pinned GitHub `reference`:
+
+- `https://github.com/blntrsz/slipmem/blob/8094950/docs/mvp-plan.md §4, §6, §8, §9, §12`
+- `https://github.com/blntrsz/slipmem/blob/8094950/docs/operator-guide.md §2, §3, §9, §10`
 
 Both pins are valid commits. They preserve what the note actually read even
-though the live plan now uses `tags`.
+though the live plan now uses `tags`. The body links use the same commit pin,
+while implementation evidence links use the repository's `main` branch.
 
 ## Review corrections
 
@@ -66,6 +80,24 @@ The findings and per-note changes are recorded in
 - Architecture and operator notes now say `tags` plus `topics` is rejected
   only when both are non-null. `tags: null` is absent, so a `topics` list still
   loads.
+
+## Domain expansion
+
+- Eight separate permanent documentation notes now cover one implemented
+  domain each: fleeting notes, permanent notes, literature notes, tags,
+  approvals and proposals, cited wiki, search and index, and note identity and
+  lifecycle. `.slipmem/README.md` is the non-note domain map.
+- A domain's subject does not set its note type. The fleeting, permanent, and
+  literature domain notes are all `type: permanent` because they are durable
+  documentation, not inbox captures or external-source summaries.
+- Every wikilink and plain source-code evidence path in `.slipmem/**` was
+  replaced with a GitHub-flavored Markdown link. Inter-note links use a
+  `.slipmem/<id>.md` label and a direct `<id>.md` destination, because `check`
+  resolves only direct children of the flat root. Source links target
+  `https://github.com/blntrsz/slipmem/blob/main/...`; the two literature
+  sources use the `8094950` commit pin.
+- No wikilink syntax remains anywhere under `.slipmem/`, including the
+  generated starter README.
 
 ## Source checks
 
@@ -104,41 +136,42 @@ The findings and per-note changes are recorded in
 env -u SLIPMEM_ACTOR SLIPMEM_EDITOR=/tmp/opencode/note-rewrites/replace-note.sh \
   SLIPMEM_REPLACEMENT=/tmp/opencode/note-rewrites/replacements/<id>.md \
   bun run slipmem -- edit <id> --json
+bun run slipmem -- new --type permanent --title "Domain: <domain>" \
+  --tag domain --tag <domain-tag> < /tmp/opencode/domain-notes/<domain>.md
 bun run slipmem -- check --rebuild-index
 bun run slipmem -- tags
-bun run slipmem -- search architecture --limit 10
-bun run slipmem -- search services --limit 10
-bun run slipmem -- wiki architecture --mode extractive --limit 10
-bun run slipmem -- wiki coding-standards --mode extractive --limit 10
+bun run slipmem -- search "domain fleeting" --limit 10
+bun run slipmem -- search "approval proposal" --limit 10
+bun run slipmem -- wiki domain --mode extractive --limit 10 --json
 ```
 
 The temporary editor helper copied the prepared full note over the CLI draft;
-the CLI then parsed, validated, and wrote it atomically. No note was edited by
-direct file overwrite.
+the CLI then parsed, validated, and wrote it atomically. The new notes were
+normal `slipmem new` writes from stdin. No note was edited by direct file
+overwrite.
 
 Observed:
 
-- Six permanent bodies are 1752, 1964, 1990, 1929, 1945, and 1988
-  characters. Both literature bodies are 3876 and 3599. All are within
-  2000/5000 limits; the code block extracted from the service note is 1205
-  characters.
-- `check --rebuild-index` reported 8 notes, 10 files scanned, 0 errors,
+- Sixteen bodies are within the 2000/5000 limits: permanent bodies range from
+  1575 to 1999 characters, and the two literature bodies are 3671 and 3942.
+  The code block extracted from the service note remains 1204 characters.
+- `check --rebuild-index` reported 16 notes, 18 files scanned, 0 errors,
   0 index drift, and OK. The two warnings were the expected non-note
   `.slipmem/.gitignore` and `.slipmem/README.md`.
-- `tags` counted `architecture` 4, `domain` 3, `coding-standards` 2,
-  `effect` 2, `security` 2, `source` 2, `storage` 2, and one each for
-  `approval`, `contracts`, `foldkit`, `layers`, `operations`, `reliability`,
-  `services`, and `web`.
-- `search architecture` returned four notes, led by the architecture permanent
-  note and the MVP literature note. `search services` returned the service
-  cookbook, the architecture note, and the MVP literature note.
-- `wiki architecture` cited four notes by ID and path. `wiki
-  coding-standards` cited the Foldkit note and the service cookbook by ID and
-  path, including the compilable code block.
-- The only inter-note links remain in the domain note:
-  `[[20261118022814-markdown-files-are-the-only-source-of-truth]]` and
-  `[[20261118022816-the-local-trust-boundary-is-not-authentication]]`. Both
-  targets exist, so `check` reports no broken link.
+- `tags` counted `domain` 11, `architecture` 4, `lifecycle` 3, `security` 3,
+  `source` 3, `storage` 3, `approval` 2, `coding-standards` 2, `effect` 2, and
+  one each for `contracts`, `fleeting`, `foldkit`, `identity`, `index`,
+  `layers`, `literature`, `operations`, `permanent`, `reliability`, `search`,
+  `services`, `tags`, `web`, and `wiki`.
+- `search "domain fleeting"` returned eight notes, led by the fleeting,
+  literature, and permanent domain notes. `search "approval proposal"` returned
+  five notes, led by the approvals domain note.
+- `wiki domain --mode extractive --limit 10` cited ten notes by ID and
+  `.slipmem/<filename>` path, including all eight domain notes and the trust
+  and plan notes.
+- A link audit counted 53 `main`-branch GitHub links, 2 commit-pinned GitHub
+  links, and 18 inter-note Markdown links. Every `main` target is a tracked
+  file, both pins exist at `8094950`, and all note destinations exist.
 
 ## Compile and runtime proof
 
