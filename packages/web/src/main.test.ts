@@ -441,23 +441,41 @@ test("topics render counts and link to cited topic pages", () => {
     Scene.given(
       baseModel(AppRoute.Topics(), {
         topics: AsyncData.Success({
-          data: [{ topic: "agent-memory", noteCount: 2 }],
+          data: [
+            {
+              topic: "agent-memory",
+              noteCount: 2,
+              byType: { fleeting: 1, literature: 0, permanent: 1 },
+            },
+          ],
         }),
       }),
     ),
     Scene.expect(Scene.role("heading", { name: "Topics" })).toExist(),
     Scene.expect(Scene.text("agent-memory")).toExist(),
-    Scene.expect(Scene.text("2 notes")).toExist(),
+    Scene.expect(Scene.text("2 notes (1 fleeting, 1 permanent)")).toExist(),
+    Scene.expect(Scene.text(/Counts include every note type/)).toExist(),
     Scene.expect(Scene.role("link", { name: "Open topic page" })).toExist(),
+    Scene.expect(Scene.role("link", { name: "Include fleeting" })).toExist(),
   )
 })
+
+const notConfiguredSynthesis = {
+  configured: false,
+  kind: "none" as const,
+  detail: "Extractive mode is the default.",
+}
 
 test("wiki sections and citations render without persisted HTML", () => {
   Scene.scene(
     { update, view },
     Scene.given(
       baseModel(
-        AppRoute.Wiki({ topic: "agent-memory", mode: Option.none() }),
+        AppRoute.Wiki({
+          topic: "agent-memory",
+          mode: Option.none(),
+          includeFleeting: Option.none(),
+        }),
         {
           wiki: AsyncData.Success({
             data: {
@@ -465,6 +483,7 @@ test("wiki sections and citations render without persisted HTML", () => {
               generatedAt: "2026-11-17T20:10:00Z",
               mode: "extractive",
               noteCount: 1,
+              synthesis: notConfiguredSynthesis,
               sources: [
                 {
                   id: permanent.id as never,
@@ -495,8 +514,73 @@ test("wiki sections and citations render without persisted HTML", () => {
     ),
     Scene.expect(Scene.role("heading", { name: "Topic: agent-memory" })).toExist(),
     Scene.expect(Scene.text(/Derived on demand/)).toExist(),
+    Scene.expect(Scene.text(/Permanent and literature notes are cited by default/)).toExist(),
+    Scene.expect(Scene.text(/Synthesized mode is not configured/)).toExist(),
+    Scene.expect(Scene.role("link", { name: "Try synthesized" })).toBeAbsent(),
+    Scene.expect(Scene.role("link", { name: "Include fleeting" })).toExist(),
     Scene.expect(Scene.role("link", { name: permanent.id })).toExist(),
     Scene.expect(Scene.selector("script")).toBeAbsent(),
+  )
+})
+
+test("wiki offers synthesis only when the server reports it configured", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(
+        AppRoute.Wiki({
+          topic: "agent-memory",
+          mode: Option.none(),
+          includeFleeting: Option.some("true"),
+        }),
+        {
+          wiki: AsyncData.Success({
+            data: {
+              topic: "agent-memory",
+              generatedAt: "2026-11-17T20:10:00Z",
+              mode: "extractive",
+              noteCount: 1,
+              synthesis: {
+                configured: true,
+                kind: "agent",
+                detail: "A local synthesis agent is configured.",
+              },
+              sources: [],
+              sections: [],
+              markdown: "# Topic: agent-memory",
+            },
+          }),
+        },
+      ),
+    ),
+    Scene.expect(Scene.role("link", { name: "Try synthesized" })).toExist(),
+    Scene.expect(Scene.text(/Fleeting notes are included/)).toExist(),
+    Scene.expect(Scene.role("link", { name: "Exclude fleeting" })).toExist(),
+  )
+})
+
+test("a failed synthesized page keeps an extractive fallback link", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(
+        AppRoute.Wiki({
+          topic: "agent-memory",
+          mode: Option.some("synthesized"),
+          includeFleeting: Option.none(),
+        }),
+        {
+          wiki: AsyncData.Failure({
+            error: "Synthesized mode requires a configured local synthesizer.",
+          }),
+        },
+      ),
+    ),
+    Scene.expect(
+      Scene.text(/Synthesized mode requires a configured local synthesizer/),
+    ).toExist(),
+    Scene.expect(Scene.role("link", { name: "Use extractive page" })).toExist(),
+    Scene.expect(Scene.role("button", { name: "Retry" })).toExist(),
   )
 })
 
@@ -583,13 +667,18 @@ test("health reports the Markdown root and the local security posture", () => {
               path: "/home/user/.cache/slipmem/index/index.sqlite",
               noteCount: 3,
             },
+            wiki: { synthesis: notConfiguredSynthesis },
           },
         }),
       }),
     ),
     Scene.expect(Scene.role("heading", { name: "Health" })).toExist(),
+    Scene.expect(Scene.text("slipmem is ready")).toExist(),
+    Scene.expect(Scene.text("slipmem slipmem")).toBeAbsent(),
     Scene.expect(Scene.text("/workspace/.slipmem")).toExist(),
     Scene.expect(Scene.text("fts5")).toExist(),
+    Scene.expect(Scene.text("Not configured; extractive only")).toExist(),
+    Scene.expect(Scene.text(/not authentication or an OS sandbox/)).toExist(),
     Scene.expect(Scene.text(/unauthenticated/)).toExist(),
   )
 })

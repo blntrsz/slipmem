@@ -83,18 +83,47 @@ const readNotes = async (response: Response): Promise<ReadonlyArray<ApiNoteRespo
   return body.notes
 }
 
-test("health reports the Markdown note root and index mode", async () => {
+test("health refreshes the index and reports synthesis capability", async () => {
   await withApi(async (api, root) => {
     const response = await api.handler(request("/api/health"))
     expect(response.status).toBe(200)
     const body = (await response.json()) as {
       readonly ok: boolean
       readonly noteRoot: string
-      readonly index: { readonly mode: string }
+      readonly index: { readonly mode: string; readonly noteCount: number }
+      readonly wiki: {
+        readonly synthesis: {
+          readonly configured: boolean
+          readonly kind: string
+          readonly detail: string
+        }
+      }
     }
     expect(body.ok).toBe(true)
     expect(body.noteRoot).toBe(root.root)
     expect(["fts5", "linear"]).toContain(body.index.mode)
+    expect(body.index.noteCount).toBe(0)
+    expect(body.wiki.synthesis.configured).toBe(false)
+    expect(body.wiki.synthesis.detail.length).toBeGreaterThan(0)
+
+    // A note written by another surface is counted without a search or a
+    // restart: health refreshes the disposable index before reading it.
+    const repository = await Effect.runPromise(
+      makeMarkdownNoteRepository({ root: root.root }),
+    )
+    await Effect.runPromise(
+      repository.create({
+        type: "permanent",
+        title: "External before health",
+        content: "Written after the first health request.",
+      }),
+    )
+
+    const refreshed = await api.handler(request("/api/health"))
+    const refreshedBody = (await refreshed.json()) as {
+      readonly index: { readonly noteCount: number }
+    }
+    expect(refreshedBody.index.noteCount).toBe(1)
   })
 })
 
@@ -286,6 +315,17 @@ test("search and topics refresh the disposable index and stay bounded", async ()
     expect(created.status).toBe(201)
     const note = await readNote(created)
 
+    const fleetingResponse = await api.handler(
+      request("/api/notes", "POST", {
+        type: "fleeting",
+        title: "Fleeting recall",
+        content: "A quick recall thought.",
+        topics: ["agent-memory"],
+      }),
+    )
+    expect(fleetingResponse.status).toBe(201)
+    const fleeting = await readNote(fleetingResponse)
+
     const searchResponse = await api.handler(
       request("/api/search?q=recall&limit=3"),
     )
@@ -296,11 +336,9 @@ test("search and topics refresh the disposable index and stay bounded", async ()
         readonly note: { readonly title: string }
       }>
     }
-    expect(searchBody.results).toHaveLength(1)
-    expect(searchBody.results[0]).toMatchObject({
-      id: note.id,
-      note: { title: "Bounded recall" },
-    })
+    expect(searchBody.results).toHaveLength(2)
+    expect(searchBody.results.map((result) => result.id)).toContain(note.id)
+    expect(searchBody.results.map((result) => result.id)).toContain(fleeting.id)
 
     const filtered = await api.handler(
       request("/api/search?q=recall&type=literature"),
@@ -313,11 +351,23 @@ test("search and topics refresh the disposable index and stay bounded", async ()
     const topicsResponse = await api.handler(request("/api/topics?limit=10"))
     expect(topicsResponse.status).toBe(200)
     const topics = (await topicsResponse.json()) as {
-      readonly topics: ReadonlyArray<{ topic: string; noteCount: number }>
+      readonly topics: ReadonlyArray<{
+        topic: string
+        noteCount: number
+        byType: { fleeting: number; literature: number; permanent: number }
+      }>
     }
     expect(topics.topics).toEqual([
-      { topic: "agent-memory", noteCount: 1 },
-      { topic: "retrieval", noteCount: 1 },
+      {
+        topic: "agent-memory",
+        noteCount: 2,
+        byType: { fleeting: 1, literature: 0, permanent: 1 },
+      },
+      {
+        topic: "retrieval",
+        noteCount: 1,
+        byType: { fleeting: 0, literature: 0, permanent: 1 },
+      },
     ])
   })
 })
@@ -426,6 +476,17 @@ test("wiki pages are cited, derived, and available as structured JSON or Markdow
     )
     const note = await readNote(created)
 
+    const fleetingResponse = await api.handler(
+      request("/api/notes", "POST", {
+        type: "fleeting",
+        title: "Fleeting recall note",
+        content: "A fleeting idea about agent memory.",
+        topics: ["agent-memory"],
+      }),
+    )
+    expect(fleetingResponse.status).toBe(201)
+    const fleeting = await readNote(fleetingResponse)
+
     const filesBefore = (await readdir(root.root)).filter((name) =>
       name.endsWith(".md"),
     )
@@ -438,6 +499,11 @@ test("wiki pages are cited, derived, and available as structured JSON or Markdow
       readonly topic: string
       readonly mode: string
       readonly noteCount: number
+      readonly synthesis: {
+        readonly configured: boolean
+        readonly kind: string
+        readonly detail: string
+      }
       readonly sections: ReadonlyArray<{
         readonly heading: string
         readonly citations: ReadonlyArray<{
@@ -453,6 +519,7 @@ test("wiki pages are cited, derived, and available as structured JSON or Markdow
       mode: "extractive",
       noteCount: 1,
     })
+    expect(page.synthesis.configured).toBe(false)
     expect(page.sections).toHaveLength(1)
     expect(page.sections[0]!.citations[0]).toMatchObject({
       noteId: note.id,
@@ -460,6 +527,19 @@ test("wiki pages are cited, derived, and available as structured JSON or Markdow
     expect(page.sections[0]!.citations[0]!.path).toContain(note.id)
     expect(page.sources[0]!.id).toBe(note.id)
     expect(page.markdown).toContain(note.id)
+
+    const withFleeting = await api.handler(
+      request("/api/wiki/agent-memory?includeFleeting=true&limit=5"),
+    )
+    expect(withFleeting.status).toBe(200)
+    const fleetingPage = (await withFleeting.json()) as {
+      readonly noteCount: number
+      readonly sources: ReadonlyArray<{ readonly id: string }>
+    }
+    expect(fleetingPage.noteCount).toBe(2)
+    expect(fleetingPage.sources.map((source) => source.id)).toContain(
+      fleeting.id,
+    )
 
     const markdown = await api.handler(
       request("/api/wiki/agent-memory?format=markdown"),

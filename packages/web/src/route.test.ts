@@ -57,6 +57,11 @@ test("list, search, topics, wiki, review, and health routes decode their queries
     topic: "agent-memory",
     mode: Option.some("synthesized"),
   })
+  expect(parse("/wiki/agent-memory?includeFleeting=true")).toMatchObject({
+    _tag: "Wiki",
+    topic: "agent-memory",
+    includeFleeting: Option.some("true"),
+  })
   expect(parse("/review")).toMatchObject({ _tag: "Review" })
   expect(parse("/health")).toMatchObject({ _tag: "Health" })
   expect(parse("/no/such/path")).toMatchObject({
@@ -74,7 +79,8 @@ test("href builders round-trip through the route parser", () => {
     deleteNoteHref(noteId),
     searchHref("bounded recall"),
     "/topics",
-    wikiHref("agent-memory", "extractive"),
+    wikiHref("agent-memory", { mode: "extractive" }),
+    wikiHref("agent-memory", { includeFleeting: true }),
     "/review",
     "/health",
   ]

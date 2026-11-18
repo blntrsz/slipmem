@@ -41,7 +41,10 @@ bun run web
 - `SLIPMEM_DIR` overrides the root; otherwise the nearest ancestor `.slipmem/`
   is used. A missing root fails startup instead of creating or importing one.
 - Migrating from the old SQLite store is a separate, non-destructive command.
-  SQLite is not the runtime source of truth.
+  SQLite is not the runtime source of truth. `SLIPMEM_DB_PATH` is deprecated:
+  it names only the legacy SQLite file for `migrate sqlite` and the
+  compatibility window, never the live note store. Any older documentation
+  that describes SQLite as the runtime store is superseded by this README.
 
 ## Packages
 
@@ -71,6 +74,20 @@ address is an explicit decision to expose every note to the network and prints
 a warning. Mutations are same-origin only and require JSON; no CORS access is
 enabled. Note text is untrusted data and is rendered as text/Markdown, never
 trusted HTML.
+
+Agent writes use a local approval policy: MCP mutations become pending
+proposals that a human approves or rejects at `/review`. That is not
+authentication and not an OS sandbox. It does not stop another local process
+that can reach the loopback port from reading or writing notes; the loopback
+bind and file permissions are the real boundary.
+
+Extractive topic pages are always available and quote their cited sources.
+Synthesized mode is opt-in and only works when this process has an explicitly
+configured local agent or a registered model adapter. A configured agent is
+normally run inside a probed OS sandbox; `SLIPMEM_WIKI_AGENT_UNSAFE=1` is an
+explicit unsafe override that runs it with the slipmem user's full filesystem
+privileges. The Health page reports whether synthesis is configured and the
+web UI does not advertise it otherwise.
 
 See [`packages/server/README.md`](packages/server/README.md),
 [`packages/web/README.md`](packages/web/README.md), and

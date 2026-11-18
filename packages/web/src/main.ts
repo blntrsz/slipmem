@@ -15,6 +15,7 @@ import {
   ApiPendingProposal,
   ApiSearchHit,
   ApiTopic,
+  ApiWikiPage,
   apiErrorMessage,
   approveProposal,
   createNote,
@@ -60,7 +61,7 @@ export const TopicsData = AsyncData.Schema(
   Schema.Array(ApiTopic),
   Schema.String,
 )
-export const WikiData = AsyncData.Schema(Markdown.WikiPage, Schema.String)
+export const WikiData = AsyncData.Schema(ApiWikiPage, Schema.String)
 export const PendingData = AsyncData.Schema(
   Schema.Struct({
     proposals: Schema.Array(ApiPendingProposal),
@@ -172,7 +173,7 @@ export const Message = defineMessageUnion({
   FailedTopics: { requestId: Schema.Int, message: Schema.String },
   SucceededWiki: {
     requestId: Schema.Int,
-    wiki: Markdown.WikiPage,
+    wiki: ApiWikiPage,
   },
   FailedWiki: { requestId: Schema.Int, message: Schema.String },
   SucceededPending: {
@@ -365,10 +366,14 @@ export const LoadWiki = Command.define("LoadWiki", {
     requestId: Schema.Int,
     topic: Schema.String,
     mode: Schema.Option(Markdown.WikiMode),
+    includeFleeting: Schema.Boolean,
   },
   messages: [Message.SucceededWiki, Message.FailedWiki],
-  execute: ({ requestId, topic, mode }) =>
-    getWiki(topic, Option.isSome(mode) ? { mode: mode.value } : {}).pipe(
+  execute: ({ requestId, topic, mode, includeFleeting }) =>
+    getWiki(topic, {
+      ...(Option.isSome(mode) ? { mode: mode.value } : {}),
+      ...(includeFleeting ? { includeFleeting: true } : {}),
+    }).pipe(
       Effect.map((wiki) => Message.SucceededWiki({ requestId, wiki })),
       Effect.catch((error) =>
         Effect.succeed(
@@ -502,6 +507,12 @@ const wikiModeFromQuery = (
     ),
   )
 
+const includeFleetingFromQuery = (value: Option.Option<string>): boolean =>
+  Option.match(value, {
+    onNone: () => false,
+    onSome: (candidate) => candidate === "true",
+  })
+
 const editorForRoute = (route: AppRoute): EditorState =>
   AppRoute.match(route, {
     NewNote: ({ type }) =>
@@ -619,7 +630,7 @@ const enterRoute = (model: Model, route: AppRoute): UpdateReturn => {
         commands: [LoadTopics({ requestId })],
       }
     },
-    Wiki: ({ topic, mode }) => {
+    Wiki: ({ topic, mode, includeFleeting }) => {
       const requestId = model.wikiRequestId + 1
       return {
         model: modifyFields(base, {
@@ -627,7 +638,12 @@ const enterRoute = (model: Model, route: AppRoute): UpdateReturn => {
           wikiRequestId: () => requestId,
         }),
         commands: [
-          LoadWiki({ requestId, topic, mode: wikiModeFromQuery(mode) }),
+          LoadWiki({
+            requestId,
+            topic,
+            mode: wikiModeFromQuery(mode),
+            includeFleeting: includeFleetingFromQuery(includeFleeting),
+          }),
         ],
       }
     },
@@ -843,7 +859,7 @@ const refreshRoute = (model: Model): UpdateReturn =>
         ],
       }
     },
-    Wiki: ({ topic, mode }) => {
+    Wiki: ({ topic, mode, includeFleeting }) => {
       const requestId = model.wikiRequestId + 1
       return {
         model: modifyFields(model, {
@@ -851,7 +867,12 @@ const refreshRoute = (model: Model): UpdateReturn =>
           wikiRequestId: () => requestId,
         }),
         commands: [
-          LoadWiki({ requestId, topic, mode: wikiModeFromQuery(mode) }),
+          LoadWiki({
+            requestId,
+            topic,
+            mode: wikiModeFromQuery(mode),
+            includeFleeting: includeFleetingFromQuery(includeFleeting),
+          }),
         ],
       }
     },
@@ -2064,6 +2085,19 @@ const searchView = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
+const topicBreakdown = (item: ApiTopic): string => {
+  const parts = [
+    item.byType.fleeting === 0 ? undefined : `${item.byType.fleeting} fleeting`,
+    item.byType.literature === 0
+      ? undefined
+      : `${item.byType.literature} literature`,
+    item.byType.permanent === 0
+      ? undefined
+      : `${item.byType.permanent} permanent`,
+  ].filter((part): part is string => part !== undefined)
+  return parts.length === 0 ? "no notes" : parts.join(", ")
+}
+
 const topicsList = (topics: ReadonlyArray<ApiTopic>, h: HtmlBuilder<Message>): Html =>
   Array.match(topics, {
     onEmpty: () => h.p([h.Class(mutedClass)], ["No topics have been assigned yet."]),
@@ -2083,7 +2117,10 @@ const topicsList = (topics: ReadonlyArray<ApiTopic>, h: HtmlBuilder<Message>): H
                 [item.topic],
               ),
               h.p([h.Class("mt-1 text-xs text-slate-400")], [
-                `${item.noteCount} ${item.noteCount === 1 ? "note" : "notes"}`,
+                `${item.noteCount} ${item.noteCount === 1 ? "note" : "notes"} (${topicBreakdown(item)})`,
+              ]),
+              h.p([h.Class("mt-2 text-xs text-slate-500")], [
+                "Counts include every note type. Topic pages cite permanent and literature notes by default; fleeting notes are opt-in.",
               ]),
               h.div(
                 [h.Class("mt-3 flex flex-wrap gap-3 text-xs")],
@@ -2104,6 +2141,17 @@ const topicsList = (topics: ReadonlyArray<ApiTopic>, h: HtmlBuilder<Message>): H
                     [h.Href(wikiHref(item.topic)), h.Class(linkClass)],
                     ["Open topic page"],
                   ),
+                  item.byType.fleeting === 0
+                    ? h.empty
+                    : h.a(
+                        [
+                          h.Href(
+                            wikiHref(item.topic, { includeFleeting: true }),
+                          ),
+                          h.Class(linkClass),
+                        ],
+                        ["Include fleeting"],
+                      ),
                 ],
               ),
             ],
@@ -2189,8 +2237,33 @@ const wikiSectionView = (
     ],
   )
 
-const wikiBody = (wiki: Markdown.WikiPage, h: HtmlBuilder<Message>): Html =>
-  h.div(
+const wikiBody = (
+  wiki: ApiWikiPage,
+  includeFleeting: boolean,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const modeLink =
+    wiki.mode === "synthesized"
+      ? h.a(
+          [
+            h.Href(wikiHref(wiki.topic, { includeFleeting })),
+            h.Class(buttonClass),
+          ],
+          ["Use extractive"],
+        )
+      : wiki.synthesis.configured
+        ? h.a(
+            [
+              h.Href(
+                wikiHref(wiki.topic, { mode: "synthesized", includeFleeting }),
+              ),
+              h.Class(buttonClass),
+            ],
+            ["Try synthesized"],
+          )
+        : h.empty
+
+  return h.div(
     [h.Class("flex flex-col gap-4")],
     [
       h.div(
@@ -2208,31 +2281,56 @@ const wikiBody = (wiki: Markdown.WikiPage, h: HtmlBuilder<Message>): Html =>
               h.p([h.Class("text-xs text-amber-300")], [
                 "Derived on demand. This page is not stored in the note repository.",
               ]),
+              h.p([h.Class("text-xs text-slate-500")], [
+                includeFleeting
+                  ? "Fleeting notes are included in this page."
+                  : "Permanent and literature notes are cited by default; fleeting notes are excluded.",
+              ]),
+              wiki.synthesis.configured
+                ? h.empty
+                : h.p([h.Class("text-xs text-slate-500")], [
+                    `Synthesized mode is not configured in this server. ${wiki.synthesis.detail}`,
+                  ]),
             ],
           ),
           h.div(
-            [h.Class("flex gap-2")],
+            [h.Class("flex flex-wrap gap-2")],
             [
+              modeLink,
               h.a(
                 [
-                  h.Href(
-                    wikiHref(
-                      wiki.topic,
-                      wiki.mode === "extractive" ? "synthesized" : "extractive",
-                    ),
-                  ),
+                  h.Href(wikiHref(wiki.topic, { mode: wiki.mode, includeFleeting: !includeFleeting })),
                   h.Class(buttonClass),
                 ],
-                [wiki.mode === "extractive" ? "Try synthesized" : "Use extractive"],
+                [includeFleeting ? "Exclude fleeting" : "Include fleeting"],
               ),
             ],
           ),
         ],
       ),
       wiki.noteCount === 0
-        ? h.p([h.Class(mutedClass)], [
-            "No notes matched this topic. No content was invented.",
-          ])
+        ? h.div(
+            [h.Class("flex flex-col items-start gap-2")],
+            [
+              h.p([h.Class(mutedClass)], [
+                includeFleeting
+                  ? "No notes matched this topic. No content was invented."
+                  : "No notes matched this topic with the default citation scope. Fleeting notes are excluded; no content was invented.",
+              ]),
+              h.a(
+                [
+                  h.Href(
+                    homeRouter({
+                      type: Option.none(),
+                      topic: Option.some(wiki.topic),
+                    }),
+                  ),
+                  h.Class(linkClass),
+                ],
+                ["Browse every note with this topic"],
+              ),
+            ],
+          )
         : h.div(
             [h.Class("flex flex-col gap-3")],
             Array.map(wiki.sections, (section) => wikiSectionView(section, h)),
@@ -2266,11 +2364,42 @@ const wikiBody = (wiki: Markdown.WikiPage, h: HtmlBuilder<Message>): Html =>
       ),
     ],
   )
+}
+
+const wikiFailure = (
+  message: string,
+  topic: string,
+  includeFleeting: boolean,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.div(
+    [h.Class("flex flex-col items-start gap-3")],
+    [
+      h.p([h.Class("text-sm text-red-300")], [message]),
+      h.p([h.Class(mutedClass)], [
+        "Extractive mode always works locally and cites the same notes.",
+      ]),
+      h.div(
+        [h.Class("flex flex-wrap items-center gap-2")],
+        [
+          h.a(
+            [
+              h.Href(wikiHref(topic, { includeFleeting })),
+              h.Class(primaryButtonClass),
+            ],
+            ["Use extractive page"],
+          ),
+          retry(h),
+        ],
+      ),
+    ],
+  )
 
 const wikiView = (model: Model, h: HtmlBuilder<Message>): Html =>
   AppRoute.match(model.route, {
-    Wiki: ({ topic }) =>
-      h.section(
+    Wiki: ({ topic, includeFleeting }) => {
+      const withFleeting = includeFleetingFromQuery(includeFleeting)
+      return h.section(
         [h.Class("flex flex-col gap-4")],
         [
           h.div(
@@ -2293,14 +2422,15 @@ const wikiView = (model: Model, h: HtmlBuilder<Message>): Html =>
             onRefreshing: (wiki) =>
               h.div(
                 [h.Class("flex flex-col gap-3")],
-                [status("Regenerating...", h), wikiBody(wiki, h)],
+                [status("Regenerating...", h), wikiBody(wiki, withFleeting, h)],
               ),
-            onStale: ({ error }) => failureView(error, h),
-            onFailure: (error) => failureView(error, h),
-            onSuccess: (wiki) => wikiBody(wiki, h),
+            onStale: ({ error }) => wikiFailure(error, topic, withFleeting, h),
+            onFailure: (error) => wikiFailure(error, topic, withFleeting, h),
+            onSuccess: (wiki) => wikiBody(wiki, withFleeting, h),
           }),
         ],
-      ),
+      )
+    },
     Home: () => h.empty,
     NewNote: () => h.empty,
     NoteDetail: () => h.empty,
@@ -2510,19 +2640,23 @@ const healthBody = (health: ApiHealth, h: HtmlBuilder<Message>): Html =>
     [h.Class(`${panelClass} flex flex-col gap-3`), h.Role("status")],
     [
       h.p([h.Class("text-lg font-semibold text-emerald-300")], [
-        `slipmem ${health.service} is ${health.ok ? "ready" : "degraded"}`,
+        health.ok
+          ? `${health.service} is ready`
+          : `${health.service} is degraded`,
       ]),
       h.dl(
         [h.Class("grid gap-2 text-sm text-slate-300")],
         [
           h.div([], [h.dt([h.Class("text-xs text-slate-500")], ["Note root"]), h.dd([h.Class("break-all")], [health.noteRoot])]),
           h.div([], [h.dt([h.Class("text-xs text-slate-500")], ["Index mode"]), h.dd([], [health.index.mode])]),
-          h.div([], [h.dt([h.Class("text-xs text-slate-500")], ["Indexed notes"]), h.dd([], [String(health.index.noteCount)])]),
+          h.div([], [h.dt([h.Class("text-xs text-slate-500")], ["Indexed notes (refreshed for this request)"]), h.dd([], [String(health.index.noteCount)])]),
           h.div([], [h.dt([h.Class("text-xs text-slate-500")], ["Index path"]), h.dd([h.Class("break-all")], [health.index.path])]),
+          h.div([], [h.dt([h.Class("text-xs text-slate-500")], ["Wiki synthesis"]), h.dd([], [health.wiki.synthesis.configured ? `Configured (${health.wiki.synthesis.kind})` : "Not configured; extractive only"])]),
         ],
       ),
+      h.p([h.Class("text-xs text-slate-500")], [health.wiki.synthesis.detail]),
       h.p([h.Class("text-xs text-amber-300")], [
-        "The local HTTP server is unauthenticated and note files are plaintext. It binds to loopback by default; a non-loopback bind is an explicit risk.",
+        "The local HTTP server is unauthenticated and note files are plaintext. Agent writes wait for human approval on the Review page; that is a local approval policy, not authentication or an OS sandbox. It binds to loopback by default; a non-loopback bind is an explicit risk.",
       ]),
     ],
   )

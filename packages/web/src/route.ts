@@ -26,6 +26,7 @@ export const AppRoute = defineRouteUnion({
   Wiki: {
     topic: Schema.String,
     mode: Schema.OptionFromOptional(Schema.String),
+    includeFleeting: Schema.OptionFromOptional(Schema.String),
   },
   Review: {},
   Health: {},
@@ -94,6 +95,7 @@ export const wikiRouter = pipe(
   Route.query(
     Schema.Struct({
       mode: Schema.OptionFromOptional(Schema.String),
+      includeFleeting: Schema.OptionFromOptional(Schema.String),
     }),
   ),
   Route.mapTo(AppRoute.Wiki),
@@ -142,8 +144,16 @@ export const searchHref = (q: string, type?: string): string =>
     type: Option.fromNullishOr(type),
   })
 
-export const wikiHref = (topic: string, mode?: string): string =>
+export const wikiHref = (
+  topic: string,
+  options: {
+    readonly mode?: string
+    readonly includeFleeting?: boolean
+  } = {},
+): string =>
   wikiRouter({
     topic,
-    mode: Option.fromNullishOr(mode),
+    mode: Option.fromNullishOr(options.mode),
+    includeFleeting:
+      options.includeFleeting === true ? Option.some("true") : Option.none(),
   })

@@ -38,7 +38,9 @@ on `SIGINT`/`SIGTERM`, and routes `/api` and `/mcp` requests to it through
 
 A missing root fails startup with a message to run `slipmem init`. There is no
 SQLite note database in the HTTP startup path. `resolveDatabasePath()` remains
-only for the migration importer and the compatibility window.
+only for the deprecation path: `SLIPMEM_DB_PATH` names the legacy SQLite file
+for the migration importer and the compatibility window, never the live note
+store. Older SQLite-first documentation is superseded.
 
 The disposable search index lives outside the note root under
 `$XDG_CACHE_HOME/slipmem/index/<root-hash>/index.sqlite`. It can be deleted and
@@ -50,15 +52,15 @@ Canonical routes are ID-based. A note ID is the Markdown filename stem:
 
 | Method | Path | Result |
 | --- | --- | --- |
-| `GET` | `/api/health` | Service status, note root, index mode and count |
+| `GET` | `/api/health` | Service status, refreshed index mode/count, wiki synthesis capability |
 | `GET` | `/api/notes` | Bounded list; `type`, `topic`, `limit` filters |
 | `POST` | `/api/notes` | Create with `type` in the JSON body |
 | `GET` | `/api/notes/:id` | One note or 404 |
 | `PUT` | `/api/notes/:id` | Partial update; human web write |
 | `DELETE` | `/api/notes/:id` | Move the note to the local backup directory |
 | `GET` | `/api/search` | Bounded ranked search; requires `q` |
-| `GET` | `/api/topics` | Topic inventory with counts |
-| `GET` | `/api/wiki/:topic` | Structured cited page; `format=markdown` for text |
+| `GET` | `/api/topics` | Topic inventory with all-type counts and a per-type breakdown |
+| `GET` | `/api/wiki/:topic` | Structured cited page with synthesis capability; `format=markdown` for text |
 | `GET` | `/api/pending` | Pending proposals with inspectable diffs |
 | `POST` | `/api/pending/:proposalId/approve` | Apply a proposal |
 | `POST` | `/api/pending/:proposalId/reject` | Discard a proposal |
@@ -96,15 +98,30 @@ same ID repository and never create type folders or a second store:
 
 `GET /api/wiki/:topic` defaults to structured sections with sources and
 citations; `format=markdown` returns only the rendered Markdown. Generation is
-read-only and bounded. Extractive mode quotes selected notes verbatim. A
-configured synthesizer is opt-in via `SLIPMEM_WIKI_SYNTHESIS`; unsupported
-sentences are omitted before output.
+read-only and bounded. Extractive mode quotes selected notes verbatim and is
+the guaranteed fallback. Synthesized mode is opt-in and requires an explicitly
+configured local agent (or a registered model adapter); it is not a general
+tool-less process. A configured agent is normally run through a probed OS
+sandbox, and `SLIPMEM_WIKI_AGENT_UNSAFE=1` is an explicit unsafe override that
+runs it with the slipmem user's full filesystem privileges. The response and
+`/api/health` include `wiki.synthesis` so clients can avoid offering a mode the
+server cannot resolve. `includeFleeting=true` opts fleeting notes into the
+citation set; permanent and literature notes are the default.
+
+`GET /api/topics` counts every note type and also returns `byType` so clients
+can explain why a topic page cites fewer notes than the count. Topic pages are
+derived; `GET /api/health` refreshes the disposable index before reporting its
+count.
 
 `GET /api/pending` reads proposals from `.slipmem/.state/pending/` and returns
 their operation, target ID, path, actor, expiry, staleness, and a line diff.
 Approve and reject are human HTTP actions: no MCP tool can call them. Approving
 revalidates the base content hash and all note rules; a stale proposal is
 rejected without writing.
+
+This is a local approval policy, not authentication and not an OS sandbox. Any
+process that can reach the unauthenticated loopback port can read and write
+notes directly. The loopback bind and filesystem permissions are the boundary.
 
 Pending proposals never appear in the note list, search, topics, or the note
 root.

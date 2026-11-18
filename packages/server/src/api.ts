@@ -10,6 +10,7 @@ import {
   MAX_SEARCH_QUERY_LENGTH,
   WikiError,
   WikiService,
+  resolveSynthesisSelection,
   type MarkdownNoteRepositoryShape,
   type ParsedMarkdownNote,
 } from "@slipmem/core"
@@ -110,6 +111,56 @@ const fromWikiError = (error: WikiError): ApiError =>
       ? error.message
       : `${error.message} (${error.field})`,
   })
+
+/**
+ * What the running server can actually do for synthesized wiki pages.
+ *
+ * The capability is derived from the same resolver `WikiService` uses, so the
+ * UI never advertises a mode this process cannot resolve. An agent is reported
+ * as configured (not guaranteed): the core service still refuses to run it
+ * without a working OS sandbox unless the operator opts into the unsafe mode.
+ */
+export interface SynthesisCapability {
+  readonly configured: boolean
+  readonly kind: "none" | "agent" | "model"
+  readonly detail: string
+}
+
+const synthesisCapability = (
+  env: Readonly<Record<string, string | undefined>>,
+): Effect.Effect<SynthesisCapability> =>
+  resolveSynthesisSelection(env).pipe(
+    Effect.map(({ selection }): SynthesisCapability => {
+      if (selection.kind === "extractive") {
+        return {
+          configured: false,
+          kind: "none",
+          detail:
+            "Extractive mode is the default. Set SLIPMEM_WIKI_SYNTHESIS=agent and SLIPMEM_WIKI_AGENT to configure a local synthesizer.",
+        }
+      }
+      if (selection.kind === "agent") {
+        return {
+          configured: true,
+          kind: "agent",
+          detail:
+            "A local synthesis agent is configured. It runs only through a probed OS sandbox unless SLIPMEM_WIKI_AGENT_UNSAFE=1 explicitly accepts the risk.",
+        }
+      }
+      return {
+        configured: false,
+        kind: "model",
+        detail: `Model ID '${selection.modelId}' has no registered adapter in this server. Configure a local agent or use extractive mode.`,
+      }
+    }),
+    Effect.catch((error) =>
+      Effect.succeed({
+        configured: false,
+        kind: "none" as const,
+        detail: `Synthesis is misconfigured: ${error.message}`,
+      }),
+    ),
+  )
 
 const route = <R>(
   effect: Effect.Effect<
@@ -455,7 +506,11 @@ export const MarkdownApiRoutes = Layer.unwrap(
         Effect.gen(function* () {
           const url = requestUrl(request)
           void url
+          // Refresh first so a note written by the CLI or an editor is counted.
+          // The index is disposable; the note files remain the source of truth.
+          yield* index.refresh()
           const status = yield* index.status()
+          const synthesis = yield* synthesisCapability(process.env)
           return json({
             ok: true,
             service: "slipmem",
@@ -465,6 +520,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
               path: status.path,
               noteCount: status.noteCount,
             },
+            wiki: { synthesis },
           })
         }),
       )
@@ -686,7 +742,35 @@ export const MarkdownApiRoutes = Layer.unwrap(
             ...(query === undefined ? {} : { query }),
             ...(limit === undefined ? {} : { limit }),
           })
-          return json({ topics: items })
+          // Topic counts include every note type. The wiki cites permanent and
+          // literature notes by default, so expose a per-type breakdown too;
+          // otherwise a fleeting-only topic looks empty on its topic page.
+          const scan = yield* repository.scan()
+          const counts = new Map<
+            string,
+            { fleeting: number; literature: number; permanent: number }
+          >()
+          for (const note of scan.notes) {
+            for (const topic of note.metadata.topics ?? []) {
+              const current = counts.get(topic) ?? {
+                fleeting: 0,
+                literature: 0,
+                permanent: 0,
+              }
+              current[note.metadata.type] += 1
+              counts.set(topic, current)
+            }
+          }
+          return json({
+            topics: items.map((item) => ({
+              ...item,
+              byType: counts.get(item.topic) ?? {
+                fleeting: 0,
+                literature: 0,
+                permanent: 0,
+              },
+            })),
+          })
         }),
       )
 
@@ -729,6 +813,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
             ...(mode === undefined ? {} : { mode }),
             ...(includeFleeting ? { includeFleeting } : {}),
           })
+          const synthesis = yield* synthesisCapability(process.env)
 
           if (url.searchParams.get("format") === "markdown") {
             return HttpServerResponse.text(page.markdown, {
@@ -740,7 +825,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
             })
           }
 
-          return json(page)
+          return json({ ...page, synthesis })
         }),
       )
 

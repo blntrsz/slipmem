@@ -63,9 +63,21 @@ export const ApiSearchHit = Schema.Struct({
 }).annotate({ identifier: "Api.SearchHit" })
 export type ApiSearchHit = typeof ApiSearchHit.Type
 
+export const ApiSynthesis = Schema.Struct({
+  configured: Schema.Boolean,
+  kind: Schema.Literals(["none", "agent", "model"]),
+  detail: Schema.String,
+}).annotate({ identifier: "Api.Synthesis" })
+export type ApiSynthesis = typeof ApiSynthesis.Type
+
 export const ApiTopic = Schema.Struct({
   topic: Schema.String,
   noteCount: Schema.Int,
+  byType: Schema.Struct({
+    fleeting: Schema.Int,
+    literature: Schema.Int,
+    permanent: Schema.Int,
+  }),
 }).annotate({ identifier: "Api.Topic" })
 export type ApiTopic = typeof ApiTopic.Type
 
@@ -77,6 +89,9 @@ export const ApiHealth = Schema.Struct({
     mode: Schema.String,
     path: Schema.String,
     noteCount: Schema.Int,
+  }),
+  wiki: Schema.Struct({
+    synthesis: ApiSynthesis,
   }),
 }).annotate({ identifier: "Api.Health" })
 export type ApiHealth = typeof ApiHealth.Type
@@ -102,7 +117,11 @@ const NotesResponse = Schema.Struct({ notes: Schema.Array(ApiNote) })
 const NoteResponse = Schema.Struct({ note: ApiNote })
 const SearchResponse = Schema.Struct({ results: Schema.Array(ApiSearchHit) })
 const TopicsResponse = Schema.Struct({ topics: Schema.Array(ApiTopic) })
-const WikiResponse = Markdown.WikiPage
+export const ApiWikiPage = Schema.Struct({
+  ...Markdown.WikiPage.fields,
+  synthesis: ApiSynthesis,
+}).annotate({ identifier: "Api.WikiPage" })
+export type ApiWikiPage = typeof ApiWikiPage.Type
 const PendingResponse = Schema.Struct({
   proposals: Schema.Array(ApiPendingProposal),
   invalid: Schema.Array(
@@ -291,7 +310,7 @@ export const getWiki = (
         includeFleeting: options.includeFleeting === true ? "true" : undefined,
       }),
     )
-    return yield* decodeResponse(WikiResponse, response)
+    return yield* decodeResponse(ApiWikiPage, response)
   })
 
 export const listPending = () =>

@@ -18,15 +18,15 @@ SQLite note row.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
-| `GET` | `/api/health` | `{ ok, service, noteRoot, index: { mode, path, noteCount } }` |
+| `GET` | `/api/health` | `{ ok, service, noteRoot, index: { mode, path, noteCount }, wiki: { synthesis } }`; refreshes the index first |
 | `GET` | `/api/notes` | Bounded list; `type`, `topic`, `limit` |
 | `POST` | `/api/notes` | Create with `type` in the JSON body |
 | `GET` | `/api/notes/:id` | One note or 404 |
 | `PUT` | `/api/notes/:id` | Partial update, validated by the repository |
 | `DELETE` | `/api/notes/:id` | Move the file to the local backup directory |
 | `GET` | `/api/search` | Ranked search; requires non-empty `q` |
-| `GET` | `/api/topics` | Topic inventory with counts |
-| `GET` | `/api/wiki/:topic` | Structured cited page; `format=markdown` for Markdown |
+| `GET` | `/api/topics` | Topic inventory with all-type counts and `byType` breakdown |
+| `GET` | `/api/wiki/:topic` | Structured cited page with synthesis capability; `includeFleeting=true`; `format=markdown` for Markdown |
 | `GET` | `/api/pending` | Pending proposals with summaries and line diffs |
 | `POST` | `/api/pending/:proposalId/approve` | Human apply; revalidates base hash and rules |
 | `POST` | `/api/pending/:proposalId/reject` | Human reject; changes no note |
@@ -39,7 +39,7 @@ returns 404, and adapters never create type folders.
 
 The API reads notes through `MarkdownNoteRepository` on every list/detail
 request, so external editor and CLI changes are visible without a restart.
-Search and topic reads refresh the disposable index first.
+Search, topics, and health refresh the disposable index before reading it.
 
 ### Markdown-only startup
 
@@ -104,10 +104,13 @@ topics, health, wiki pages, and pending proposals.
 - **Path safety.** IDs are parsed with the frozen filename-stem pattern before
   reaching the repository, which independently rejects traversal, absolute
   paths, symlinks, and files over 1 MiB.
-- **Approval is human-only.** The review/approve/reject routes are HTTP-only;
-  they are not mounted as MCP tools. Pending proposals live under
-  `.slipmem/.state/pending/` and never appear in note lists or the note root.
-  Stale or expired proposals cannot be approved.
+- **Approval is human-only, and it is a local policy gate.** The
+  review/approve/reject routes are HTTP-only; they are not mounted as MCP tools.
+  Pending proposals live under `.slipmem/.state/pending/` and never appear in
+  note lists or the note root. Stale or expired proposals cannot be approved.
+  This is not authentication and not an OS sandbox: anyone who can reach the
+  unauthenticated loopback port, or edit the files as the same user, can bypass
+  it. The loopback bind and filesystem permissions are the real boundary.
 - **Loopback by default.** `resolveBindConfig()` defaults to `127.0.0.1:3000`.
   A non-loopback `HOST` prints an explicit warning to stderr in both the
   production serve script and the Vite development host.
@@ -213,9 +216,58 @@ After `bun run web:build`, the built server was started with
 - **Root files:** `README.md` was updated for the Markdown source of truth and
   the Phase 4 loop. Root `package.json` was not modified.
 - **Synthesis configuration:** synthesized wiki mode requires an explicitly
-  configured local adapter or agent. Without one, the UI can request it and the
-  API returns an actionable configuration error; extractive mode remains the
-  guaranteed cited fallback.
+  configured local agent or a registered model adapter. The API and Health page
+  report `wiki.synthesis` so the browser does not offer an unavailable mode;
+  a failed synthesized request keeps an extractive fallback link. Extractive
+  mode remains the guaranteed cited fallback. Agent execution is restricted by
+  the core sandbox probe; `SLIPMEM_WIKI_AGENT_UNSAFE=1` is an explicit unsafe
+  override, not the default. It is not an arbitrary tool-less process.
 - **SSR scope:** the server renders the route shell; page data is fetched by
   browser commands after hydration. The model never treats browser state as the
   source of truth.
+
+## 6. Browser acceptance follow-up (2026-11-18)
+
+The independent browser run recorded 25/25 normal checks and 2/2 supplemental
+XSS checks, with four low/trivial UX findings. This follow-up fixes them without
+changing the storage contract:
+
+| Finding | Change | Verification |
+| --- | --- | --- |
+| Topic counts include fleeting, topic pages exclude them | `/api/topics` returns `byType`; the topics page shows the breakdown and explains the default citation scope; topic pages carry an `includeFleeting` link and an empty-state browse link | API test asserts the breakdown and `includeFleeting=true` selection; web Scene test asserts the explanation and link |
+| Health index count lags external writes | `GET /api/health` refreshes the disposable index before reading `status()`; the label says the count was refreshed for the request | API test creates an external note after a health request and expects the next health count to include it; live smoke observed 0 -> 2 |
+| Duplicate `slipmem slipmem is ready` | The health heading renders `${service} is ready` without a hard-coded prefix | Web Scene test asserts `slipmem is ready` and the absence of the duplicated prefix |
+| Unavailable synthesized mode was advertised, then returned 501 | The API health and wiki responses expose `wiki.synthesis`; the UI only offers "Try synthesized" when the resolver reports it configured, explains the default otherwise, and a failed wiki request keeps a "Use extractive page" link | Web Scene tests cover both configured states and the failure fallback; API test asserts the capability field |
+
+The synthesized capability is derived from the same
+`resolveSynthesisSelection` call used by `WikiService`. It describes a
+configured agent as configured, not guaranteed: the core service still fails
+closed without a working OS sandbox unless `SLIPMEM_WIKI_AGENT_UNSAFE=1` is set.
+It reports model IDs without a registered adapter as unavailable rather than
+advertising them.
+
+### Post-fix gates
+
+```text
+bun run lint          pass
+bun run typecheck     pass (root and packages/web)
+bun test              341 pass, 0 fail, 2859 assertions, 40 files
+bun run web:build     pass (client and SSR bundles)
+```
+
+A production-bundle smoke run over an isolated root confirmed:
+
+- `GET /api/health` reported `noteCount` 0, then 2 immediately after two CLI
+  writes, with `wiki.synthesis` present and unconfigured;
+- `GET /api/topics` reported `security` with
+  `byType: { fleeting: 1, literature: 0, permanent: 0 }`;
+- `/api/wiki/security` cited 0 notes and included the extractive sentence
+  suggestions in Markdown, while `?includeFleeting=true` cited the fleeting
+  note;
+- no browser-level behavior changed in this pass; the UI assertions are Scene
+  tests against the real view plus the API smoke above.
+
+The historical SQLite-first docs remain superseded: `SLIPMEM_DB_PATH` names
+only the legacy file for `migrate sqlite` and the compatibility window, never
+the runtime note store.
+
