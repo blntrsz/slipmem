@@ -346,7 +346,9 @@ normal plan and quarantine paths still protect note data.
   JSON provenance maps known `source`/`actor` into frozen metadata and keeps
   unknown keys in `preservation.provenanceExtras`. Invalid scope/provenance
   values produce warnings, are retained raw under `preservation.columns`, and
-  do not block importing the note text.
+  do not block importing the note text. If a valid envelope contains an integer
+  outside the safe range, the complete raw provenance text is also retained
+  because `JSON.parse` cannot preserve that literal exactly.
 - Unknown source columns are retained in `preservation.columns`.
 - Content over the per-type Markdown limit is a malformed row: the full text is
   retained in the issue report and no note is planned.
@@ -384,10 +386,10 @@ Planner plus importer:
 
 ```text
 $ bun test packages/core/src/migration
- 28 pass
+ 29 pass
  0 fail
- 354 expect() calls
-Ran 28 tests across 2 files.
+ 358 expect() calls
+Ran 29 tests across 2 files.
 ```
 
 Lock and local-state safety:
@@ -426,8 +428,12 @@ $ bunx tsc --ignoreConfig --noEmit --target ESNext --module Preserve \
 (no errors, exit 0)
 ```
 
-Root check status: `bun run check` passes at this handoff, including lint,
-typecheck, all 335 tests, and the web build.
+Root check status: `bun run check` passed after the migration review fixes
+(lint, typecheck, all tests, and the web build). At final handoff another
+worker's uncommitted `packages/web` changes make the repository typecheck fail
+outside the migration, lock, root, and CLI areas; the scoped checks below and
+the full migration/CLI test suites still pass. Re-run the root check once that
+concurrent web work lands.
 
 The importer tests cover:
 

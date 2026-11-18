@@ -317,6 +317,60 @@ const problem = (
 ): MigrationIssueProblem =>
   field === undefined ? { severity, code, message } : { severity, code, message, field }
 
+/**
+ * Detects an unsafe integer literal outside JSON strings. `JSON.parse` rounds
+ * such a value before a reviver can see it, so the exact source text must be
+ * retained separately when this returns true.
+ */
+const hasUnsafeJsonInteger = (text: string): boolean => {
+  let inString = false
+  let escaped = false
+
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index]!
+
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (character === "\\") {
+        escaped = true
+      } else if (character === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (character === '"') {
+      inString = true
+      continue
+    }
+
+    if (character === "-" || (character >= "0" && character <= "9")) {
+      let end = index + 1
+      while (end < text.length && /[0-9eE+.-]/.test(text[end]!)) {
+        end++
+      }
+      const token = text.slice(index, end)
+      if (/^-?\d+$/.test(token)) {
+        try {
+          const value = BigInt(token)
+          if (
+            value > BigInt(Number.MAX_SAFE_INTEGER) ||
+            value < BigInt(Number.MIN_SAFE_INTEGER)
+          ) {
+            return true
+          }
+        } catch {
+          // Not a valid integer literal; JSON parsing will report the issue.
+        }
+      }
+      index = end - 1
+    }
+  }
+
+  return false
+}
+
 const issueSeverity = (
   problems: ReadonlyArray<MigrationIssueProblem>,
 ): MigrationIssueSeverity =>
@@ -460,6 +514,7 @@ const readProvenance = (
   }
 
   const envelope = decoded as Readonly<Record<string, PreservedValue>>
+  const unsafeIntegers = hasUnsafeJsonInteger(value)
   const source = envelope["source"]
   if (typeof source !== "string" || source.trim().length === 0) {
     return {
@@ -497,6 +552,17 @@ const readProvenance = (
     )
   }
 
+  if (unsafeIntegers) {
+    problems.push(
+      problem(
+        "warning",
+        "invalid-provenance",
+        "The provenance envelope contains an integer outside the JavaScript safe range; the complete raw provenance text is preserved so no precision is lost.",
+        "provenance",
+      ),
+    )
+  }
+
   return {
     provenance:
       typeof envelope["actor"] === "string"
@@ -504,7 +570,7 @@ const readProvenance = (
         : { source },
     extras,
     problems,
-    preserveRaw: false,
+    preserveRaw: unsafeIntegers,
   }
 }
 

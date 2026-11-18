@@ -21,7 +21,9 @@ Now: every migration read uses `safeIntegers: true`. Extra and quarantine
 columns keep bigints, and canonical hashes/manifest JSON encode them as
 `{"$bigint":"..."}`. BLOBs are copied as base64-tagged values. Timestamps accept
 REAL numbers and INTEGER bigints; a bigint outside the safe range is reported as
-an invalid timestamp instead of being rounded.
+an invalid timestamp instead of being rounded. If valid provenance JSON text
+contains an unsafe integer literal, the raw provenance text is retained in
+`preservation.columns` because `JSON.parse` would round it.
 
 Tests: `migration-plan.test.ts` "preserves integers above 2^53 and blobs
 exactly"; `migration-import.test.ts` "preserves large integers and blobs in
@@ -127,10 +129,10 @@ reports assert `verification.ok === false`; the importer test checks the new
 
 ```text
 $ bun test packages/core/src/migration
- 28 pass
+ 29 pass
  0 fail
- 354 expect() calls
-Ran 28 tests across 2 files.
+ 358 expect() calls
+Ran 29 tests across 2 files.
 
 $ bun test packages/core/src/markdown/lock.test.ts \
     packages/core/src/markdown/state-safety.test.ts
@@ -146,8 +148,11 @@ $ bun test packages/cli/src/migrate.test.ts
 Ran 4 tests across 1 file.
 ```
 
-Scoped lint and typecheck for the changed files are clean. The full
-`bun run check` passes at handoff: lint, typecheck, 335 tests, and the web build.
+Scoped lint and typecheck for the changed files are clean. The focused
+migration, lock, state-safety, and CLI migrate suites pass. `bun run check`
+passed after these fixes; at final handoff another worker's uncommitted
+`packages/web` changes fail the repository typecheck outside these areas. Re-run
+the root check once that concurrent work lands.
 
 ## Remaining caveats
 

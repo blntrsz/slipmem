@@ -502,6 +502,36 @@ describe("SQLite migration planning", () => {
     )
   })
 
+  test("preserves raw provenance text containing an unsafe integer", () => {
+    const raw = '{"source":"mcp","externalId":9223372036854775807}'
+    const { path } = createDatabase(`
+      CREATE TABLE permanent_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL,
+        provenance TEXT NOT NULL
+      );
+      INSERT INTO permanent_note VALUES
+        (
+          'unsafe-provenance',
+          'Unsafe provenance',
+          'Exact raw JSON is retained.',
+          1794943845000,
+          1794943845000,
+          '${raw}'
+        );
+    `)
+
+    const plan = planMigration({ databasePath: path })
+
+    const note = noteFor(plan, "unsafe-provenance")
+    expect(note.metadata.provenance).toEqual({ source: "mcp" })
+    expect(note.preservation.columns["provenance"]).toBe(raw)
+    expect(problemCodes(plan)).toContain("unsafe-provenance:invalid-provenance")
+  })
+
   test("reports an incompatible table shape instead of failing", () => {
     const { path } = createDatabase(`
       CREATE TABLE fleeting_note (
