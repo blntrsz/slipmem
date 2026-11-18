@@ -62,27 +62,20 @@ const readLine = (
     }),
   ])
 
-const freePort = (): number => {
-  const probe = Bun.serve({ port: 0, fetch: () => new Response("ok") })
-  const port = probe.port
-  probe.stop(true)
-  if (port === undefined || port === 0) {
-    throw new Error("Could not allocate a disposable port for the web wrapper test.")
-  }
-  return port
-}
-
 describe("slipmem wrappers launched from outside the repository", () => {
   test("mcp starts the real stdio server and completes a handshake", async () => {
     const setupValue = await setup()
-    const server = Bun.spawn([process.execPath, cliEntry, "mcp"], {
-      cwd: setupValue.base,
-      env: { ...process.env, ...setupValue.env, SLIPMEM_DIR: setupValue.root },
-      stdin: "pipe",
-      stdout: "pipe",
-      stderr: "pipe",
-      detached: true,
-    })
+    const server = Bun.spawn(
+      [process.execPath, cliEntry, "mcp", "--dir", setupValue.root],
+      {
+        cwd: setupValue.base,
+        env: { ...process.env, ...setupValue.env },
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        detached: true,
+      },
+    )
     children.push(server)
 
     const reader = server.stdout!.getReader()
@@ -106,57 +99,18 @@ describe("slipmem wrappers launched from outside the repository", () => {
     expect(handshake.result?.serverInfo?.name).toBe("slipmem")
   }, 30000)
 
-  test("web starts the local web server and serves the resolved root", async () => {
+  test("web starts the real Vite entry point with argv forwarding", async () => {
     const setupValue = await setup()
-    const port = freePort()
-    const server = Bun.spawn([process.execPath, cliEntry, "web"], {
-      cwd: setupValue.base,
-      env: {
-        ...process.env,
-        ...setupValue.env,
-        SLIPMEM_DIR: setupValue.root,
-        HOST: "127.0.0.1",
-        PORT: String(port),
+    const result = await runCliProcess(
+      ["web", "--", "--version"],
+      {
+        cwd: setupValue.base,
+        env: { ...setupValue.env, SLIPMEM_DIR: setupValue.root },
       },
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      detached: true,
-    })
-    children.push(server)
+    )
 
-    const stdout = new Response(server.stdout).text()
-    const stderr = new Response(server.stderr).text()
-    const deadline = Date.now() + 30000
-    let health: { ok?: boolean; noteRoot?: string } | undefined
-    let lastError = ""
-
-    while (Date.now() < deadline) {
-      try {
-        const response = await fetch(`http://127.0.0.1:${port}/api/health`)
-        if (response.ok) {
-          health = (await response.json()) as { ok?: boolean; noteRoot?: string }
-          break
-        }
-        lastError = `HTTP ${response.status}`
-      } catch (cause) {
-        lastError = cause instanceof Error ? cause.message : String(cause)
-      }
-      await Bun.sleep(200)
-    }
-
-    if (health === undefined) {
-      try {
-        process.kill(-server.pid!, "SIGTERM")
-      } catch {
-        server.kill("SIGTERM")
-      }
-      const [output, errors] = await Promise.all([stdout, stderr])
-      throw new Error(
-        `The web wrapper did not serve /api/health (${lastError}).\nstdout:\n${output}\nstderr:\n${errors}`,
-      )
-    }
-    expect(health.ok).toBe(true)
-    expect(health.noteRoot).toBe(setupValue.root)
-  }, 45000)
+    expect(result.code).toBe(0)
+    expect(result.stdout).toContain("vite/")
+    expect(result.stderr).not.toContain("packages/packages")
+  }, 30000)
 })

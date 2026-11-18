@@ -1,8 +1,8 @@
 import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { existsSync, readFileSync, readdirSync, rmSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { join, resolve, basename } from "node:path"
 import { makeTempBase, parseJson, runCliProcess } from "./test-support.js"
 
 interface MigrationEnvelope {
@@ -45,11 +45,25 @@ interface MigrationReport {
     readonly collisions: number
   }
   readonly backup: { readonly path: string; readonly verified: boolean } | null
-  readonly verification: { readonly ok: boolean; readonly writtenNotes: number }
+  readonly verification: {
+    readonly ok: boolean
+    readonly verified: boolean
+    readonly writtenNotes: number
+  }
+  readonly interruptedRuns: ReadonlyArray<{
+    readonly runId: string
+    readonly manifestPath: string
+    readonly pid: number | null
+    readonly notesWritten: number
+    readonly marked: boolean
+  }>
   readonly error: { readonly code: string; readonly message: string } | null
   readonly notes: ReadonlyArray<{
     readonly legacyId: string
     readonly filename: string
+    readonly plannedFilename?: string
+    readonly targetPath: string
+    readonly existingPath?: string
     readonly type: string
     readonly status: string
   }>
@@ -84,6 +98,34 @@ const makeDatabase = (fixture: "current.sql" | "invalid-rows.sql" | "empty.sql")
   }
   const sha256 = createHash("sha256").update(readFileSync(dbPath)).digest("hex")
   return { base, dbPath, sha256 }
+}
+
+const makeExtendedDatabase = (): { base: string; dbPath: string } => {
+  const base = makeTempBase()
+  cleanup.push(base)
+  const dbPath = join(base, "legacy.db")
+  const database = new Database(dbPath)
+  try {
+    database.exec(`
+      CREATE TABLE permanent_note (
+        id text PRIMARY KEY NOT NULL,
+        title text NOT NULL,
+        content text NOT NULL,
+        created_at real NOT NULL,
+        updated_at real NOT NULL,
+        extension_huge INTEGER,
+        extension_blob BLOB
+      );
+      INSERT INTO permanent_note
+        (id, title, content, created_at, updated_at, extension_huge, extension_blob)
+      VALUES
+        ('extended-permanent', 'Extended permanent', 'A note with extra columns.',
+         1794951000000, 1794951060000, 9223372036854775807, X'00FF10');
+    `)
+  } finally {
+    database.close()
+  }
+  return { base, dbPath }
 }
 
 const run = (
@@ -218,9 +260,109 @@ describe("slipmem migrate sqlite", () => {
     const mergedReport = parseJson<MigrationEnvelope>(merged.stdout).report
     expect(mergedReport.counts.writtenNotes).toBe(0)
     expect(mergedReport.counts.skippedNotes).toBe(3)
+    expect(mergedReport.counts.collisions).toBe(0)
+    expect(mergedReport.interruptedRuns).toEqual([])
     expect(
       readdirSync(root).filter((name) => name.endsWith(".md")),
     ).toHaveLength(3)
+    for (const note of mergedReport.notes) {
+      expect(note.status).toBe("skipped-legacy-id")
+      expect(existsSync(note.targetPath)).toBe(true)
+      expect(basename(note.targetPath)).toBe(note.filename)
+      expect(note.existingPath).toBe(note.targetPath)
+      expect(note.targetPath).not.toMatch(/-2\.md$/)
+    }
+
+    const mergedHuman = await run(base, [
+      "migrate",
+      "sqlite",
+      "--db",
+      dbPath,
+      "--dir",
+      root,
+      "--merge",
+    ])
+    expect(mergedHuman.code).toBe(0)
+    expect(mergedHuman.stdout).toContain("collisions (effective): 0")
+    for (const note of mergedReport.notes) {
+      expect(mergedHuman.stdout).toContain(`target: ${note.targetPath}`)
+    }
+  })
+
+  test("renders interrupted runs, effective collisions, and portable source values", async () => {
+    const { base, dbPath } = makeDatabase("current.sql")
+    const root = join(base, ".slipmem")
+    const seedInterrupted = (runId: string): string => {
+      const run = join(root, ".state", "migrations", runId)
+      mkdirSync(run, { recursive: true })
+      const manifestPath = join(run, "manifest.json")
+      writeFileSync(
+        manifestPath,
+        `${JSON.stringify(
+          {
+            kind: "slipmem-migration-manifest",
+            runId,
+            status: "running",
+            pid: 2147483646,
+            notes: [{ status: "imported" }],
+          },
+          null,
+          2,
+        )}\n`,
+      )
+      return manifestPath
+    }
+
+    const firstManifest = seedInterrupted("20200101000000-old")
+    const human = await run(base, [
+      "migrate",
+      "sqlite",
+      "--db",
+      dbPath,
+      "--dir",
+      root,
+    ])
+    expect(human.code).toBe(0)
+    expect(human.stdout).toContain("Interrupted runs (1):")
+    expect(human.stdout).toContain("20200101000000-old")
+    expect(human.stdout).toContain("manifest marked interrupted")
+    expect(existsSync(firstManifest)).toBe(true)
+
+    const secondManifest = seedInterrupted("20200101000001-old")
+    const result = await run(base, [
+      "migrate",
+      "sqlite",
+      "--db",
+      dbPath,
+      "--dir",
+      root,
+      "--merge",
+      "--json",
+    ])
+    expect(result.code).toBe(0)
+    const report = parseJson<MigrationEnvelope>(result.stdout).report
+    expect(report.interruptedRuns).toHaveLength(1)
+    expect(report.interruptedRuns[0]).toMatchObject({
+      runId: "20200101000001-old",
+      notesWritten: 1,
+      marked: true,
+    })
+    expect(existsSync(secondManifest)).toBe(true)
+
+    const extended = makeExtendedDatabase()
+    const encoded = await run(extended.base, [
+      "migrate",
+      "sqlite",
+      "--db",
+      extended.dbPath,
+      "--dir",
+      join(extended.base, ".slipmem"),
+      "--dry-run",
+      "--json",
+    ])
+    expect(encoded.code).toBe(0)
+    expect(encoded.stdout).toContain('"$bigint": "9223372036854775807"')
+    expect(encoded.stdout).toContain('"$base64": "AP8Q"')
   })
 
   test("reports malformed rows without truncating or dropping their source data", async () => {

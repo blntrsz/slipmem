@@ -10,6 +10,7 @@ import { booleanOption, requireStringOption, stringOption } from "../args.js"
 import { resolveRoot } from "../context.js"
 import { migrationError, usageError } from "../errors.js"
 import { writeJson, writeLine, type CliIo } from "../output.js"
+import { toPortableJson } from "../portable-json.js"
 import type { CommandDefinition } from "./command.js"
 
 const failureDetails = (
@@ -71,7 +72,7 @@ const writeReportHuman = (
   )
   writeLine(
     io,
-    `  collisions: ${counts.collisions}, source errors: ${counts.sourceErrors}, source warnings: ${counts.sourceWarnings}, importer warnings: ${counts.importerWarnings}`,
+    `  collisions (effective): ${counts.collisions}, source errors: ${counts.sourceErrors}, source warnings: ${counts.sourceWarnings}, importer warnings: ${counts.importerWarnings}`,
   )
   if (report.backup !== null) {
     writeLine(
@@ -99,13 +100,33 @@ const writeReportHuman = (
   if (report.notes.length > 0) {
     writeLine(io, "\nSample mapping:")
     for (const note of report.notes.slice(0, 10)) {
+      const planned =
+        note.plannedFilename === undefined ||
+        note.plannedFilename === note.filename
+          ? ""
+          : ` (planned ${note.plannedFilename})`
       writeLine(
         io,
-        `  ${note.legacyId} -> ${note.filename} (${note.type}, ${note.status})`,
+        `  ${note.legacyId} -> ${note.filename} (${note.type}, ${note.status})${planned}\n    target: ${note.targetPath}`,
       )
     }
     if (report.notes.length > 10) {
       writeLine(io, `  ... and ${report.notes.length - 10} more`)
+    }
+  }
+
+  if (report.interruptedRuns.length > 0) {
+    writeLine(io, `\nInterrupted runs (${report.interruptedRuns.length}):`)
+    for (const run of report.interruptedRuns) {
+      writeLine(
+        io,
+        `  - ${run.runId} (pid ${run.pid === null ? "unknown" : run.pid}, ${run.notesWritten} note(s) recorded as imported): ${
+          run.marked
+            ? "manifest marked interrupted"
+            : "left unchanged; inspect it"
+        }`,
+      )
+      writeLine(io, `    ${run.manifestPath}`)
     }
   }
 
@@ -220,12 +241,15 @@ export const migrateCommand: CommandDefinition = {
       }
 
       if (parsed.options.json === true) {
-        writeJson(context.io, {
-          ok: report.ok,
-          dryRun: report.dryRun,
-          root: resolved.root,
-          report,
-        })
+        writeJson(
+          context.io,
+          toPortableJson({
+            ok: report.ok,
+            dryRun: report.dryRun,
+            root: resolved.root,
+            report,
+          }),
+        )
       } else {
         writeReportHuman(report, context.io)
       }
