@@ -12,6 +12,7 @@ import { checkCommand } from "./commands/check.js"
 import { deleteCommand } from "./commands/delete.js"
 import { editCommand } from "./commands/edit.js"
 import { initCommand } from "./commands/init.js"
+import { legacyCommand } from "./commands/legacy.js"
 import { listCommand } from "./commands/list.js"
 import { migrateCommand } from "./commands/migrate.js"
 import { newCommand } from "./commands/new.js"
@@ -45,6 +46,7 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   cacheCommand,
   wikiCommand,
   migrateCommand,
+  legacyCommand,
   reviewCommand,
   approveCommand,
   rejectCommand,

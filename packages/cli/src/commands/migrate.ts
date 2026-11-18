@@ -5,57 +5,26 @@ import {
   type MigrationImportReport,
 } from "@slipmem/core"
 import { Effect } from "effect"
-import { homedir } from "node:os"
-import { join, resolve } from "node:path"
+import { join } from "node:path"
 import { booleanOption, stringOption } from "../args.js"
 import { resolveRoot } from "../context.js"
+import { resolveSourceDatabasePath } from "../database-path.js"
 import { migrationError, usageError } from "../errors.js"
 import { writeJson, writeLine, type CliIo } from "../output.js"
 import { toPortableJson } from "../portable-json.js"
 import type { CommandDefinition } from "./command.js"
 
-const DEFAULT_DATABASE_FILENAME = "slipmem.db"
-
 /**
  * Resolves the migration source with the Phase 5 priority:
  * explicit `--db`, then `SLIPMEM_DB_PATH`, then
- * `$XDG_DATA_HOME/slipmem/slipmem.db` (falling back to
- * `~/.local/share/slipmem/slipmem.db`). No directory is created here: the
+ * `$XDG_DATA_HOME/slipmem/slipmem.db`. No directory is created here: the
  * source is read-only and a missing database is reported by the planner.
  */
 const resolveDatabasePath = (
   cwd: string,
   explicit: string | undefined,
   env: Readonly<Record<string, string | undefined>>,
-): string => {
-  const fromFlag = explicit?.trim()
-  const fromEnv = env.SLIPMEM_DB_PATH?.trim()
-  if (explicit !== undefined && fromFlag === "") {
-    throw usageError(
-      "--db requires a non-empty database path. Omit --db to use SLIPMEM_DB_PATH or the XDG default.",
-      "migrate",
-    )
-  }
-  let value: string
-  if (fromFlag !== undefined && fromFlag !== "") {
-    value = fromFlag
-  } else if (fromEnv !== undefined && fromEnv !== "") {
-    value = fromEnv
-  } else {
-    const dataHome =
-      env.XDG_DATA_HOME?.trim() ||
-      join(env.HOME?.trim() || homedir(), ".local", "share")
-    value = join(dataHome, "slipmem", DEFAULT_DATABASE_FILENAME)
-  }
-
-  if (value === ":memory:") {
-    throw usageError(
-      "Migration needs a file-backed SQLite source; :memory: cannot be migrated. Pass --db <path> or set SLIPMEM_DB_PATH.",
-      "migrate",
-    )
-  }
-  return resolve(cwd, value)
-}
+): string => resolveSourceDatabasePath(cwd, explicit, env, "migrate")
 
 const failureDetails = (
   cause: unknown,
