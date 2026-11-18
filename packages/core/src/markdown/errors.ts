@@ -28,7 +28,7 @@ export type MarkdownErrorCode =
   | "unknown-type"
   | "unknown-schema"
   | "missing-reference"
-  | "invalid-topic"
+  | "invalid-tag"
   | "content-empty"
   | "content-too-long"
   | "conflict-markers"

@@ -290,6 +290,14 @@ const findUnsafeTag = (node: Node | null | undefined): string | null => {
   return null
 }
 
+/**
+ * The former frontmatter key for tags. Notes written before the rename are
+ * read through this alias, then rewritten with canonical `tags`. Treating it as
+ * a known key (rather than unknown metadata) is what makes that migration
+ * lossless for the rest of the frontmatter.
+ */
+export const LEGACY_TAGS_KEY = "topics"
+
 const KNOWN_KEYS = new Set([
   "schema",
   "id",
@@ -297,7 +305,8 @@ const KNOWN_KEYS = new Set([
   "title",
   "createdAt",
   "updatedAt",
-  "topics",
+  "tags",
+  LEGACY_TAGS_KEY,
   "reference",
   "provenance",
   "legacyId",
@@ -344,8 +353,8 @@ export const renderNoteDocument = ({
     updatedAt: metadata.updatedAt,
   }
 
-  if (metadata.topics !== undefined && metadata.topics.length > 0) {
-    frontmatter.topics = metadata.topics
+  if (metadata.tags !== undefined && metadata.tags.length > 0) {
+    frontmatter.tags = metadata.tags
   }
   if (metadata.reference !== undefined && metadata.reference.trim() !== "") {
     frontmatter.reference = metadata.reference

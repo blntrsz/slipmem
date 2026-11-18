@@ -102,7 +102,7 @@ const seed = async (
       type: "permanent",
       title: "Agent memory is bounded",
       content: "Every recall operation has a hard server-side limit.",
-      topics: ["agent-memory", "retrieval"],
+      tags: ["agent-memory", "retrieval"],
     }),
   )
   const literature = await Effect.runPromise(
@@ -111,7 +111,7 @@ const seed = async (
       title: "MCP recall must cite sources",
       content: "Every recall result identifies the note file and ID.",
       reference: "https://example.com/mcp-recall",
-      topics: ["mcp", "citations"],
+      tags: ["mcp", "citations"],
     }),
   )
   const fleeting = await Effect.runPromise(
@@ -119,7 +119,7 @@ const seed = async (
       type: "fleeting",
       title: "Café notes",
       content: "A quick inbox thought about bounded recall.",
-      topics: ["cafe"],
+      tags: ["cafe"],
     }),
   )
   const index = await searchIndex(fixture)
@@ -135,7 +135,7 @@ const seed = async (
 }
 
 describe("disposable FTS search index", () => {
-  test("rebuilds from files and searches title, body, reference, type, and topic", async () => {
+  test("rebuilds from files and searches title, body, reference, type, and tag", async () => {
     const fixture = setup()
     const index = await (async () => {
       const seeded = await seed(fixture)
@@ -168,10 +168,10 @@ describe("disposable FTS search index", () => {
       )
       expect(literatureOnly.map((hit) => hit.id)).toEqual([index.ids.literature])
 
-      const topicOnly = await Effect.runPromise(
-        index.index.search({ query: "recall", topic: "MCP" }),
+      const tagOnly = await Effect.runPromise(
+        index.index.search({ query: "recall", tag: "MCP" }),
       )
-      expect(topicOnly.map((hit) => hit.id)).toEqual([index.ids.literature])
+      expect(tagOnly.map((hit) => hit.id)).toEqual([index.ids.literature])
 
       const notes = await Effect.runPromise(
         index.index.searchNotes({ query: "cite", kinds: ["literature"] }),
@@ -227,24 +227,24 @@ describe("disposable FTS search index", () => {
     }
   })
 
-  test("lists bounded topic counts and filters email-like display topics", async () => {
+  test("lists bounded tag counts and filters email-like display tags", async () => {
     const fixture = setup()
     const seeded = await seed(fixture)
     try {
       await Effect.runPromise(seeded.index.rebuild())
-      const topics = await Effect.runPromise(
-        seeded.index.listTopics({ limit: 2 }),
+      const tags = await Effect.runPromise(
+        seeded.index.listTags({ limit: 2 }),
       )
-      expect(topics).toHaveLength(2)
-      expect(topics[0]).toMatchObject({ noteCount: 1 })
-      expect(topics.map((topic) => topic.topic)).toEqual(
+      expect(tags).toHaveLength(2)
+      expect(tags[0]).toMatchObject({ noteCount: 1 })
+      expect(tags.map((tag) => tag.tag)).toEqual(
         expect.arrayContaining(["agent-memory"]),
       )
 
       const mcp = await Effect.runPromise(
-        seeded.index.listTopics({ query: "MCP" }),
+        seeded.index.listTags({ query: "MCP" }),
       )
-      expect(mcp).toEqual([{ topic: "mcp", noteCount: 1 }])
+      expect(mcp).toEqual([{ tag: "mcp", noteCount: 1 }])
     } finally {
       await Effect.runPromise(seeded.index.close())
       cleanup(fixture)
@@ -720,7 +720,7 @@ describe("disposable FTS search index", () => {
       const stats = await Effect.runPromise(fallback.rebuild())
       expect(stats.mode).toBe("linear")
       const hits = await Effect.runPromise(
-        fallback.search({ query: "recall", topic: "agent-memory" }),
+        fallback.search({ query: "recall", tag: "agent-memory" }),
       )
       expect(hits.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
 
@@ -729,11 +729,11 @@ describe("disposable FTS search index", () => {
       )
       expect(literature.map((hit) => hit.id)).toEqual([seeded.ids.literature])
 
-      const topics = await Effect.runPromise(fallback.listTopics())
-      expect(topics).toEqual(
+      const tags = await Effect.runPromise(fallback.listTags())
+      expect(tags).toEqual(
         expect.arrayContaining([
-          { topic: "mcp", noteCount: 1 },
-          { topic: "agent-memory", noteCount: 1 },
+          { tag: "mcp", noteCount: 1 },
+          { tag: "agent-memory", noteCount: 1 },
         ]),
       )
     } finally {
@@ -910,7 +910,7 @@ describe("disposable FTS search index", () => {
           type: "permanent",
           title: "Adapted service",
           content: "The note service reads Markdown files.",
-          topics: ["adapter"],
+          tags: ["adapter"],
         }),
       )
 

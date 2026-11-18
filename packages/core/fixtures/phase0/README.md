@@ -9,7 +9,7 @@ authority; this directory records the concrete examples.
 
 - `notes/valid/*.md` - notes that must parse into valid note metadata and a
   non-empty body. `notes.manifest.json` records the expected ID, type, title,
-  timestamps, topics, reference, unknown keys, and body text.
+  timestamps, tags, reference, unknown keys, and body text.
 - `notes/invalid/*.md` - one broken rule per file. The manifest names the failing
   area and a stable expectation code.
 - `migration/*.sql` - current Drizzle shape, pre-Drizzle bootstrap shape, an
@@ -36,6 +36,6 @@ authority; this directory records the concrete examples.
 ## Contract helpers
 
 `packages/schemas/src/markdown.ts` exports the executable rules used by the
-fixtures and future storage code: filename and topic patterns, slug
+fixtures and future storage code: filename and tag patterns, slug
 normalization, UTC timestamp conversion, collision-aware filename generation,
 note metadata, approval proposals, and structured wiki output.

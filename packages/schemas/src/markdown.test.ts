@@ -95,27 +95,27 @@ describe("note slugs and filenames", () => {
   })
 })
 
-describe("topic slug normalization", () => {
+describe("tag slug normalization", () => {
   test("uses the same ASCII kebab-case pipeline as note slugs", () => {
-    expect(Markdown.slugifyTopic("Agent Memory")).toBe("agent-memory")
-    expect(Markdown.slugifyTopic("Café & MCP")).toBe("cafe-mcp")
-    expect(Markdown.slugifyTopic("  retrieval  ")).toBe("retrieval")
-    expect(Markdown.slugifyTopic("日本語")).toBe("")
+    expect(Markdown.slugifyTag("Agent Memory")).toBe("agent-memory")
+    expect(Markdown.slugifyTag("Café & MCP")).toBe("cafe-mcp")
+    expect(Markdown.slugifyTag("  retrieval  ")).toBe("retrieval")
+    expect(Markdown.slugifyTag("日本語")).toBe("")
   })
 
-  test("enforces the published topic shape", () => {
-    expect(Markdown.isTopicSlug("agent-memory")).toBe(true)
-    expect(Markdown.isTopicSlug("agent_memory")).toBe(false)
-    expect(Markdown.isTopicSlug("Agent-Memory")).toBe(false)
-    expect(Markdown.isTopicSlug("-agent-memory")).toBe(false)
-    expect(Markdown.isTopicSlug("")).toBe(false)
-    expect(Markdown.isTopicSlug("a".repeat(65))).toBe(false)
+  test("enforces the published tag shape", () => {
+    expect(Markdown.isTagSlug("agent-memory")).toBe(true)
+    expect(Markdown.isTagSlug("agent_memory")).toBe(false)
+    expect(Markdown.isTagSlug("Agent-Memory")).toBe(false)
+    expect(Markdown.isTagSlug("-agent-memory")).toBe(false)
+    expect(Markdown.isTagSlug("")).toBe(false)
+    expect(Markdown.isTagSlug("a".repeat(65))).toBe(false)
   })
 
-  test("TopicSlug rejects values beyond the 64-character limit", () => {
-    expect(decodes(Markdown.TopicSlug, "a".repeat(64))).toBe(true)
-    expect(decodes(Markdown.TopicSlug, "a".repeat(65))).toBe(false)
-    expect(decodes(Markdown.TopicSlug, `${"a".repeat(31)}-${"b".repeat(32)}`)).toBe(
+  test("TagSlug rejects values beyond the 64-character limit", () => {
+    expect(decodes(Markdown.TagSlug, "a".repeat(64))).toBe(true)
+    expect(decodes(Markdown.TagSlug, "a".repeat(65))).toBe(false)
+    expect(decodes(Markdown.TagSlug, `${"a".repeat(31)}-${"b".repeat(32)}`)).toBe(
       true,
     )
   })
@@ -161,7 +161,7 @@ describe("Markdown contract schemas", () => {
     title: "Agent memory is bounded",
     createdAt: "2026-11-17T19:30:45Z",
     updatedAt: "2026-11-17T19:35:02Z",
-    topics: ["agent-memory", "retrieval"],
+    tags: ["agent-memory", "retrieval"],
     provenance: { source: "cli", actor: "user" },
   }
 
@@ -199,7 +199,7 @@ describe("Markdown contract schemas", () => {
       }),
     ).toBe(false)
     expect(
-      decodes(Markdown.NoteMetadata, { ...metadata, topics: ["Agent Memory"] }),
+      decodes(Markdown.NoteMetadata, { ...metadata, tags: ["Agent Memory"] }),
     ).toBe(false)
     expect(
       decodes(Markdown.NoteMetadata, {
@@ -252,7 +252,7 @@ describe("Markdown contract schemas", () => {
 
   test("decodes structured wiki output with citations", () => {
     const page = {
-      topic: "agent-memory",
+      tag: "agent-memory",
       generatedAt: "2026-11-17T20:10:00Z",
       mode: "extractive",
       noteCount: 1,
@@ -278,7 +278,7 @@ describe("Markdown contract schemas", () => {
           ],
         },
       ],
-      markdown: "# Topic: agent memory\n",
+      markdown: "# Tag: agent memory\n",
     }
 
     expect(decodes(Markdown.WikiPage, page)).toBe(true)
@@ -315,13 +315,13 @@ describe("Markdown contract schemas", () => {
 
   test("bounds wiki page counts and source fields", () => {
     const page = {
-      topic: "agent-memory",
+      tag: "agent-memory",
       generatedAt: "2026-11-17T20:10:00Z",
       mode: "extractive",
       noteCount: 0,
       sources: [],
       sections: [],
-      markdown: "# Topic: agent-memory\n",
+      markdown: "# Tag: agent-memory\n",
     }
 
     expect(decodes(Markdown.WikiPage, page)).toBe(true)
@@ -350,26 +350,26 @@ describe("Markdown contract schemas", () => {
   })
 
   test("WikiInput bounds the note limit", () => {
-    expect(decodes(Markdown.WikiInput, { topic: "agent-memory" })).toBe(true)
-    expect(decodes(Markdown.WikiInput, { topic: "agent-memory", limit: 1 })).toBe(
+    expect(decodes(Markdown.WikiInput, { tag: "agent-memory" })).toBe(true)
+    expect(decodes(Markdown.WikiInput, { tag: "agent-memory", limit: 1 })).toBe(
       true,
     )
     expect(
       decodes(Markdown.WikiInput, {
-        topic: "agent-memory",
+        tag: "agent-memory",
         limit: Markdown.MAX_WIKI_LIMIT,
       }),
     ).toBe(true)
-    expect(decodes(Markdown.WikiInput, { topic: "agent-memory", limit: 0 })).toBe(
+    expect(decodes(Markdown.WikiInput, { tag: "agent-memory", limit: 0 })).toBe(
       false,
     )
     expect(
       decodes(Markdown.WikiInput, {
-        topic: "agent-memory",
+        tag: "agent-memory",
         limit: Markdown.MAX_WIKI_LIMIT + 1,
       }),
     ).toBe(false)
-    expect(decodes(Markdown.WikiInput, { topic: "a".repeat(65) })).toBe(false)
+    expect(decodes(Markdown.WikiInput, { tag: "a".repeat(65) })).toBe(false)
   })
 
   test("decodes MCP approval proposals and rejects self-approval sources", () => {

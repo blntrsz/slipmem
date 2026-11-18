@@ -227,7 +227,7 @@ describe("approval lifecycle", () => {
         type: "permanent",
         title: "Durable lesson",
         content: "Approval is enforced by the server, not the prompt.",
-        topics: ["Agent Memory"],
+        tags: ["Agent Memory"],
         actor: "agent-a",
       })
 
@@ -260,7 +260,7 @@ describe("approval lifecycle", () => {
         source: "mcp",
         actor: "agent-a",
       })
-      expect(applied.note.metadata.topics).toEqual(["agent-memory"])
+      expect(applied.note.metadata.tags).toEqual(["agent-memory"])
       expect(noteFiles(fixture.root)).toHaveLength(1)
       expect(pendingFiles(fixture.pending)).toHaveLength(0)
 

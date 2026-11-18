@@ -81,7 +81,7 @@
       "response": {
         "status": 200,
         "body": {
-          "topic": "mcp",
+          "tag": "mcp",
           "generatedAt": "2026-11-17T21:05:00Z",
           "mode": "extractive",
           "noteCount": 1,
@@ -107,7 +107,7 @@
               ]
             }
           ],
-          "markdown": "# Topic: mcp\n\n_Generated on 2026-11-17T21:05:00Z from 1 note. Extractive; verify sources._\n\n## Recall\n\n> Every recall result should identify the note file and ID behind it.\n\nSource: [[20261117201500-mcp-recall-must-cite-sources]]\n"
+          "markdown": "# Tag: mcp\n\n_Generated on 2026-11-17T21:05:00Z from 1 note. Extractive; verify sources._\n\n## Recall\n\n> Every recall result should identify the note file and ID behind it.\n\nSource: [[20261117201500-mcp-recall-must-cite-sources]]\n"
         }
       }
     },
@@ -185,10 +185,10 @@
       }
     },
     "wiki": {
-      "tool": "build_topic_wiki",
-      "arguments": { "topic": "mcp", "mode": "extractive", "limit": 10 },
+      "tool": "build_tag_wiki",
+      "arguments": { "tag": "mcp", "mode": "extractive", "limit": 10 },
       "result": {
-        "topic": "mcp",
+        "tag": "mcp",
         "generatedAt": "2026-11-17T21:05:00Z",
         "mode": "extractive",
         "noteCount": 1,
@@ -214,7 +214,7 @@
             ]
           }
         ],
-        "markdown": "# Topic: mcp\n\n_Generated on 2026-11-17T21:05:00Z from 1 note. Extractive; verify sources._\n\n## Recall\n\n> Every recall result should identify the note file and ID behind it.\n\nSource: [[20261117201500-mcp-recall-must-cite-sources]]\n"
+        "markdown": "# Tag: mcp\n\n_Generated on 2026-11-17T21:05:00Z from 1 note. Extractive; verify sources._\n\n## Recall\n\n> Every recall result should identify the note file and ID behind it.\n\nSource: [[20261117201500-mcp-recall-must-cite-sources]]\n"
       }
     }
   }

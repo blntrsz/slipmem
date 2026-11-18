@@ -83,14 +83,14 @@ describe("Markdown note repository CRUD", () => {
           type: "fleeting",
           title: "Café notes",
           content: "An inbox thought.",
-          topics: ["Agent Memory"],
+          tags: ["Agent Memory"],
           provenance: { source: "cli", actor: "user" },
         }),
       )
 
       expect(created.id).toBe("20261117213000-cafe-notes")
       expect(created.filename).toBe("20261117213000-cafe-notes.md")
-      expect(created.metadata.topics).toEqual(["agent-memory"])
+      expect(created.metadata.tags).toEqual(["agent-memory"])
       expect(existsSync(join(fixture.root, created.filename))).toBe(true)
       expect(readdirSync(fixture.root).some((name) => name.endsWith(".tmp"))).toBe(
         false,
@@ -110,7 +110,7 @@ describe("Markdown note repository CRUD", () => {
       const stored = await Effect.runPromise(restarted.get(created.id))
       expect(stored._tag).toBe("Some")
       if (stored._tag === "Some") {
-        expect(stored.value.metadata.topics).toEqual(["agent-memory"])
+        expect(stored.value.metadata.tags).toEqual(["agent-memory"])
         expect(stored.value.unknown).toEqual({})
       }
     } finally {
@@ -177,15 +177,15 @@ describe("Markdown note repository CRUD", () => {
       )
       expect(blank.code).toBe("blank-title")
 
-      const emptyTopic = await failure(
+      const emptyTag = await failure(
         repo.create({
           type: "fleeting",
-          title: "Topic",
+          title: "Tag",
           content: "body",
-          topics: ["日本語"],
+          tags: ["日本語"],
         }),
       )
-      expect(emptyTopic.code).toBe("invalid-topic")
+      expect(emptyTag.code).toBe("invalid-tag")
       expect(
         readdirSync(fixture.root).filter((name) => name.endsWith(".md")),
       ).toEqual([])
@@ -272,14 +272,14 @@ describe("Markdown note repository CRUD", () => {
         repo.update({
           id: "20261117193045-agent-memory-is-bounded",
           content: "A revised and shorter body.",
-          topics: ["Agent Memory", "retrieval"],
+          tags: ["Agent Memory", "retrieval"],
         }),
       )
 
       expect(updated.filename).toBe("20261117193045-agent-memory-is-bounded.md")
       expect(updated.metadata.createdAt).toBe("2026-11-17T19:30:45Z")
       expect(updated.metadata.updatedAt).toBe("2026-11-17T23:00:00Z")
-      expect(updated.metadata.topics).toEqual(["agent-memory", "retrieval"])
+      expect(updated.metadata.tags).toEqual(["agent-memory", "retrieval"])
       expect(updated.unknown.reviewStatus).toBe("accepted")
       expect(updated.body).toBe("A revised and shorter body.")
       expect(existsSync(source)).toBe(true)
@@ -723,7 +723,7 @@ describe("Markdown repository path, symlink, size, and lock guards", () => {
     }
   })
 
-  test("filters by type and normalized topic with a bounded list", async () => {
+  test("filters by type and normalized tag with a bounded list", async () => {
     const fixture = setup()
     try {
       let tick = FIXED_NOW
@@ -734,24 +734,24 @@ describe("Markdown repository path, symlink, size, and lock guards", () => {
       const fleeting = await Effect.runPromise(
         repo.create({
           type: "fleeting",
-          title: "Topic note",
+          title: "Tag note",
           content: "Fleeting body.",
-          topics: ["Agent Memory"],
+          tags: ["Agent Memory"],
         }),
       )
       await Effect.runPromise(
-        repo.create({ type: "permanent", title: "No topic", content: "Permanent body." }),
+        repo.create({ type: "permanent", title: "No tag", content: "Permanent body." }),
       )
 
       const byType = await Effect.runPromise(repo.list({ type: "permanent" }))
-      expect(byType.map((note) => note.title)).toEqual(["No topic"])
+      expect(byType.map((note) => note.title)).toEqual(["No tag"])
 
-      const byTopic = await Effect.runPromise(repo.list({ topic: "Agent Memory" }))
-      expect(byTopic.map((note) => String(note.id))).toEqual([fleeting.id])
+      const byTag = await Effect.runPromise(repo.list({ tag: "Agent Memory" }))
+      expect(byTag.map((note) => String(note.id))).toEqual([fleeting.id])
 
       const limited = await Effect.runPromise(repo.list({ limit: 1 }))
       expect(limited).toHaveLength(1)
-      expect(limited[0]!.title).toBe("No topic")
+      expect(limited[0]!.title).toBe("No tag")
     } finally {
       cleanup(fixture)
     }

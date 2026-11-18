@@ -1,7 +1,7 @@
 import { Data } from "effect"
 
 export type WikiErrorCode =
-  | "invalid-topic"
+  | "invalid-tag"
   | "invalid-limit"
   | "invalid-mode"
   | "repository-failure"
@@ -14,7 +14,7 @@ export type WikiErrorCode =
 export interface WikiErrorFields {
   readonly code: WikiErrorCode
   readonly message: string
-  readonly topic?: string
+  readonly tag?: string
   readonly path?: string
   readonly field?: string
 }

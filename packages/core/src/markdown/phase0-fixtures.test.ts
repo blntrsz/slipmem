@@ -12,7 +12,7 @@ interface ValidNoteFixture {
   readonly title: string
   readonly createdAt: string
   readonly updatedAt: string
-  readonly topics: ReadonlyArray<string>
+  readonly tags: ReadonlyArray<string>
   readonly reference: string | null
   readonly unknownKeys: ReadonlyArray<string>
   readonly bodyIncludes: string
@@ -148,9 +148,9 @@ describe("Phase 0 note fixture corpus", () => {
       expect(frontmatterValue(yaml, "updatedAt")).toBe(fixture.updatedAt)
       expect(fixture.updatedAt >= fixture.createdAt).toBe(true)
 
-      for (const topic of fixture.topics) {
-        expect(yaml).toContain(`  - ${topic}`)
-        expect(Markdown.isTopicSlug(topic)).toBe(true)
+      for (const tag of fixture.tags) {
+        expect(yaml).toContain(`  - ${tag}`)
+        expect(Markdown.isTagSlug(tag)).toBe(true)
       }
 
       if (fixture.reference !== null) {

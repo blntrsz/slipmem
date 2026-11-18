@@ -66,7 +66,7 @@ export interface WikiServiceConfig {
 }
 
 export interface WikiBuildInput {
-  readonly topic: string
+  readonly tag: string
   readonly limit?: number
   readonly mode?: Markdown.WikiMode
   readonly includeFleeting?: boolean
@@ -99,7 +99,7 @@ const citationPath = (root: string) => (note: ParsedMarkdownNote) =>
   )
 
 const emptyPage = (input: {
-  readonly topic: string
+  readonly tag: string
   readonly generatedAt: string
   readonly mode: Markdown.WikiMode
   readonly suggestions: ReadonlyArray<string>
@@ -108,7 +108,7 @@ const emptyPage = (input: {
   readonly truncated?: boolean
 }): Markdown.WikiPage => {
   const markdown = renderWikiMarkdown({
-    topic: input.topic,
+    tag: input.tag,
     generatedAt: input.generatedAt,
     mode: input.mode,
     sources: [],
@@ -123,7 +123,7 @@ const emptyPage = (input: {
     ...(input.truncated === undefined ? {} : { truncated: input.truncated }),
   })
   return {
-    topic: input.topic,
+    tag: input.tag,
     generatedAt: input.generatedAt,
     mode: input.mode,
     noteCount: 0,
@@ -146,7 +146,7 @@ const decodePage = (
   )
 
 /**
- * On-demand topic wiki.
+ * On-demand tag wiki.
  *
  * Selection is read-only and bounded. Extractive mode quotes verbatim note
  * spans, one section per note, and cites every section. Synthesized mode runs
@@ -186,7 +186,7 @@ export const makeWikiService = (
         const notes = yield* readNotes()
         return yield* selectWikiNotes({
           notes,
-          topic: input.topic,
+          tag: input.tag,
           ...(input.limit === undefined ? {} : { limit: input.limit }),
           ...(input.includeFleeting === undefined
             ? {}
@@ -219,7 +219,7 @@ export const makeWikiService = (
             : { selection: config.synthesis }
         const synthesis = resolvedConfig.selection
         const request: SynthesisRequest = {
-          topic: selection.topic,
+          tag: selection.tag,
           notes: selection.notes.map((note) => ({
             id: note.id,
             type: note.metadata.type,
@@ -282,7 +282,7 @@ export const makeWikiService = (
      * have a citing section.
      */
     const assemblePage = (input: {
-      readonly topic: string
+      readonly tag: string
       readonly generatedAt: string
       readonly mode: Markdown.WikiMode
       readonly notes: ReadonlyArray<ParsedMarkdownNote>
@@ -295,7 +295,7 @@ export const makeWikiService = (
         if (input.sections.length === 0) {
           return yield* decodePage(
             emptyPage({
-              topic: input.topic,
+              tag: input.tag,
               generatedAt: input.generatedAt,
               mode: input.mode,
               suggestions: [],
@@ -325,7 +325,7 @@ export const makeWikiService = (
             .map((note) => pair(repository.root, note))
           const markdown = truncateWikiMarkdownSafely(
             renderWikiMarkdown({
-              topic: input.topic,
+              tag: input.tag,
               generatedAt: input.generatedAt,
               mode: input.mode,
               sources,
@@ -338,7 +338,7 @@ export const makeWikiService = (
             maxOutputChars,
           )
           const page: Markdown.WikiPage = {
-            topic: input.topic,
+            tag: input.tag,
             generatedAt: input.generatedAt,
             mode: input.mode,
             noteCount: sources.length,
@@ -360,7 +360,7 @@ export const makeWikiService = (
 
         return yield* decodePage(
           emptyPage({
-            topic: input.topic,
+            tag: input.tag,
             generatedAt: input.generatedAt,
             mode: input.mode,
             suggestions: [],
@@ -383,7 +383,7 @@ export const makeWikiService = (
         if (selection.notes.length === 0) {
           return yield* decodePage(
             emptyPage({
-              topic: selection.topic,
+              tag: selection.tag,
               generatedAt,
               mode,
               suggestions: selection.suggestions,
@@ -400,7 +400,7 @@ export const makeWikiService = (
             maxOutputChars,
           })
           return yield* assemblePage({
-            topic: selection.topic,
+            tag: selection.tag,
             generatedAt,
             mode,
             notes: selection.notes,
@@ -414,7 +414,7 @@ export const makeWikiService = (
 
         if (validation.sentences.length === 0) {
           return yield* assemblePage({
-            topic: selection.topic,
+            tag: selection.tag,
             generatedAt,
             mode,
             notes: selection.notes,
@@ -434,7 +434,7 @@ export const makeWikiService = (
           citationPath(repository.root),
         )
         return yield* assemblePage({
-          topic: selection.topic,
+          tag: selection.tag,
           generatedAt,
           mode,
           notes: selection.notes,

@@ -35,7 +35,7 @@ export {
   MAX_FRONTMATTER_BYTES,
   MAX_SEARCH_QUERY_LENGTH,
   MAX_SEARCH_TOKENS,
-  MAX_TOPIC_LIMIT,
+  MAX_TAG_LIMIT,
   MAX_YAML_ALIASES,
   MarkdownNoteRepository,
   MarkdownNoteRepositoryLive,
@@ -62,7 +62,7 @@ export {
   type IndexSnapshotEntry,
   type InitializeNoteRootResult,
   type ListMarkdownNotesInput,
-  type ListTopicsInput,
+  type ListTagsInput,
   type MarkdownErrorArea,
   type MarkdownErrorCode,
   type MarkdownErrorFields,
@@ -86,7 +86,7 @@ export {
   type RepositoryScan,
   type ResolveNoteRootOptions,
   type SearchIndexMode,
-  type TopicSummary,
+  type TagSummary,
   type UpdateMarkdownNoteInput,
 } from "./markdown/index"
 

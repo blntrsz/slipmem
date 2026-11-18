@@ -10,7 +10,7 @@ export const MAX_WIKI_STRUCTURED_CHARS = 2 * MAX_WIKI_OUTPUT_CHARS
 export const MAX_WIKI_HEADING_CHARS = 120
 export const MAX_WIKI_SOURCE_TITLE_CHARS = 200
 export const MAX_WIKI_CITATION_PATH_CHARS = 300
-export const MAX_WIKI_TOPIC_CHARS = 120
+export const MAX_WIKI_TAG_CHARS = 120
 export const MAX_SYNTHESIS_SENTENCES = 60
 export const MAX_SYNTHESIS_SENTENCE_CHARS = 500
 
@@ -198,7 +198,7 @@ export type WikiEmptyReason =
   | "output-truncated"
 
 export interface RenderPageInput {
-  readonly topic: string
+  readonly tag: string
   readonly generatedAt: string
   readonly mode: Markdown.WikiMode
   readonly sources: ReadonlyArray<Markdown.WikiSource>
@@ -215,7 +215,7 @@ export interface RenderPageInput {
  * applies the final hard cap.
  */
 export const renderWikiMarkdown = ({
-  topic,
+  tag,
   generatedAt,
   mode,
   sources,
@@ -231,7 +231,7 @@ export const renderWikiMarkdown = ({
       ? "Extractive; verify sources."
       : "Synthesized from a locally configured source; verify citations."
   const lines: string[] = [
-    `# Topic: ${topic}`,
+    `# Tag: ${tag}`,
     "",
     `_Generated on ${generatedAt} from ${sources.length} ${noteWord}. ${modeLine}_`,
   ]
@@ -253,11 +253,11 @@ export const renderWikiMarkdown = ({
       )
     } else if (suggestions !== undefined && suggestions.length > 0) {
       lines.push(
-        `No notes matched this topic. Try one of: ${suggestions.join(", ")}.`,
+        `No notes matched this tag. Try one of: ${suggestions.join(", ")}.`,
       )
     } else {
       lines.push(
-        "No notes matched this topic. Nothing was generated; add a note with this topic or title.",
+        "No notes matched this tag. Nothing was generated; add a note with this tag or title.",
       )
     }
   }

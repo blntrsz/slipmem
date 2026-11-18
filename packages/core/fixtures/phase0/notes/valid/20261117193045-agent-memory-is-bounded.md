@@ -5,7 +5,7 @@ type: permanent
 title: Agent memory is bounded
 createdAt: "2026-11-17T19:30:45Z"
 updatedAt: "2026-11-17T19:35:02Z"
-topics:
+tags:
   - agent-memory
   - retrieval
 provenance:

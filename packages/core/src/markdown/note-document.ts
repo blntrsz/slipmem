@@ -180,7 +180,7 @@ export const parseMarkdownNote = (
       )
     }
 
-    const topics = yield* parseTopics(path, data.topics)
+    const tags = yield* parseTags(path, data.tags, data.topics)
     const reference = yield* parseReference(path, data.reference, noteType)
     const provenance = yield* parseProvenance(path, data.provenance)
     const legacyId = yield* parseOptionalString(path, data.legacyId, "legacyId")
@@ -225,7 +225,7 @@ export const parseMarkdownNote = (
       title,
       createdAt: createdAtIso,
       updatedAt: updatedAtIso,
-      ...(topics === undefined ? {} : { topics }),
+      ...(tags === undefined ? {} : { tags }),
       ...(reference === undefined ? {} : { reference }),
       ...(provenance === undefined ? {} : { provenance }),
       ...(legacyId === undefined ? {} : { legacyId }),
@@ -283,39 +283,59 @@ const parseContractTimestamp = (
     return millis
   })
 
-const parseTopics = (
+/**
+ * Reads canonical `tags` and the former `topics` key as one field. A note may
+ * use either key during the compatibility window, but not both: two different
+ * lists would make a rewrite silently choose one. The next write always emits
+ * `tags`, so opening and saving an older note migrates it.
+ */
+const parseTags = (
   path: string,
   value: unknown,
+  legacyValue: unknown,
 ): Effect.Effect<ReadonlyArray<string> | undefined, MarkdownError> =>
   Effect.gen(function* () {
-    if (value === undefined || value === null) {
-      return undefined
-    }
-    if (!Array.isArray(value)) {
+    if (value !== undefined && legacyValue !== undefined) {
       return yield* Effect.fail(
-        noteError(path, "metadata", "invalid-field", "topics must be an array.", "topics"),
+        noteError(
+          path,
+          "metadata",
+          "invalid-field",
+          "Frontmatter cannot contain both tags and the legacy topics key. Keep tags and remove topics.",
+          "tags",
+        ),
       )
     }
 
-    const topics: string[] = []
-    for (const topic of value) {
-      if (typeof topic !== "string" || !Markdown.isTopicSlug(topic)) {
+    const raw = value === undefined ? legacyValue : value
+    if (raw === undefined || raw === null) {
+      return undefined
+    }
+    if (!Array.isArray(raw)) {
+      return yield* Effect.fail(
+        noteError(path, "metadata", "invalid-field", "tags must be an array.", "tags"),
+      )
+    }
+
+    const tags: string[] = []
+    for (const tag of raw) {
+      if (typeof tag !== "string" || !Markdown.isTagSlug(tag)) {
         return yield* Effect.fail(
           noteError(
             path,
             "metadata",
-            "invalid-topic",
-            `Topic '${String(topic)}' must be lowercase kebab-case.`,
-            "topics",
+            "invalid-tag",
+            `Tag '${String(tag)}' must be lowercase kebab-case.`,
+            "tags",
           ),
         )
       }
-      if (!topics.includes(topic)) {
-        topics.push(topic)
+      if (!tags.includes(tag)) {
+        tags.push(tag)
       }
     }
 
-    return topics
+    return tags
   })
 
 const parseReference = (

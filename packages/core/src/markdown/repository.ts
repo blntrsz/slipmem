@@ -45,8 +45,8 @@ export const DEFAULT_LIST_LIMIT = Markdown.DEFAULT_SEARCH_LIMIT
 
 export interface ListMarkdownNotesInput {
   readonly type?: Markdown.NoteType
-  /** A topic slug; display forms are normalized with the shared pipeline. */
-  readonly topic?: string
+  /** A tag slug; display forms are normalized with the shared pipeline. */
+  readonly tag?: string
   readonly limit?: number
 }
 
@@ -62,7 +62,7 @@ export interface CreateMarkdownNoteInput {
   readonly title: string
   readonly content: string
   readonly reference?: string
-  readonly topics?: ReadonlyArray<string>
+  readonly tags?: ReadonlyArray<string>
   readonly provenance?: Markdown.Provenance
   readonly legacyId?: string
   readonly aliases?: ReadonlyArray<string>
@@ -80,7 +80,7 @@ export interface UpdateMarkdownNoteInput {
   readonly content?: string
   /** `null` removes the reference; `undefined` preserves it. */
   readonly reference?: string | null
-  readonly topics?: ReadonlyArray<string>
+  readonly tags?: ReadonlyArray<string>
   readonly provenance?: Markdown.Provenance
   readonly legacyId?: string
   readonly aliases?: ReadonlyArray<string>
@@ -163,7 +163,7 @@ export class MarkdownNoteRepository extends Context.Service<
 
 const metadataError = (
   path: string,
-  code: "blank-title" | "content-empty" | "invalid-topic" | "missing-reference" | "timestamp-invalid",
+  code: "blank-title" | "content-empty" | "invalid-tag" | "missing-reference" | "timestamp-invalid",
   field: string,
   message: string,
 ): MarkdownError =>
@@ -275,25 +275,25 @@ const normalizeContent = (
     return normalized
   })
 
-const normalizeTopics = (
+const normalizeTags = (
   path: string,
-  topics: ReadonlyArray<string> | undefined,
+  tags: ReadonlyArray<string> | undefined,
 ): Effect.Effect<ReadonlyArray<string> | undefined, MarkdownError> =>
   Effect.gen(function* () {
-    if (topics === undefined) {
+    if (tags === undefined) {
       return undefined
     }
 
     const normalized: string[] = []
-    for (const topic of topics) {
-      const slug = Markdown.slugifyTopic(topic)
+    for (const tag of tags) {
+      const slug = Markdown.slugifyTag(tag)
       if (slug === "") {
         return yield* Effect.fail(
           metadataError(
             path,
-            "invalid-topic",
-            "topics",
-            `Topic '${topic}' does not normalize to a usable slug.`,
+            "invalid-tag",
+            "tags",
+            `Tag '${tag}' does not normalize to a usable slug.`,
           ),
         )
       }
@@ -526,15 +526,15 @@ export const makeMarkdownNoteRepository = (
       input: ListMarkdownNotesInput = {},
     ): Effect.Effect<ReadonlyArray<ParsedMarkdownNote>, MarkdownError> =>
       Effect.gen(function* () {
-        const topic =
-          input.topic === undefined ? undefined : Markdown.slugifyTopic(input.topic)
-        if (input.topic !== undefined && topic === "") {
+        const tag =
+          input.tag === undefined ? undefined : Markdown.slugifyTag(input.tag)
+        if (input.tag !== undefined && tag === "") {
           return yield* Effect.fail(
             metadataError(
               root,
-              "invalid-topic",
-              "topic",
-              `Topic '${input.topic}' does not normalize to a usable slug.`,
+              "invalid-tag",
+              "tag",
+              `Tag '${input.tag}' does not normalize to a usable slug.`,
             ),
           )
         }
@@ -544,8 +544,8 @@ export const makeMarkdownNoteRepository = (
           .filter((note) => input.type === undefined || note.metadata.type === input.type)
           .filter(
             (note) =>
-              topic === undefined ||
-              (note.metadata.topics ?? []).includes(topic),
+              tag === undefined ||
+              (note.metadata.tags ?? []).includes(tag),
           )
           .slice(0, asListLimit(input.limit))
       })
@@ -564,7 +564,7 @@ export const makeMarkdownNoteRepository = (
         yield* assertRoot(root)
         const title = yield* normalizeTitle(root, input.title)
         const body = yield* normalizeContent(root, input.content)
-        const topics = yield* normalizeTopics(root, input.topics)
+        const tags = yield* normalizeTags(root, input.tags)
         const reference = normalizeReference(input.reference)
         const createdAtMs = yield* validateTimestamp(
           root,
@@ -597,7 +597,7 @@ export const makeMarkdownNoteRepository = (
                 title,
                 createdAt: Markdown.toUtcTimestamp(createdAtMs).isoTimestamp,
                 updatedAt: Markdown.toUtcTimestamp(updatedAtMs).isoTimestamp,
-                ...(topics === undefined || topics.length === 0 ? {} : { topics }),
+                ...(tags === undefined || tags.length === 0 ? {} : { tags }),
                 ...(reference === undefined ? {} : { reference }),
                 ...(input.provenance === undefined ? {} : { provenance: input.provenance }),
                 ...(input.legacyId === undefined ? {} : { legacyId: input.legacyId }),
@@ -673,10 +673,10 @@ export const makeMarkdownNoteRepository = (
             input.content === undefined
               ? current.body
               : yield* normalizeContent(current.path, input.content)
-          const topics =
-            input.topics === undefined
-              ? current.metadata.topics
-              : yield* normalizeTopics(current.path, input.topics)
+          const tags =
+            input.tags === undefined
+              ? current.metadata.tags
+              : yield* normalizeTags(current.path, input.tags)
           const reference =
             input.reference === null
               ? undefined
@@ -699,7 +699,7 @@ export const makeMarkdownNoteRepository = (
             title,
             createdAt: current.metadata.createdAt,
             updatedAt: Markdown.toUtcTimestamp(updatedAtMs).isoTimestamp,
-            ...(topics === undefined || topics.length === 0 ? {} : { topics }),
+            ...(tags === undefined || tags.length === 0 ? {} : { tags }),
             ...(reference === undefined ? {} : { reference }),
             ...((input.provenance ?? current.metadata.provenance) === undefined
               ? {}

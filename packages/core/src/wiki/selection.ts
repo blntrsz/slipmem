@@ -6,20 +6,20 @@ import { wikiError, type WikiError } from "./errors.js"
 
 export const DEFAULT_WIKI_LIMIT = Markdown.DEFAULT_WIKI_LIMIT
 export const MAX_WIKI_LIMIT = Markdown.MAX_WIKI_LIMIT
-export const MAX_TOPIC_SUGGESTIONS = 10
+export const MAX_TAG_SUGGESTIONS = 10
 
 export interface WikiSelectionInput {
   readonly notes: ReadonlyArray<ParsedMarkdownNote>
-  readonly topic: string
+  readonly tag: string
   readonly limit?: number
   readonly includeFleeting?: boolean
 }
 
 export interface WikiSelection {
-  /** Normalized topic slug. */
-  readonly topic: string
+  /** Normalized tag slug. */
+  readonly tag: string
   readonly notes: ReadonlyArray<ParsedMarkdownNote>
-  /** Bounded existing topics when a request returns no notes. */
+  /** Bounded existing tags when a request returns no notes. */
   readonly suggestions: ReadonlyArray<string>
 }
 
@@ -41,40 +41,40 @@ const validateLimit = (limit: number | undefined): Effect.Effect<number, WikiErr
 
 const defaultTypes: ReadonlyArray<Markdown.NoteType> = ["permanent", "literature"]
 
-const containsTopic = (text: string, topic: string): boolean => {
+const containsTag = (text: string, tag: string): boolean => {
   const normalized = text.toLowerCase()
   return (
-    normalized.includes(topic) ||
-    normalized.includes(topic.replace(/-/g, " "))
+    normalized.includes(tag) ||
+    normalized.includes(tag.replace(/-/g, " "))
   )
 }
 
 interface ScoredNote {
   readonly note: ParsedMarkdownNote
-  readonly exactTopic: boolean
+  readonly exactTag: boolean
   readonly score: number
 }
 
-const scoreNote = (note: ParsedMarkdownNote, topic: string): ScoredNote => {
-  const exactTopic = (note.metadata.topics ?? []).includes(topic)
-  const title = containsTopic(note.metadata.title, topic)
+const scoreNote = (note: ParsedMarkdownNote, tag: string): ScoredNote => {
+  const exactTag = (note.metadata.tags ?? []).includes(tag)
+  const title = containsTag(note.metadata.title, tag)
   const reference =
     note.metadata.reference === undefined
       ? false
-      : containsTopic(note.metadata.reference, topic)
-  const body = containsTopic(note.body, topic)
+      : containsTag(note.metadata.reference, tag)
+  const body = containsTag(note.body, tag)
   const score =
-    (exactTopic ? 1000 : 0) +
+    (exactTag ? 1000 : 0) +
     (title ? 300 : 0) +
     (reference ? 200 : 0) +
     (body ? 100 : 0)
 
-  return { note, exactTopic, score }
+  return { note, exactTag, score }
 }
 
 const compareScored = (left: ScoredNote, right: ScoredNote): number => {
-  if (left.exactTopic !== right.exactTopic) {
-    return left.exactTopic ? -1 : 1
+  if (left.exactTag !== right.exactTag) {
+    return left.exactTag ? -1 : 1
   }
   if (left.score !== right.score) {
     return right.score - left.score
@@ -85,50 +85,50 @@ const compareScored = (left: ScoredNote, right: ScoredNote): number => {
   return left.note.id.localeCompare(right.note.id)
 }
 
-const topicSuggestions = (
+const tagSuggestions = (
   notes: ReadonlyArray<ParsedMarkdownNote>,
   requested: string,
 ): ReadonlyArray<string> => {
   const counts = new Map<string, number>()
   for (const note of notes) {
-    for (const topic of note.metadata.topics ?? []) {
-      if (topic === requested) {
+    for (const tag of note.metadata.tags ?? []) {
+      if (tag === requested) {
         continue
       }
-      counts.set(topic, (counts.get(topic) ?? 0) + 1)
+      counts.set(tag, (counts.get(tag) ?? 0) + 1)
     }
   }
   return [...counts.entries()]
     .sort(
-      ([leftTopic, leftCount], [rightTopic, rightCount]) =>
-        rightCount - leftCount || leftTopic.localeCompare(rightTopic),
+      ([leftTag, leftCount], [rightTag, rightCount]) =>
+        rightCount - leftCount || leftTag.localeCompare(rightTag),
     )
-    .slice(0, MAX_TOPIC_SUGGESTIONS)
-    .map(([topic]) => topic)
+    .slice(0, MAX_TAG_SUGGESTIONS)
+    .map(([tag]) => tag)
 }
 
 /**
- * Deterministic topic-first selection shared by CLI, MCP, HTTP, and web.
+ * Deterministic tag-first selection shared by CLI, MCP, HTTP, and web.
  *
- * 1. Normalize the display topic with the frozen pipeline; an empty slug is an
+ * 1. Normalize the display tag with the frozen pipeline; an empty slug is an
  *    error, not an empty page.
  * 2. Keep permanent and literature notes by default; fleeting notes require an
  *    explicit opt-in.
- * 3. Rank exact `topics` membership first, then title, reference, and body
+ * 3. Rank exact `tags` membership first, then title, reference, and body
  *    matches. Body fallback is bounded by the final note limit.
- * 4. Return suggestions from existing topics when nothing matches.
+ * 4. Return suggestions from existing tags when nothing matches.
  */
 export const selectWikiNotes = (
   input: WikiSelectionInput,
 ): Effect.Effect<WikiSelection, WikiError> => {
-  const topic = Markdown.slugifyTopic(input.topic)
-  if (topic === "") {
+  const tag = Markdown.slugifyTag(input.tag)
+  if (tag === "") {
     return Effect.fail(
       wikiError({
-        code: "invalid-topic",
-        topic: input.topic,
-        field: "topic",
-        message: `Topic '${input.topic}' does not normalize to a usable slug. Use letters or digits.`,
+        code: "invalid-tag",
+        tag: input.tag,
+        field: "tag",
+        message: `Tag '${input.tag}' does not normalize to a usable slug. Use letters or digits.`,
       }),
     )
   }
@@ -143,17 +143,17 @@ export const selectWikiNotes = (
       )
 
       const selected = candidates
-        .map((note) => scoreNote(note, topic))
-        .filter((scored) => scored.exactTopic || scored.score > 0)
+        .map((note) => scoreNote(note, tag))
+        .filter((scored) => scored.exactTag || scored.score > 0)
         .sort(compareScored)
         .slice(0, limit)
         .map((scored) => scored.note)
 
       return {
-        topic,
+        tag,
         notes: selected,
         suggestions:
-          selected.length === 0 ? topicSuggestions(candidates, topic) : [],
+          selected.length === 0 ? tagSuggestions(candidates, tag) : [],
       }
     }),
   )

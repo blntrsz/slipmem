@@ -17,7 +17,7 @@ interface ValidNoteFixture {
   readonly title: string
   readonly createdAt: string
   readonly updatedAt: string
-  readonly topics: ReadonlyArray<string>
+  readonly tags: ReadonlyArray<string>
   readonly reference: string | null
   readonly unknownKeys: ReadonlyArray<string>
   readonly bodyIncludes: string
@@ -75,7 +75,7 @@ describe("Markdown note parser", () => {
       expect(parsed.metadata.title).toBe(fixture.title)
       expect(parsed.metadata.createdAt).toBe(fixture.createdAt)
       expect(parsed.metadata.updatedAt).toBe(fixture.updatedAt)
-      expect(parsed.metadata.topics ?? []).toEqual(fixture.topics)
+      expect(parsed.metadata.tags ?? []).toEqual(fixture.tags)
       expect(parsed.metadata.reference ?? null).toBe(fixture.reference)
       expect(parsed.body).toContain(fixture.bodyIncludes)
       expect(parsed.info.content).toBe(parsed.body)
@@ -162,6 +162,36 @@ describe("Markdown note parser", () => {
     expect(text.startsWith("---\nschema: 1\n")).toBe(true)
     expect(text.endsWith(`${parsed.body}\n`)).toBe(true)
     expect(text).not.toMatch(/\r\n/)
+  })
+
+  test("reads legacy topics frontmatter as tags and rewrites canonical tags", async () => {
+    const path = join(notesRoot, "valid/20261117193045-legacy-tags.md")
+    const content = `---\nschema: 1\nid: 20261117193045-legacy-tags\ntype: permanent\ntitle: Legacy tags\ncreatedAt: "2026-11-17T19:30:45Z"\nupdatedAt: "2026-11-17T19:30:45Z"\ntopics:\n  - agent-memory\ncustom: keep-me\n---\n\nBody.\n`
+    const parsed = await run(parseMarkdownNote({ path, content }))
+
+    expect(parsed.metadata.tags).toEqual(["agent-memory"])
+    expect(parsed.unknown).toEqual({ custom: "keep-me" })
+
+    const { renderNoteDocument } = await import("./frontmatter.js")
+    const rendered = renderNoteDocument({
+      metadata: parsed.metadata,
+      body: parsed.body,
+      unknown: parsed.unknown,
+    })
+
+    expect(rendered).toContain("tags:\n  - agent-memory")
+    expect(rendered).not.toContain("topics:")
+    expect(rendered).toContain("custom: keep-me")
+  })
+
+  test("rejects notes that contain both tags and the legacy topics key", async () => {
+    const path = join(notesRoot, "valid/20261117193045-ambiguous-tags.md")
+    const content = `---\nschema: 1\nid: 20261117193045-ambiguous-tags\ntype: fleeting\ntitle: Ambiguous tags\ncreatedAt: "2026-11-17T19:30:45Z"\nupdatedAt: "2026-11-17T19:30:45Z"\ntags:\n  - new-name\ntopics:\n  - old-name\n---\n\nBody.\n`
+    const error = await failure(parseMarkdownNote({ path, content }))
+
+    expect(error.code).toBe("invalid-field")
+    expect(error.field).toBe("tags")
+    expect(error.message).toContain("legacy topics")
   })
 
   test("strips the separator line but preserves internal body formatting", async () => {

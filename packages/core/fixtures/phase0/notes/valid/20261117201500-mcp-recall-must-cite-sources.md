@@ -5,7 +5,7 @@ type: literature
 title: MCP recall must cite sources
 createdAt: "2026-11-17T20:15:00Z"
 updatedAt: "2026-11-17T20:16:00Z"
-topics:
+tags:
   - mcp
   - citations
 reference: https://example.com/mcp-recall

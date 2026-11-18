@@ -3,7 +3,7 @@ export * as Markdown from "./markdown.js"
 import { Schema } from "effect"
 
 // Phase 0 contract: the Markdown repository is the source of truth. These
-// constants and pure helpers are the single definition of filenames, topic
+// constants and pure helpers are the single definition of filenames, tag
 // slugs, metadata, approval proposals, and structured wiki output. The
 // repository, CLI, MCP, and web surfaces must import them rather than
 // reimplementing the rules.
@@ -15,11 +15,11 @@ import { Schema } from "effect"
 export const SCHEMA_VERSION = 1
 
 export const MAX_SLUG_LENGTH = 80
-export const MAX_TOPIC_LENGTH = 64
+export const MAX_TAG_LENGTH = 64
 
 export const NOTE_FILENAME_PATTERN = /^\d{14}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
 export const NOTE_ID_PATTERN = /^\d{14}-[a-z0-9]+(?:-[a-z0-9]+)*$/
-export const TOPIC_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+export const TAG_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 export const UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
 
 export const NOTE_TYPES = ["fleeting", "permanent", "literature"] as const
@@ -39,7 +39,7 @@ export const MAX_WIKI_LIMIT = 25
 export const MAX_NOTE_FILE_BYTES = 1024 * 1024
 
 // Only ASCII lowercase, digits, and single hyphens are allowed in both note
-// filename segments and topic slugs. Unicode is decomposed and stripped of
+// filename segments and tag slugs. Unicode is decomposed and stripped of
 // combining marks before the ASCII filter, so "Café" becomes "cafe" instead of
 // disappearing entirely.
 const toAsciiSlug = (value: string): string =>
@@ -72,20 +72,20 @@ export const slugifyTitle = (title: string): string =>
   truncateSlug(toAsciiSlug(title), MAX_SLUG_LENGTH) || "untitled"
 
 /**
- * Normalizes a topic for frontmatter and wiki routing.
+ * Normalizes a tag for frontmatter and wiki routing.
  *
- * Topics use the same ASCII kebab-case pipeline as note slugs, with a
+ * Tags use the same ASCII kebab-case pipeline as note slugs, with a
  * 64-character limit. Unlike titles there is no `untitled` fallback: a value
- * that normalizes to nothing is not a usable topic and returns the empty
+ * that normalizes to nothing is not a usable tag and returns the empty
  * string so callers can reject it.
  */
-export const slugifyTopic = (topic: string): string =>
-  truncateSlug(toAsciiSlug(topic), MAX_TOPIC_LENGTH)
+export const slugifyTag = (tag: string): string =>
+  truncateSlug(toAsciiSlug(tag), MAX_TAG_LENGTH)
 
-export const isTopicSlug = (value: string): boolean =>
+export const isTagSlug = (value: string): boolean =>
   value.length > 0 &&
-  value.length <= MAX_TOPIC_LENGTH &&
-  TOPIC_SLUG_PATTERN.test(value)
+  value.length <= MAX_TAG_LENGTH &&
+  TAG_SLUG_PATTERN.test(value)
 
 export interface UtcTimestamp {
   /** `YYYYMMDDHHmmss`, the 14-digit filename prefix. */
@@ -207,14 +207,14 @@ export const NoteId = Schema.String.check(
   ),
 ).annotate({ identifier: "Markdown.NoteId" })
 
-export const TopicSlug = Schema.String.check(
-  Schema.isPattern(TOPIC_SLUG_PATTERN, {
-    message: "Topics must be lowercase kebab-case slugs.",
+export const TagSlug = Schema.String.check(
+  Schema.isPattern(TAG_SLUG_PATTERN, {
+    message: "Tags must be lowercase kebab-case slugs.",
   }),
-  Schema.isMaxLength(MAX_TOPIC_LENGTH, {
-    message: `Topics must be ${MAX_TOPIC_LENGTH} characters or fewer.`,
+  Schema.isMaxLength(MAX_TAG_LENGTH, {
+    message: `Tags must be ${MAX_TAG_LENGTH} characters or fewer.`,
   }),
-).annotate({ identifier: "Markdown.TopicSlug" })
+).annotate({ identifier: "Markdown.TagSlug" })
 
 export const Timestamp = Schema.String.check(
   Schema.isPattern(UTC_TIMESTAMP_PATTERN, {
@@ -241,7 +241,7 @@ export const NoteMetadata = Schema.Struct({
   ),
   createdAt: Timestamp,
   updatedAt: Timestamp,
-  topics: Schema.optional(Schema.Array(TopicSlug)),
+  tags: Schema.optional(Schema.Array(TagSlug)),
   reference: Schema.optional(NonBlankString("Reference must not be blank.")),
   provenance: Schema.optional(Provenance),
   legacyId: Schema.optional(Schema.String),
@@ -342,7 +342,7 @@ export type WikiMode = typeof WikiMode.Type
 
 export interface WikiInput extends Schema.Schema.Type<typeof WikiInput> {}
 export const WikiInput = Schema.Struct({
-  topic: TopicSlug,
+  tag: TagSlug,
   limit: Schema.optional(
     Schema.Int.check(
       Schema.isBetween(
@@ -389,7 +389,7 @@ export const WikiSource = Schema.Struct({
 // sections for CLI and copy/paste use, never a second source of truth.
 export interface WikiPage extends Schema.Schema.Type<typeof WikiPage> {}
 export const WikiPage = Schema.Struct({
-  topic: TopicSlug,
+  tag: TagSlug,
   generatedAt: Timestamp,
   mode: WikiMode,
   noteCount: Schema.Int.check(

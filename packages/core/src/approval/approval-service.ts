@@ -59,7 +59,7 @@ export interface McpCreateInput {
   readonly title: string
   readonly content: string
   readonly reference?: string
-  readonly topics?: ReadonlyArray<string>
+  readonly tags?: ReadonlyArray<string>
   readonly actor?: string
 }
 
@@ -71,7 +71,7 @@ export interface McpUpdateInput {
   readonly content?: string
   /** `null` removes the reference; `undefined` preserves it. */
   readonly reference?: string | null
-  readonly topics?: ReadonlyArray<string>
+  readonly tags?: ReadonlyArray<string>
   readonly actor?: string
 }
 
@@ -248,21 +248,21 @@ const normalizeActor = (
     return trimmed
   })
 
-const normalizeTopics = (
-  topics: ReadonlyArray<string> | undefined,
+const normalizeTags = (
+  tags: ReadonlyArray<string> | undefined,
 ): Effect.Effect<ReadonlyArray<string> | undefined, ApprovalError> =>
   Effect.gen(function* () {
-    if (topics === undefined) {
+    if (tags === undefined) {
       return undefined
     }
     const normalized: string[] = []
-    for (const topic of topics) {
-      const slug = Markdown.slugifyTopic(topic)
+    for (const tag of tags) {
+      const slug = Markdown.slugifyTag(tag)
       if (slug === "") {
         return yield* Effect.fail(
           invalidRequest(
-            `Topic '${topic}' does not normalize to a usable slug.`,
-            "topics",
+            `Tag '${tag}' does not normalize to a usable slug.`,
+            "tags",
           ),
         )
       }
@@ -433,7 +433,7 @@ export const makeApprovalService = (
     ): Effect.Effect<McpWriteResult, ApprovalError> =>
       Effect.gen(function* () {
         const actor = yield* normalizeActor(input.actor ?? defaultActor)
-        const topics = yield* normalizeTopics(input.topics)
+        const tags = yield* normalizeTags(input.tags)
         const reference = normalizeReference(input.reference)
         const decision = decidePolicy({
           caller: "mcp",
@@ -448,7 +448,7 @@ export const makeApprovalService = (
               type: input.type,
               title: input.title,
               content: input.content,
-              ...(topics === undefined ? {} : { topics }),
+              ...(tags === undefined ? {} : { tags }),
               ...(reference === undefined ? {} : { reference }),
               provenance: mcpProvenance(actor, decision.unsafeDirect),
             })
@@ -493,7 +493,7 @@ export const makeApprovalService = (
           title: input.title.trim(),
           createdAt: stamp.isoTimestamp,
           updatedAt: stamp.isoTimestamp,
-          ...(topics === undefined || topics.length === 0 ? {} : { topics }),
+          ...(tags === undefined || tags.length === 0 ? {} : { tags }),
           ...(reference === undefined ? {} : { reference }),
           provenance: mcpProvenance(actor, false),
         }
@@ -554,7 +554,7 @@ export const makeApprovalService = (
           nextType,
           mcpWritePolicy: policy,
         })
-        const topics = yield* normalizeTopics(input.topics)
+        const tags = yield* normalizeTags(input.tags)
         const reference =
           input.reference === null
             ? null
@@ -569,7 +569,7 @@ export const makeApprovalService = (
               type: nextType,
               ...(input.title === undefined ? {} : { title: input.title }),
               ...(input.content === undefined ? {} : { content: input.content }),
-              ...(topics === undefined ? {} : { topics }),
+              ...(tags === undefined ? {} : { tags }),
               ...(reference === null
                 ? { reference: null }
                 : reference === undefined
@@ -590,11 +590,11 @@ export const makeApprovalService = (
           type: nextType,
           title: input.title === undefined ? current.metadata.title : input.title.trim(),
           updatedAt: stamp.isoTimestamp,
-          ...(topics === undefined
+          ...(tags === undefined
             ? {}
-            : topics.length === 0
-              ? { topics: undefined }
-              : { topics }),
+            : tags.length === 0
+              ? { tags: undefined }
+              : { tags }),
           ...(reference === null
             ? { reference: undefined }
             : reference === undefined
@@ -826,9 +826,9 @@ export const makeApprovalService = (
               ...(proposed.metadata.reference === undefined
                 ? {}
                 : { reference: proposed.metadata.reference }),
-              ...(proposed.metadata.topics === undefined
+              ...(proposed.metadata.tags === undefined
                 ? {}
-                : { topics: proposed.metadata.topics }),
+                : { tags: proposed.metadata.tags }),
               ...(proposed.metadata.provenance === undefined
                 ? {}
                 : { provenance: proposed.metadata.provenance }),
@@ -966,7 +966,7 @@ export const makeApprovalService = (
             title: proposed.metadata.title,
             content: proposed.body,
             reference: proposed.metadata.reference ?? null,
-            topics: proposed.metadata.topics ?? [],
+            tags: proposed.metadata.tags ?? [],
             ...(proposed.metadata.provenance === undefined
               ? {}
               : { provenance: proposed.metadata.provenance }),

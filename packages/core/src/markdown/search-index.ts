@@ -27,10 +27,12 @@ import {
   isSymbolicLinkPath,
 } from "./root.js"
 
-export const INDEX_SCHEMA_VERSION = 2
+// Bumped from 2 for the topics -> tags column rename. The index is disposable:
+// an older cache is dropped and rebuilt from Markdown on first open.
+export const INDEX_SCHEMA_VERSION = 3
 export const INDEX_FILENAME = "index.sqlite"
-export const DEFAULT_TOPIC_LIMIT = 50
-export const MAX_TOPIC_LIMIT = 200
+export const DEFAULT_TAG_LIMIT = 50
+export const MAX_TAG_LIMIT = 200
 export const DEFAULT_BACKLINK_LIMIT = 20
 export const MAX_BACKLINK_LIMIT = 100
 export const MAX_SEARCH_QUERY_LENGTH = 512
@@ -56,7 +58,7 @@ export interface MarkdownSearchInput {
   readonly fields?: ReadonlyArray<Note.SearchField>
   /** Alias for the note type filter; matches `Note.SearchInput.kinds`. */
   readonly kinds?: ReadonlyArray<Note.Kind>
-  readonly topic?: string
+  readonly tag?: string
   readonly limit?: number
 }
 
@@ -67,12 +69,12 @@ export interface MarkdownSearchHit {
   readonly score: number
 }
 
-export interface TopicSummary {
-  readonly topic: string
+export interface TagSummary {
+  readonly tag: string
   readonly noteCount: number
 }
 
-export interface ListTopicsInput {
+export interface ListTagsInput {
   readonly query?: string
   readonly limit?: number
 }
@@ -137,9 +139,9 @@ export interface MarkdownSearchIndexShape {
   readonly searchNotes: (
     input: MarkdownSearchInput,
   ) => Effect.Effect<ReadonlyArray<Note.Info>, MarkdownError>
-  readonly listTopics: (
-    input?: ListTopicsInput,
-  ) => Effect.Effect<ReadonlyArray<TopicSummary>, MarkdownError>
+  readonly listTags: (
+    input?: ListTagsInput,
+  ) => Effect.Effect<ReadonlyArray<TagSummary>, MarkdownError>
   /**
    * Derived incoming-link sources for a note ID. Only resolved cross-note
    * candidate links are returned; self-links, malformed, unsafe, and dangling
@@ -166,7 +168,7 @@ interface NoteRow {
   readonly title: string
   readonly body: string
   readonly reference: string | null
-  readonly topics: string
+  readonly tags: string
   readonly created_at: number
   readonly updated_at: number
   readonly mtime_ms: number
@@ -270,8 +272,8 @@ const openDatabase = (root: string, path: string): Database => {
 const rebuildFtsRows = (db: Database): void => {
   db.exec("DELETE FROM notes_fts;")
   db.exec(`
-    INSERT INTO notes_fts (id, title, body, reference, topics)
-    SELECT id, title, body, reference, topics FROM notes;
+    INSERT INTO notes_fts (id, title, body, reference, tags)
+    SELECT id, title, body, reference, tags FROM notes;
   `)
 }
 
@@ -291,7 +293,7 @@ const ftsNeedsRepair = (db: Database): boolean => {
            OR f.title IS NOT n.title
            OR f.body IS NOT n.body
            OR f.reference IS NOT n.reference
-           OR f.topics IS NOT n.topics`,
+           OR f.tags IS NOT n.tags`,
     )
     .get()!.count
   return mismatch > 0
@@ -331,7 +333,7 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
       title TEXT NOT NULL,
       body TEXT NOT NULL,
       reference TEXT,
-      topics TEXT NOT NULL,
+      tags TEXT NOT NULL,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       mtime_ms REAL NOT NULL,
@@ -360,7 +362,7 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
         title TEXT NOT NULL,
         body TEXT NOT NULL,
         reference TEXT,
-        topics TEXT NOT NULL,
+        tags TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         mtime_ms REAL NOT NULL,
@@ -380,7 +382,7 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
           title,
           body,
           reference,
-          topics,
+          tags,
           tokenize = 'unicode61'
         );
       `)
@@ -404,7 +406,7 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
           title,
           body,
           reference,
-          topics,
+          tags,
           tokenize = 'unicode61'
         );
       `)
@@ -482,11 +484,11 @@ const byNewest = (
   right.updatedAt - left.updatedAt ||
   compareText(left.id, right.id)
 
-const topicText = (topics: ReadonlyArray<string>): string =>
-  topics.length === 0 ? "" : ` ${topics.join(" ")} `
+const tagText = (tags: ReadonlyArray<string>): string =>
+  tags.length === 0 ? "" : ` ${tags.join(" ")} `
 
-const parseTopics = (topics: string): ReadonlyArray<string> =>
-  topics.length === 0 ? [] : topics.trim().split(/\s+/)
+const parseTags = (tags: string): ReadonlyArray<string> =>
+  tags.length === 0 ? [] : tags.trim().split(/\s+/)
 
 const rowToInfo = (row: NoteRow): Note.Info => {
   switch (row.type) {
@@ -540,11 +542,11 @@ const effectiveLimit = (limit: number | undefined): number => {
   return Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.trunc(limit)))
 }
 
-const effectiveTopicLimit = (limit: number | undefined): number => {
+const effectiveTagLimit = (limit: number | undefined): number => {
   if (limit === undefined || !Number.isFinite(limit)) {
-    return DEFAULT_TOPIC_LIMIT
+    return DEFAULT_TAG_LIMIT
   }
-  return Math.max(1, Math.min(MAX_TOPIC_LIMIT, Math.trunc(limit)))
+  return Math.max(1, Math.min(MAX_TAG_LIMIT, Math.trunc(limit)))
 }
 
 const effectiveBacklinkLimit = (limit: number | undefined): number => {
@@ -694,7 +696,7 @@ export const makeMarkdownSearchIndex = (
       database
         .query<never, [string, string, string, string, string, string | null, string, number, number, number, number, string]>(
           `INSERT INTO notes
-            (id, path, type, title, body, reference, topics, created_at, updated_at, mtime_ms, size, content_hash)
+            (id, path, type, title, body, reference, tags, created_at, updated_at, mtime_ms, size, content_hash)
            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
            ON CONFLICT(id) DO UPDATE SET
              path = excluded.path,
@@ -702,7 +704,7 @@ export const makeMarkdownSearchIndex = (
              title = excluded.title,
              body = excluded.body,
              reference = excluded.reference,
-             topics = excluded.topics,
+             tags = excluded.tags,
              created_at = excluded.created_at,
              updated_at = excluded.updated_at,
              mtime_ms = excluded.mtime_ms,
@@ -716,7 +718,7 @@ export const makeMarkdownSearchIndex = (
           row.title,
           row.body,
           row.reference,
-          row.topics,
+          row.tags,
           row.created_at,
           row.updated_at,
           row.mtime_ms,
@@ -730,9 +732,9 @@ export const makeMarkdownSearchIndex = (
           .run(row.id)
         database
           .query<never, [string, string, string, string | null, string]>(
-            "INSERT INTO notes_fts (id, title, body, reference, topics) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO notes_fts (id, title, body, reference, tags) VALUES (?1, ?2, ?3, ?4, ?5)",
           )
-          .run(row.id, row.title, row.body, row.reference, row.topics)
+          .run(row.id, row.title, row.body, row.reference, row.tags)
       }
     }
 
@@ -752,7 +754,7 @@ export const makeMarkdownSearchIndex = (
       title: note.metadata.title,
       body: note.body,
       reference: note.metadata.reference ?? null,
-      topics: topicText(note.metadata.topics ?? []),
+      tags: tagText(note.metadata.tags ?? []),
       created_at: note.info.createdAt,
       updated_at: note.info.updatedAt,
       mtime_ms: note.mtimeMs,
@@ -896,7 +898,7 @@ export const makeMarkdownSearchIndex = (
         tokens: ReadonlyArray<string>
         fields: ReadonlySet<Note.SearchField>
         kinds: ReadonlySet<Note.Kind>
-        topic: string | undefined
+        tag: string | undefined
         limit: number
       },
       MarkdownError
@@ -912,16 +914,16 @@ export const makeMarkdownSearchIndex = (
           )
         }
 
-        const topic =
-          input.topic === undefined ? undefined : Markdown.slugifyTopic(input.topic)
-        if (input.topic !== undefined && topic === "") {
+        const tag =
+          input.tag === undefined ? undefined : Markdown.slugifyTag(input.tag)
+        if (input.tag !== undefined && tag === "") {
           return yield* Effect.fail(
             markdownError({
               area: "metadata",
-              code: "invalid-topic",
+              code: "invalid-tag",
               path: root,
-              field: "topic",
-              message: `Topic '${input.topic}' does not normalize to a usable slug.`,
+              field: "tag",
+              message: `Tag '${input.tag}' does not normalize to a usable slug.`,
             }),
           )
         }
@@ -930,7 +932,7 @@ export const makeMarkdownSearchIndex = (
           tokens: tokenize(query),
           fields: new Set(input.fields ?? SEARCH_FIELDS),
           kinds: new Set(input.kinds ?? NOTE_KINDS),
-          topic,
+          tag,
           limit: effectiveLimit(input.limit),
         }
       })
@@ -939,7 +941,7 @@ export const makeMarkdownSearchIndex = (
       input: MarkdownSearchInput,
       fields: ReadonlySet<Note.SearchField>,
       kinds: ReadonlySet<Note.Kind>,
-      topic: string | undefined,
+      tag: string | undefined,
       tokens: ReadonlyArray<string>,
       limit: number,
     ): ReadonlyArray<MarkdownSearchHit> =>
@@ -947,7 +949,7 @@ export const makeMarkdownSearchIndex = (
         .query<NoteRow, []>("SELECT * FROM notes")
         .all()
         .filter((row) => kinds.has(row.type as Note.Kind))
-        .filter((row) => topic === undefined || parseTopics(row.topics).includes(topic))
+        .filter((row) => tag === undefined || parseTags(row.tags).includes(tag))
         .filter((row) =>
           tokens.every((token) => linearScore(row, [token], fields) > 0),
         )
@@ -971,7 +973,7 @@ export const makeMarkdownSearchIndex = (
     const ftsSearch = (
       fields: ReadonlySet<Note.SearchField>,
       kinds: ReadonlySet<Note.Kind>,
-      topic: string | undefined,
+      tag: string | undefined,
       tokens: ReadonlyArray<string>,
       limit: number,
     ): ReadonlyArray<MarkdownSearchHit> => {
@@ -982,10 +984,10 @@ export const makeMarkdownSearchIndex = (
 
       const kind = kindFilters(kinds)
       const values: SQLQueryBindings[] = [match, ...kind.values]
-      let topicClause = ""
-      if (topic !== undefined) {
-        topicClause = "AND instr(n.topics, ?) > 0"
-        values.push(topicText([topic]))
+      let tagClause = ""
+      if (tag !== undefined) {
+        tagClause = "AND instr(n.tags, ?) > 0"
+        values.push(tagText([tag]))
       }
       values.push(limit)
 
@@ -996,7 +998,7 @@ export const makeMarkdownSearchIndex = (
              JOIN notes n ON n.id = notes_fts.id
             WHERE notes_fts MATCH ?
               AND n.type IN (${kind.sql})
-              ${topicClause}
+              ${tagClause}
             ORDER BY rank ASC, n.updated_at DESC, n.id ASC
             LIMIT ?`,
         )
@@ -1028,7 +1030,7 @@ export const makeMarkdownSearchIndex = (
             ? ftsSearch(
                 normalized.fields,
                 normalized.kinds,
-                normalized.topic,
+                normalized.tag,
                 normalized.tokens,
                 normalized.limit,
               )
@@ -1036,52 +1038,52 @@ export const makeMarkdownSearchIndex = (
                 input,
                 normalized.fields,
                 normalized.kinds,
-                normalized.topic,
+                normalized.tag,
                 normalized.tokens,
                 normalized.limit,
               ),
         )
       })
 
-    const listTopics = (
-      input: ListTopicsInput = {},
-    ): Effect.Effect<ReadonlyArray<TopicSummary>, MarkdownError> =>
+    const listTags = (
+      input: ListTagsInput = {},
+    ): Effect.Effect<ReadonlyArray<TagSummary>, MarkdownError> =>
       Effect.gen(function* () {
-        const limit = effectiveTopicLimit(input.limit)
+        const limit = effectiveTagLimit(input.limit)
         const query =
-          input.query === undefined ? "" : Markdown.slugifyTopic(input.query)
+          input.query === undefined ? "" : Markdown.slugifyTag(input.query)
         if (input.query !== undefined && query === "") {
           return yield* Effect.fail(
             markdownError({
               area: "metadata",
-              code: "invalid-topic",
+              code: "invalid-tag",
               path: root,
-              field: "topic",
-              message: `Topic query '${input.query}' does not normalize to a usable slug.`,
+              field: "tag",
+              message: `Tag query '${input.query}' does not normalize to a usable slug.`,
             }),
           )
         }
 
-        const rows = yield* scoped("Listing topics", () =>
+        const rows = yield* scoped("Listing tags", () =>
           database
-            .query<{ topics: string }, []>("SELECT topics FROM notes")
+            .query<{ tags: string }, []>("SELECT tags FROM notes")
             .all(),
         )
         const counts = new Map<string, number>()
         for (const row of rows) {
-          for (const topic of parseTopics(row.topics)) {
-            if (query.length === 0 || topic.includes(query)) {
-              counts.set(topic, (counts.get(topic) ?? 0) + 1)
+          for (const tag of parseTags(row.tags)) {
+            if (query.length === 0 || tag.includes(query)) {
+              counts.set(tag, (counts.get(tag) ?? 0) + 1)
             }
           }
         }
 
         return [...counts.entries()]
-          .map(([topic, noteCount]) => ({ topic, noteCount }))
+          .map(([tag, noteCount]) => ({ tag, noteCount }))
           .sort(
             (left, right) =>
               right.noteCount - left.noteCount ||
-              compareText(left.topic, right.topic),
+              compareText(left.tag, right.tag),
           )
           .slice(0, limit)
       })
@@ -1184,7 +1186,7 @@ export const makeMarkdownSearchIndex = (
         search(input).pipe(
           Effect.map((hits) => hits.map((hit) => hit.note)),
         ),
-      listTopics,
+      listTags,
       backlinks,
       snapshot,
       status,
