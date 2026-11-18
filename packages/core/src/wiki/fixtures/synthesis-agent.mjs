@@ -40,13 +40,16 @@ if (mode === "empty") {
   process.exit(0)
 }
 
-const sentence = first?.body?.split(". ")[0]
-const quote = sentence === undefined ? "" : `${sentence}.`
+const paragraphs = String(first?.body ?? "")
+  .split(/\n\s*\n/)
+  .map((paragraph) => paragraph.trim())
+  .filter((paragraph) => paragraph.length > 0)
+const quote = paragraphs[0] ?? ""
 
 const mixed = {
   sentences: [
     {
-      // Extractive: the claim is the source sentence itself.
+      // Extractive: the claim is the complete source paragraph itself.
       text: quote,
       noteId: first?.id ?? "missing",
       quote,
@@ -77,16 +80,11 @@ const mixed = {
 }
 
 if (mode === "many") {
-  const body = first?.body ?? ""
-  const sourceSentences = body.match(/[^.!?]+[.!?]/g) ?? []
-  const sentences = sourceSentences.slice(0, 100).map((sourceSentence) => {
-    const trimmed = sourceSentence.trim()
-    return {
-      text: trimmed,
-      noteId: first?.id ?? "missing",
-      quote: trimmed,
-    }
-  })
+  const sentences = paragraphs.slice(0, 100).map((paragraph) => ({
+    text: paragraph,
+    noteId: first?.id ?? "missing",
+    quote: paragraph,
+  }))
   process.stdout.write(JSON.stringify({ sentences }))
   process.exit(0)
 }

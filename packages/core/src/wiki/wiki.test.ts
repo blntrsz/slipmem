@@ -424,13 +424,15 @@ describe("synthesized topic wiki", () => {
       expect(page.noteCount).toBe(1)
       expect(page.sections).toHaveLength(1)
       expect(page.sections[0]!.markdown).toContain(
-        "Every recall operation has a hard limit.",
+        "Every recall operation has a hard limit. Citations are required for each claim.",
       )
       expect(page.sections[0]!.citations[0]!.noteId).toBe(note.id)
       expect(page.sections[0]!.citations[0]!.excerpt).toBe(
-        "Every recall operation has a hard limit.",
+        "Every recall operation has a hard limit. Citations are required for each claim.",
       )
-      expect(page.markdown).toContain("Every recall operation has a hard limit.")
+      expect(page.markdown).toContain(
+        "Every recall operation has a hard limit. Citations are required for each claim.",
+      )
       expect(page.markdown).toContain(`Source: [[${note.id}]]`)
       expect(page.markdown).not.toContain("Every recall operation has no hard limit.")
       expect(page.markdown).not.toContain("Every deletion is safe without approval.")
@@ -456,7 +458,7 @@ describe("synthesized topic wiki", () => {
         content: Array.from(
           { length: 100 },
           (_, index) => `Bounded claim ${index + 1}.`,
-        ).join(" "),
+        ).join("\n\n"),
         topics: ["many"],
       })
       const recordPath = join(fixture.base, "argv-many.json")
@@ -592,15 +594,17 @@ describe("synthesized topic wiki", () => {
     }
   })
 
-  test("accepts a complete sentence wrapped across Markdown lines", async () => {
+  test("accepts a full paragraph wrapped across Markdown lines", async () => {
     const fixture = await createFixture()
     try {
       const note = await createNote(fixture, {
-        title: "Wrapped sentence",
+        title: "Wrapped paragraph",
         content:
           "Caching is not dangerous for\nthis workload. Deleting is safe only after a verified backup.",
         topics: ["wrapped-citation"],
       })
+      const fullParagraph =
+        "Caching is not dangerous for this workload. Deleting is safe only after a verified backup."
       const service = await wiki(fixture, {
         synthesis: { kind: "model", modelId: "wrapped-citation-model" },
         modelAdapters: [
@@ -619,6 +623,11 @@ describe("synthesized topic wiki", () => {
                     noteId: note.id,
                     quote: "Deleting is safe",
                   },
+                  {
+                    text: fullParagraph,
+                    noteId: note.id,
+                    quote: fullParagraph,
+                  },
                 ],
               }),
           },
@@ -629,12 +638,13 @@ describe("synthesized topic wiki", () => {
         service.build({ topic: "wrapped-citation", mode: "synthesized" }),
       )
       expect(page.sections).toHaveLength(1)
-      expect(page.markdown).toContain(
-        "Caching is not dangerous for this workload.",
-      )
+      expect(page.markdown).toContain(fullParagraph)
+      expect(page.sections[0]!.citations.map((citation) => citation.excerpt)).toEqual([
+        fullParagraph,
+      ])
       expect(page.markdown).not.toContain("\n\nDeleting is safe.\n\nSource:")
       expect(page.markdown).toContain(
-        "1 synthesized sentence did not pass citation validation",
+        "2 synthesized sentences did not pass citation validation",
       )
     } finally {
       cleanup(fixture)
@@ -795,9 +805,11 @@ describe("synthesized topic wiki", () => {
   test("runs an explicitly registered model adapter", async () => {
     const fixture = await createFixture()
     try {
+      const paragraph =
+        "A local adapter can produce a supported sentence. Nothing else."
       const note = await createNote(fixture, {
         title: "Adapter note",
-        content: "A local adapter can produce a supported sentence. Nothing else.",
+        content: paragraph,
         topics: ["adapter"],
       })
       const service = await wiki(fixture, {
@@ -809,9 +821,9 @@ describe("synthesized topic wiki", () => {
               Effect.succeed({
                 sentences: [
                   {
-                    text: "A local adapter can produce a supported sentence.",
+                    text: paragraph,
                     noteId: note.id,
-                    quote: "A local adapter can produce a supported sentence.",
+                    quote: paragraph,
                   },
                 ],
               }),
@@ -822,9 +834,7 @@ describe("synthesized topic wiki", () => {
         service.build({ topic: "adapter", mode: "synthesized" }),
       )
       expect(page.noteCount).toBe(1)
-      expect(page.sections[0]!.citations[0]!.excerpt).toBe(
-        "A local adapter can produce a supported sentence.",
-      )
+      expect(page.sections[0]!.citations[0]!.excerpt).toBe(paragraph)
     } finally {
       cleanup(fixture)
     }

@@ -1,8 +1,8 @@
 # Approval and wiki services evidence
 
 Status: **core approval and on-demand cited wiki implemented and tested,
-including compare-and-swap approval apply, conservative extractive citation
-validation, and a fail-closed agent sandbox policy.**
+including compare-and-swap approval apply, conservative full-paragraph
+extractive citation validation, and a fail-closed agent sandbox policy.**
 Date: 2026-11-18
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md) sections 8, 9, 12, 13.4,
 13.5; [`docs/mvp-implementation-log.md`](./mvp-implementation-log.md) slices 3a,
@@ -20,7 +20,7 @@ Added:
   store, human review/apply/reject, diffs, expiry cleanup, base-hash checks.
 - `packages/core/src/wiki/**` - bounded topic selection, extractive page
   assembly, structured/Markdown rendering, opt-in synthesized mode, safe local
-  agent process, complete-sentence support citation validator.
+  agent process, exact full-paragraph support citation validator.
 - `packages/core/src/index.ts` - additive exports for both modules.
 - `packages/core/src/markdown/repository.ts` and `errors.ts` - an optional
   `expectedContentHash` compare-and-swap guard on update and delete, checked
@@ -287,34 +287,46 @@ The local agent boundary (`packages/core/src/wiki/synthesis.ts` and
 
 Citation validator:
 
-- Top-level output must be JSON shaped as `{"sentences":[...]}`.
-- Each item must have a bounded single-sentence `text`, a selected `noteId`,
-  and a `quote` of at least 12 characters.
-- The `quote` must be a **complete source sentence**, or a conservative full
-  source paragraph, from that note body after collapsing whitespace. Its start
-  and end must coincide with complete body sentence/paragraph boundaries.
-  Markdown heading, list, blockquote, and task markers are removed before
-  segmenting; fenced code is excluded; wrapped source lines are joined. A quote
-  that is a real substring but clips a sentence (for example
-  `"dangerous for this workload."` from
-  `"Caching is not dangerous for this workload."`, or
-  `"Deleting is safe"` from `"Deleting is safe only after a verified backup."`)
-  is rejected even when the supplied `text` is clipped identically.
-- The `text` must equal the **full supplied quote** after conservative
-  normalization (whitespace, wrapping quotation marks, terminal punctuation).
-  Exact-fragment support is no longer accepted; there is no arbitrary-substring
-  path that can pair a clipped claim with a clipped quote.
-- The validator verifies extraction and complete-sentence provenance, not
+- Top-level output must be JSON shaped as `{"sentences":[...]}`. The field name
+  is retained for adapter compatibility; each entry is now a citation item, not
+  necessarily one sentence.
+- Each item must have a bounded `text`, a selected `noteId`, and a `quote` of at
+  least 12 characters. An item may contain several source sentences only because
+  its `text` and `quote` are the **whole source paragraph/block**; the 500
+  character item bound still applies.
+- The `quote` must be an **exact complete source paragraph or block** from that
+  note body after normalizing line wrapping, whitespace shape, wrapping
+  quotation marks, and Markdown block markers. Markdown headings, list items,
+  blockquotes, and task markers are handled; fenced code is excluded; wrapped
+  source lines are joined. There is no sentence segmentation: an individual
+  sentence inside a multi-sentence paragraph is not a valid span, even when it
+  ends in terminal punctuation and is a real substring.
+- Punctuation is never stripped. `"Deleting is safe..."` does not equal
+  `"Deleting is safe."`, and a missing or added terminal period is a mismatch.
+  Clips at an ellipsis, spaced ellipsis, parenthetical period/question/exclamation,
+  or an abbreviation such as `Corp.`, `Co.`, or `et al.` are rejected because the
+  quote is shorter than the source block, not because the validator guessed a
+  sentence boundary. This is a fail-closed simplification: no heuristic sentence
+  parser decides where a claim may stop.
+- The `text` must equal the **full supplied quote** after the same conservative
+  normalization (line wrapping, whitespace, wrapping quotation marks). A
+  paraphrase or any different wording is omitted even when the quote is a real
+  source block.
+- The validator verifies exact extraction and full-block provenance, not
   semantic entailment. A paraphrase, negation, or opposite claim is omitted even
-  when a nearby real source span exists. Accepted output displays the verbatim
-  complete source sentence, never a synthesized sentence or clipped excerpt.
-- Unknown IDs, unsupported or clipped quotes, non-extractive text,
-  non-sentences, duplicates, and sentences beyond the 60-sentence cap are
-  omitted, counted, and reported in the page footer. They are never rendered as
-  claims.
-- Every accepted sentence is followed by its own adjacent note ID and path.
+  when a nearby real source block exists. Accepted output displays the verbatim
+  complete source paragraph, never a synthesized sentence or clipped excerpt.
+- Unknown IDs, unsupported or clipped quotes, non-extractive text, duplicates,
+  and items beyond the 60-item cap are omitted, counted, and reported in the page
+  footer. They are never rendered as claims.
+- Every accepted item is followed by its own adjacent note ID and path.
 - An empty synthesizer result says that no supported synthesized output was
   produced; it never claims that no notes matched when notes did match.
+
+The payload sent to a local agent states the same contract: copy one complete
+Markdown paragraph or block into both `text` and `quote`, preserve ellipses,
+spaced ellipses, parentheses, abbreviations, and terminal punctuation exactly,
+and omit anything that cannot be copied whole.
 
 ## 7. Wiki integration API
 
@@ -396,27 +408,41 @@ Wiki tests cover:
 - excerpt and total output bounds over 25 large notes;
 - structured-field and serialized-page bounds with a 30,000-character title;
   every emitted citation line remains complete;
-- a real fixture child process producing one extractive sentence while an
-  opposite claim, unsupported quote, unknown-note claim, and non-sentence are
+- a real fixture child process producing one exact extractive paragraph while an
+  opposite claim, unsupported quote, unknown-note claim, and mismatched text are
   omitted;
 - **opposite-claim regression:** `"Caching is dangerous"` paired with the real
   span `"Caching is not dangerous"` is omitted and never rendered;
 - **clipped-negation regression:** `text` and `quote` both set to
-  `"dangerous for this workload."` are omitted for the body sentence
+  `"dangerous for this workload."` are omitted for the body paragraph
   `"Caching is not dangerous for this workload."`, because the quote is not a
-  complete source sentence;
+  complete source block;
 - **clipped-qualifier regression:** `"Deleting is safe."` / `"Deleting is safe"`
-  are omitted for `"Deleting is safe only after a verified backup."`, while both
-  complete source sentences in the same Markdown heading/list body are accepted
-  and cited;
-- Markdown-aware segmentation accepts complete source sentences after headings,
-  list markers, and wrapped lines, and does not split on abbreviation periods;
-- conservative normalization accepts a complete quoted exact sentence; a
-  paraphrase with the same source span is omitted;
+  are omitted for `"Deleting is safe only after a verified backup."`, while the
+  complete list items in the same Markdown body are accepted and cited;
+- **ellipsis regressions:** `"Deleting is safe."` is omitted for
+  `"Deleting is safe... only after verified backup."` and for the spaced form
+  `"Deleting is safe . . . only after verified backup."`; a negated-source tail
+  `"dangerous for this workload."` is also omitted from
+  `"Caching is not... dangerous for this workload."`;
+- **parenthetical punctuation regressions:** clips ending at an internal
+  period, question mark, or exclamation inside parentheses are omitted when the
+  paragraph continues after the closing parenthesis;
+- **abbreviation regressions:** clips ending at `Corp.`, `Co.`, or `et al.` are
+  omitted when more of the source paragraph follows;
+- **multi-sentence paragraph regression:** a single sentence extracted from a
+  two-sentence paragraph is omitted, while the exact whole paragraph is accepted
+  as one item;
+- Markdown-aware block reading accepts complete paragraphs after headings, list
+  items, and wrapped lines; list items are separate blocks and fenced code is
+  excluded;
+- exact normalization accepts a complete quoted exact paragraph and rejects a
+  version that differs only by terminal punctuation; a paraphrase with the same
+  source block is omitted;
 - empty synthesizer output says no supported synthesized output was produced,
   not that no notes matched;
 - argv/stdin separation proving note text never enters process arguments;
-- sentence-count and total-output bounds for synthesized mode;
+- item-count, per-item character, and total-output bounds for synthesized mode;
 - unregistered model ID fails closed; an explicitly registered adapter works;
 - unsandboxed agent refused without the explicit unsafe opt-in; bubblewrap
   invocation and secret-free environment allowlist verified;
@@ -442,7 +468,7 @@ Wiki tests cover:
 | WIKI-04 | done | conflicting notes in separate cited sections |
 | WIKI-05 | done | wiki tests assert an unchanged root |
 | WIKI-06 | done | injection note quoted as data; agent receives stdin JSON only |
-| WIKI-07 | done | fixture process + strict extractive validator rejects paraphrases, opposite claims, and matched text+quote fragments clipped from negated or qualified sentences; unsandboxed agents fail closed |
+| WIKI-07 | done | fixture process + strict full-paragraph extractive validator rejects paraphrases, opposite claims, and matched text+quote fragments clipped from negated, qualified, ellipsis, parenthetical, or abbreviation paragraphs; unsandboxed agents fail closed |
 
 ## 10. Known limitations and integration notes
 
@@ -460,26 +486,31 @@ Wiki tests cover:
   repository's suffixed note created during that race is moved to the normal
   backup location before the failure is returned. In the normal single-writer
   case no note is written for a stale create.
-- Extractive excerpts are truncated to the excerpt bound; synthesized output is
-  sentence-bounded. Both are explicit in the page footer when total output is
-  cut.
+- Extractive excerpts are truncated to the excerpt bound; synthesized items are
+  bounded by count and characters. Both are explicit in the page footer when
+  total output is cut.
 - Synthesized mode is opt-in and local. The core does not ship a hosted model
   adapter and does not claim that any model ID works without registration.
-- Validation is complete-sentence extractive-support checking, not semantic
-  entailment or factual verification. It cannot prove that a source sentence is
+- Validation is exact full-paragraph extractive-support checking, not semantic
+  entailment or factual verification. It cannot prove that a source paragraph is
   true, current, representative, or relevant, and it rejects paraphrases. A
-  passing sentence means only that `text` is a complete verbatim sentence from
-  the cited body with exact sentence/paragraph boundaries. Operators who want
-  prose synthesis must accept that unsupported sentences are omitted; extractive
-  mode remains the fully cited fallback.
-- Sentence segmentation is deliberately conservative. Markdown headings, lists,
+  passing item means only that `text` is a complete verbatim paragraph/block from
+  the cited body with the same punctuation. It does **not** mean the paragraph is
+  a precise answer, balanced, or free of misleading context when read alone.
+  Operators who want prose synthesis must accept that unsupported items are
+  omitted; extractive mode remains the fully cited fallback.
+- There is deliberately no sentence splitter. Markdown headings, list items,
   blockquotes, and task markers are handled, wrapped lines are joined, and code
-  fences are excluded. Ambiguous boundaries are omitted rather than guessed. If
-  a note's structure hides a complete sentence from segmentation, the citation is
-  refused; the fallback is to quote a normal sentence or read the note directly.
+  fences are excluded, but the smallest citable unit is the whole block. A
+  paragraph with several sentences must be quoted in full; if it exceeds the
+  500-character item bound, the item is omitted. A note whose structure is not
+  recognized as a block may be refused; the fallback is to cite the whole
+  paragraph, restructure the note, or read it directly. This limitation is
+  intentional: guessing sentence boundaries is how qualifiers and negations get
+  clipped.
 - CLI, server, MCP, and web surfaces must describe synthesized output as
   extractive citation validation ("verify sources"), never as semantic
-  verification or truth. No UI may promise that a passing sentence is correct or
+  verification or truth. No UI may promise that a passing paragraph is correct or
   that the synthesizer understood the note; the guarantee is only complete
   verbatim citation.
 - A bubbling sandbox that passes the probe still leaves world-readable host
