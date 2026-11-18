@@ -30,6 +30,12 @@ const resolveDatabasePath = (
 ): string => {
   const fromFlag = explicit?.trim()
   const fromEnv = env.SLIPMEM_DB_PATH?.trim()
+  if (explicit !== undefined && fromFlag === "") {
+    throw usageError(
+      "--db requires a non-empty database path. Omit --db to use SLIPMEM_DB_PATH or the XDG default.",
+      "migrate",
+    )
+  }
   let value: string
   if (fromFlag !== undefined && fromFlag !== "") {
     value = fromFlag

@@ -282,7 +282,19 @@ describe("slipmem migrate sqlite", () => {
     )
     expect(memory.code).toBe(2)
     expect(memory.stderr).toContain("file-backed")
-  })
+
+    const empty = await run(base, [
+      "migrate",
+      "sqlite",
+      "--db",
+      "",
+      "--dir",
+      join(base, "empty-root"),
+      "--json",
+    ])
+    expect(empty.code).toBe(2)
+    expect(empty.stderr).toContain("non-empty database path")
+  }, 30000)
 
   test("imports atomically with a verified backup and then skips duplicates in merge mode", async () => {
     const { base, dbPath, sha256 } = makeDatabase("current.sql")
