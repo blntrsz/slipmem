@@ -62,6 +62,16 @@ const readLine = (
     }),
   ])
 
+const freePort = (): number => {
+  const probe = Bun.serve({ port: 0, fetch: () => new Response("ok") })
+  const port = probe.port
+  probe.stop(true)
+  if (port === undefined || port === 0) {
+    throw new Error("Could not allocate a disposable port for the web wrapper test.")
+  }
+  return port
+}
+
 describe("slipmem wrappers launched from outside the repository", () => {
   test("mcp starts the real stdio server and completes a handshake", async () => {
     const setupValue = await setup()
@@ -113,4 +123,52 @@ describe("slipmem wrappers launched from outside the repository", () => {
     expect(result.stdout).toContain("vite/")
     expect(result.stderr).not.toContain("packages/packages")
   }, 30000)
+
+  test("web serves the note root resolved outside the repository", async () => {
+    const setupValue = await setup()
+    const port = freePort()
+    const server = Bun.spawn([process.execPath, cliEntry, "web"], {
+      cwd: setupValue.base,
+      env: {
+        ...process.env,
+        ...setupValue.env,
+        SLIPMEM_DIR: setupValue.root,
+        HOST: "127.0.0.1",
+        PORT: String(port),
+      },
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      detached: true,
+    })
+    children.push(server)
+
+    const deadline = Date.now() + 30000
+    let health: { ok?: boolean; noteRoot?: string } | undefined
+    let lastError = ""
+
+    while (Date.now() < deadline) {
+      try {
+        const response = await fetch(`http://127.0.0.1:${port}/api/health`)
+        if (response.ok) {
+          health = (await response.json()) as { ok?: boolean; noteRoot?: string }
+          break
+        }
+        lastError = `HTTP ${response.status}`
+      } catch (cause) {
+        lastError = cause instanceof Error ? cause.message : String(cause)
+      }
+      await Bun.sleep(200)
+    }
+
+    if (health === undefined) {
+      const output = await new Response(server.stdout).text()
+      const errors = await new Response(server.stderr).text()
+      throw new Error(
+        `The web wrapper did not serve /api/health (${lastError}).\nstdout:\n${output}\nstderr:\n${errors}`,
+      )
+    }
+    expect(health.ok).toBe(true)
+    expect(health.noteRoot).toBe(setupValue.root)
+  }, 45000)
 })

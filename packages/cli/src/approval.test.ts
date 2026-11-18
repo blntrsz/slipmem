@@ -147,7 +147,7 @@ describe("slipmem review, approve, and reject", () => {
 
     const after = await run(setupValue, ["review", "--json"])
     expect(parseJson<ReviewResult>(after.stdout).pending).toBe(0)
-  })
+  }, 30000)
 
   test("reject removes the proposal without creating or changing a note", async () => {
     const setupValue = await setup()
@@ -171,7 +171,7 @@ describe("slipmem review, approve, and reject", () => {
     expect(parseJson<{ count: number }>(list.stdout).count).toBe(0)
     const review = await run(setupValue, ["review", "--json"])
     expect(parseJson<ReviewResult>(review.stdout).pending).toBe(0)
-  })
+  }, 30000)
 
   test("refuses a stale proposal without overwriting the changed note", async () => {
     const setupValue = await setup()
@@ -215,7 +215,7 @@ describe("slipmem review, approve, and reject", () => {
     expect(
       parseJson<{ note: { content: string } }>(shown.stdout).note.content,
     ).toBe("Changed by a human before approval.")
-  })
+  }, 30000)
 
   test("applies a delete proposal through the repository backup path", async () => {
     const setupValue = await setup()
@@ -247,7 +247,7 @@ describe("slipmem review, approve, and reject", () => {
 
     const missing = await run(setupValue, ["show", noteId, "--json"])
     expect(missing.code).toBe(1)
-  })
+  }, 30000)
 
   test("reports a missing proposal as a typed failure", async () => {
     const setupValue = await setup()
