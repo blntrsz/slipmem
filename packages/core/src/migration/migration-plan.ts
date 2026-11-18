@@ -224,6 +224,33 @@ const NOTE_TABLES: ReadonlyArray<NoteTableDefinition> = [
   },
 ]
 
+/** A legacy note table as the planner sees it. */
+export interface LegacyNoteTableDefinition {
+  readonly name: NoteTableName
+  readonly type: Markdown.NoteType
+  readonly requiredColumns: ReadonlyArray<string>
+}
+
+/**
+ * Read-only description of the three legacy note tables.
+ *
+ * The compatibility reader and a CLI can use this instead of duplicating the
+ * planner's table names, note types, or required columns.
+ */
+export const LEGACY_NOTE_TABLE_DEFINITIONS: ReadonlyArray<LegacyNoteTableDefinition> =
+  NOTE_TABLES
+
+/** Returns the legacy table definition for one note type. */
+export const legacyNoteTableDefinition = (
+  type: Markdown.NoteType,
+): LegacyNoteTableDefinition => {
+  const definition = NOTE_TABLES.find((entry) => entry.type === type)
+  if (definition === undefined) {
+    throw new RangeError(`Unknown legacy note type "${type}".`)
+  }
+  return definition
+}
+
 interface RawRow {
   readonly definition: NoteTableDefinition
   readonly columns: ReadonlyArray<string>
@@ -240,6 +267,7 @@ interface Candidate {
   readonly body: string
   readonly reference: string | null
   readonly createdAt: number
+  readonly updatedAt: number
   readonly created: Markdown.UtcTimestamp
   readonly updated: Markdown.UtcTimestamp
   readonly provenance: Markdown.Provenance
@@ -557,10 +585,22 @@ const readProvenance = (
       problem(
         "warning",
         "invalid-provenance",
-        "The provenance envelope contains an integer outside the JavaScript safe range; the complete raw provenance text is preserved so no precision is lost.",
+        "The provenance envelope contains an integer outside the JavaScript safe range; only the complete raw provenance text is preserved, so no rounded structured copy is written.",
         "provenance",
       ),
     )
+    // `JSON.parse` already rounded the unsafe integer before we could see it.
+    // Exposing `extras` would publish a precise-looking but wrong number, so
+    // the raw column is the only structured representation retained.
+    return {
+      provenance:
+        typeof envelope["actor"] === "string"
+          ? { source, actor: envelope["actor"] }
+          : { source },
+      extras: {},
+      problems,
+      preserveRaw: true,
+    }
   }
 
   return {
@@ -795,11 +835,100 @@ const planRow = (
     body,
     reference,
     createdAt: createdMillis as number,
+    updatedAt: updatedMillis as number,
     created,
     updated,
     provenance: preservation.provenance,
     preservation: preservation.preservation,
     sourceRowHash: sha256(canonicalJson(row)),
+  }
+}
+
+/** The legacy fields of one valid row, without a proposed target filename. */
+export interface LegacyRowMapping {
+  readonly type: Markdown.NoteType
+  readonly legacyId: string
+  readonly title: string
+  readonly body: string
+  readonly reference: string | null
+  /** Original epoch milliseconds from the source row. */
+  readonly createdAt: number
+  readonly updatedAt: number
+  /** Whole-second UTC timestamps, as the importer would write them. */
+  readonly createdAtIso: string
+  readonly updatedAtIso: string
+  readonly scope: string
+  readonly provenance: Markdown.Provenance
+  readonly preservation: MigrationNotePreservation
+  readonly sourceRowHash: string
+}
+
+export interface LegacyRowInspection {
+  /**
+   * Mapped legacy fields when the row is a valid migration candidate,
+   * otherwise `null`.
+   */
+  readonly mapping: LegacyRowMapping | null
+  /** Every warning or error the planner reported for this row. */
+  readonly problems: ReadonlyArray<MigrationIssueProblem>
+  /** The source row with SQLite identity-preserving value normalization. */
+  readonly raw: Readonly<Record<string, SqliteValue>>
+}
+
+export interface LegacyRowInspectionInput {
+  readonly table: NoteTableName
+  readonly columns: ReadonlyArray<string>
+  readonly rowIndex: number
+  readonly row: Readonly<Record<string, unknown>>
+}
+
+/**
+ * Validates one legacy row with exactly the planner's rules and returns its
+ * mapped fields. This is the shared seam for read-only inspection; it never
+ * plans a filename, writes a file, or mutates the source.
+ */
+export const inspectLegacyRow = (
+  input: LegacyRowInspectionInput,
+): LegacyRowInspection => {
+  const definition = NOTE_TABLES.find((entry) => entry.name === input.table)
+  if (definition === undefined) {
+    throw new RangeError(`Unknown legacy note table "${input.table}".`)
+  }
+
+  const problems: Array<MigrationIssueProblem> = []
+  const row = normalizeRow(input.row)
+  const candidate = planRow(
+    {
+      definition,
+      columns: input.columns,
+      rowIndex: input.rowIndex,
+      row,
+    },
+    problems,
+  )
+
+  if (candidate === null) {
+    return { mapping: null, problems, raw: row }
+  }
+
+  return {
+    mapping: {
+      type: candidate.definition.type,
+      legacyId: candidate.legacyId,
+      title: candidate.title,
+      body: candidate.body,
+      reference: candidate.reference,
+      createdAt: candidate.createdAt,
+      updatedAt: candidate.updatedAt,
+      createdAtIso: candidate.created.isoTimestamp,
+      updatedAtIso: candidate.updated.isoTimestamp,
+      scope: candidate.preservation.scope,
+      provenance: candidate.provenance,
+      preservation: candidate.preservation,
+      sourceRowHash: candidate.sourceRowHash,
+    },
+    problems,
+    raw: row,
   }
 }
 

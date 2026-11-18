@@ -529,6 +529,7 @@ describe("SQLite migration planning", () => {
     const note = noteFor(plan, "unsafe-provenance")
     expect(note.metadata.provenance).toEqual({ source: "mcp" })
     expect(note.preservation.columns["provenance"]).toBe(raw)
+    expect(note.preservation.provenanceExtras).toEqual({})
     expect(problemCodes(plan)).toContain("unsafe-provenance:invalid-provenance")
   })
 

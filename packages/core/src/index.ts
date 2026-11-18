@@ -116,10 +116,17 @@ export { MarkdownNoteService } from "./note/markdown-note.service"
 export {
   DEFAULT_MIGRATION_SCOPE,
   IMPORT_PROVENANCE_SOURCE,
+  inspectLegacyRow,
+  LEGACY_NOTE_TABLE_DEFINITIONS,
+  legacyNoteTableDefinition,
   MIGRATION_PLAN_SCHEMA,
   MigrationSourceError,
   NOTE_TABLE_NAMES,
   planMigration,
+  type LegacyNoteTableDefinition,
+  type LegacyRowInspection,
+  type LegacyRowInspectionInput,
+  type LegacyRowMapping,
   type MigrationFilenameCollision,
   type MigrationIssueCode,
   type MigrationIssueProblem,
@@ -172,6 +179,24 @@ export {
   type MigrationVerificationNote,
   type MigrationVerificationReport,
 } from "./migration/migration-import"
+
+export {
+  getLegacyNote,
+  LEGACY_READ_COMPATIBILITY,
+  LEGACY_READ_DEFAULT_LIMIT,
+  LEGACY_READ_MAX_ID_LENGTH,
+  LEGACY_READ_MAX_LIMIT,
+  LEGACY_READ_MAX_OFFSET,
+  LEGACY_READ_SCHEMA,
+  listLegacyNotes,
+  type LegacyGetOptions,
+  type LegacyGetReport,
+  type LegacyListOptions,
+  type LegacyListReport,
+  type LegacyReadRow,
+  type LegacyReadSource,
+  type LegacyReadWarning,
+} from "./migration/legacy-read"
 
 // Approval and wiki are additive core services. They consume the narrow parts
 // of `MarkdownNoteRepository` they need and do not change SQLite behavior.
