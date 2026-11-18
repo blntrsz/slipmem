@@ -31,7 +31,7 @@
       "hold": 6000
     },
     {
-      "caption": "No type folders: type and topics are portable metadata, editable in any tool.",
+      "caption": "No type folders: type and tags are portable metadata, editable in any tool.",
       "hold": 6000
     },
 
@@ -47,15 +47,15 @@
       "hold": 6000
     },
 
-    { "click": "nav[aria-label=\"Primary\"] a:has-text(\"Topics\")" },
-    { "waitFor": "h1:has-text(\"Topics\")" },
+    { "click": "nav[aria-label=\"Primary\"] a:has-text(\"Tags\")" },
+    { "waitFor": "h1:has-text(\"Tags\")" },
     { "wait": 700 },
     {
-      "caption": "Topics are frontmatter metadata, not folders. Each can assemble a page on demand.",
+      "caption": "Tags are frontmatter metadata, not folders. Each can assemble a page on demand.",
       "hold": 5000
     },
     { "click": "a[href=\"/wiki/agent-memory\"]" },
-    { "waitFor": "h1:has-text(\"Topic: agent-memory\")" },
+    { "waitFor": "h1:has-text(\"Tag: agent-memory\")" },
     { "wait": 700 },
     {
       "caption": "Every wiki section quotes its source and cites the note ID and file path.",

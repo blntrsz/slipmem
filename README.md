@@ -32,7 +32,7 @@ bun run web
 
 - Every note is one direct child of `.slipmem/`, named
   `YYYYMMDDHHmmss-<kebab-slug>.md`; the filename stem is the stable ID.
-- Type, title, timestamps, topics, provenance, and optional source live in YAML
+- Type, title, timestamps, tags, provenance, and optional source live in YAML
   frontmatter. Unknown keys are preserved.
 - Local state such as pending approvals lives under `.slipmem/.state/` and is
   gitignored. Pending proposals are never notes.
@@ -58,7 +58,7 @@ bun run web
 - `packages/server` — canonical JSON API, compatibility adapters, HTTP MCP
   mounting, and the Markdown layer wiring.
 - `packages/web` — Foldkit SSR app for list, detail, create, edit, delete,
-  search, topics, wiki, review, and health.
+  search, tags, wiki, review, and health.
 
 ## Web and network posture
 
@@ -81,7 +81,7 @@ authentication and not an OS sandbox. It does not stop another local process
 that can reach the loopback port from reading or writing notes; the loopback
 bind and file permissions are the real boundary.
 
-Extractive topic pages are always available and quote their cited sources.
+Extractive tag pages are always available and quote their cited sources.
 Synthesized mode is opt-in and only works when this process has an explicitly
 configured local agent or a registered model adapter. A configured agent is
 normally run inside a probed OS sandbox; `SLIPMEM_WIKI_AGENT_UNSAFE=1` is an
@@ -92,4 +92,4 @@ web UI does not advertise it otherwise.
 See [`packages/server/README.md`](packages/server/README.md),
 [`packages/web/README.md`](packages/web/README.md), and
 [`docs/mvp-plan.md`](docs/mvp-plan.md) for the API, UI routes, approval flow,
-topic pages, and acceptance criteria.
+tag pages, and acceptance criteria.

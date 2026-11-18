@@ -14,7 +14,7 @@ and are not written as if they work.
 | Surface | State | What that means |
 | --- | --- | --- |
 | CLI notes | **available** | `init`, `new`, `list`, `show`, `edit`, `delete` |
-| CLI recall | **available** | `search`, `topics`, `check` including `check --rebuild-index`, and `cache clear` |
+| CLI recall | **available** | `search`, `tags`, `check` including `check --rebuild-index`, and `cache clear` |
 | CLI wiki | **available** | `wiki` writes a cited extractive page to stdout or `--out`; opt-in synthesized pages use a sandboxed local agent or a registered model adapter |
 | CLI migration | **available** | `migrate sqlite [--db <path>] [--dry-run] [--merge]`, defaulting to `SLIPMEM_DB_PATH` then the XDG data database |
 | CLI legacy view | **available, read-only** | `legacy list` / `legacy show` read the retired SQLite database for one release; never imports or writes |
@@ -22,7 +22,7 @@ and are not written as if they work.
 | stdio MCP | **available** | bounded read tools plus policy-enforced write tools over `.slipmem/` |
 | MCP approvals | **proposal side available** | permanent writes and all deletes create pending proposals; no MCP tool can approve them |
 | Human review / approve / reject | **available** | CLI `review`/`approve`/`reject` and local web/API `/api/pending` |
-| Browser UI | **available locally** | list, detail, new, edit, search, topics, wiki, review, and health routes load from the local server |
+| Browser UI | **available locally** | list, detail, new, edit, search, tags, wiki, review, and health routes load from the local server |
 | HTTP MCP endpoint | **mounted by the web server** | `/mcp` shares the stdio registrations when the web build is served; stdio remains the simplest local setup |
 | `slipmem mcp` / `slipmem web` wrappers | **available** | they resolve the note root in the caller's context and start the same MCP stdio or Vite development entry point |
 | Clear-cache CLI | **available** | `cache clear` empties only the derived index through the core index API; `check --rebuild-index` is the full rebuild path |
@@ -69,7 +69,7 @@ type: fleeting
 title: Operator smoke note
 createdAt: "2026-11-17T22:38:48Z"
 updatedAt: "2026-11-17T22:43:40Z"
-topics:
+tags:
   - testing
 provenance:
   source: cli
@@ -94,6 +94,12 @@ Unknown frontmatter keys are preserved when slipmem rewrites a note. The
 `edit` command currently refuses changes to unknown keys, `legacyId`, `aliases`,
 `createdAt`, and `updatedAt`; edit those only by hand and then validate with
 `check`.
+
+Notes written before the tag rename may still carry the former `topics`
+frontmatter key. slipmem reads that key as `tags` and writes canonical `tags`
+on the next save. A note that contains both keys is rejected, because choosing
+between two lists would silently discard one; keep `tags` and remove the old
+key by hand.
 
 **Filenames are identity, not a display name.** Changing the title with
 `slipmem edit` does not rename the file. `check` may report `slug-drift` as a
@@ -145,19 +151,19 @@ bun run slipmem -- list --dir /tmp/notes
 
 ```sh
 bun run slipmem -- new --type fleeting --title "Agent memory is bounded" \
-  --content "Search results need a hard limit." --topic agent-memory
+  --content "Search results need a hard limit." --tag agent-memory
 
 # Content from stdin (non-interactive)
 printf 'A source-backed claim.\n' | bun run slipmem -- new \
   --type literature --title "MCP recall must cite sources" \
-  --reference "Book, chapter 2" --topic mcp
+  --reference "Book, chapter 2" --tag mcp
 
 # Open the body in $SLIPMEM_EDITOR, $VISUAL, or $EDITOR
 bun run slipmem -- new --type permanent --title "Local-first by default"
 ```
 
 `new` requires `--type` and `--title`. Literature notes require `--reference`.
-Repeat `--topic` or use a comma-separated list. If `--content` is omitted,
+Repeat `--tag` or use a comma-separated list. If `--content` is omitted,
 non-interactive stdin is used; otherwise an editor opens with a body-only draft.
 Human CLI writes are direct and validated before the atomic write.
 
@@ -165,15 +171,15 @@ Human CLI writes are direct and validated before the atomic write.
 
 ```sh
 bun run slipmem -- list
-bun run slipmem -- list --type permanent --topic agent-memory --limit 20
+bun run slipmem -- list --type permanent --tag agent-memory --limit 20
 bun run slipmem -- show 20261117223848-operator-smoke-note
 bun run slipmem -- search "bounded recall" --type fleeting --limit 10
-bun run slipmem -- topics
+bun run slipmem -- tags
 ```
 
 `list` is bounded: default 10, hard maximum 50. `search` is ranked and bounded
 the same way, refreshes the disposable index before reading it, and reports the
-index mode. `topics` lists topic slugs and note counts; default 50, hard maximum
+index mode. `tags` lists tag slugs and note counts; default 50, hard maximum
 200. Every command supports `--json`, which emits a structured result or a
 structured error.
 
@@ -189,7 +195,7 @@ metadata before writing atomically. If the editor exits non-zero, or validation
 fails, the original note is left untouched. Managed fields cannot be changed
 through `edit`.
 
-### Generate a cited topic page
+### Generate a cited tag page
 
 ```sh
 bun run slipmem -- wiki agent-memory
@@ -260,7 +266,7 @@ resolves anything.
 This is the normal recovery command after an external edit, a manual note move,
 or a deleted cache. `cache clear` deletes only index rows through the shared
 core API; it never deletes note files, `.state`, or the cache directory itself.
-The next `search`, `topics`, or `check --rebuild-index` repopulates it.
+The next `search`, `tags`, or `check --rebuild-index` repopulates it.
 
 ### Deleting and retiring notes
 
@@ -319,7 +325,7 @@ bun run slipmem -- check --rebuild-index
 
 `cache clear` uses the shared core index API to delete only the derived rows. It
 does not remove note files, `.state/`, or the cache directory, and it is safe to
-run before an index exists. The next `search`, `topics`, or
+run before an index exists. The next `search`, `tags`, or
 `check --rebuild-index` repopulates the index from notes. `check --rebuild-index`
 is the full rebuild-and-check path.
 
@@ -332,7 +338,7 @@ key=$(printf '%s' "$root" | sha256sum | cut -c1-24)
 rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/slipmem/index/$key"
 ```
 
-The next `search`, `topics`, or `check --rebuild-index` recreates it. If FTS5 is
+The next `search`, `tags`, or `check --rebuild-index` recreates it. If FTS5 is
 unavailable, the index reports `linear` mode and search still works with the same
 bounds; that is a degraded mode, not note loss.
 
@@ -362,7 +368,7 @@ Common `check` outcomes:
 | Code | Meaning | Action |
 | --- | --- | --- |
 | `conflict-markers` | Git merge markers remain in the body | Resolve the file manually; see section 6 |
-| `index-stale` | Index content hash is older than the file | `check --rebuild-index`, or run `search`/`topics` to refresh |
+| `index-stale` | Index content hash is older than the file | `check --rebuild-index`, or run `search`/`tags` to refresh |
 | `index-extra` | Index still contains a removed note | `check --rebuild-index` |
 | `slug-drift` | Title no longer matches the filename slug | Usually leave it; renaming is not automatic |
 | `unexpected-file` | README, `.gitignore`, or another non-note file | Informational; it is ignored by the index |
@@ -641,7 +647,7 @@ tools:
 
 - Read: `list_fleeting_notes`, `get_fleeting_note`,
   `list_permanent_notes`, `get_permanent_note`, `list_literature_notes`,
-  `get_literature_note`, `search_notes`, `list_topics`, `build_topic_wiki`
+  `get_literature_note`, `search_notes`, `list_tags`, `build_tag_wiki`
 - Write: `create_fleeting_note`, `update_fleeting_note`,
   `delete_fleeting_note`, `create_permanent_note`, `update_permanent_note`,
   `delete_permanent_note`, `create_literature_note`,
@@ -820,9 +826,9 @@ SLIPMEM_DIR=/path/to/notes PORT=3000 bun run web:serve
 The server serves the Foldkit UI, the JSON API under `/api`, the HTTP MCP
 endpoint under `/mcp`, and the local note/search/wiki/approval operations over
 the same Markdown root. The verified page routes are `/`, `/notes/<id>`,
-`/notes/<id>/edit`, `/notes/<id>/delete`, `/new`, `/search`, `/topics`,
-`/wiki/<topic>`, `/review`, and `/health`; `/api/health`, `/api/notes`,
-`/api/search`, `/api/topics`, `/api/wiki/<topic>`, and `/api/pending` back them.
+`/notes/<id>/edit`, `/notes/<id>/delete`, `/new`, `/search`, `/tags`,
+`/wiki/<tag>`, `/review`, and `/health`; `/api/health`, `/api/notes`,
+`/api/search`, `/api/tags`, `/api/wiki/<tag>`, and `/api/pending` back them.
 The process binds to loopback unless `HOST` is set.
 
 Use `bun run web:serve` (after `web:build`) for the production server. The
@@ -864,7 +870,7 @@ to a network you do not fully trust, even if the UI loads successfully.
 | `synthesis-config` from `wiki` | Synthesized mode has no usable synthesizer, or no working agent sandbox | Configure `SLIPMEM_WIKI_AGENT`/`SLIPMEM_WIKI_AGENT_ARGS`, install a usable `bwrap`, or use `--mode extractive` |
 | Agent starts but is refused | Bubblewrap probe failed | Install usable user namespaces/bubblewrap, or set the documented unsafe `SLIPMEM_WIKI_AGENT_UNSAFE=1` for a reviewed command |
 | `synthesis-adapter-unsupported` | `--model`/env model ID has no registered adapter in this CLI | Use `--agent` or `--mode extractive`; the CLI ships no model providers |
-| `--limit` rejected | Limit outside 1..50 (or 1..200 for topics) | Use a bounded value |
+| `--limit` rejected | Limit outside 1..50 (or 1..200 for tags) | Use a bounded value |
 | `--out` rejected before writing | Output parent missing, or a symlink resolves into the note root | Create the parent directory and choose a regular path outside `.slipmem/` |
 | `root-not-empty` from migration | Target already has notes | Add `--merge` after reviewing the dry run |
 | Migration source file not found | `--db` omitted and neither `SLIPMEM_DB_PATH` nor the XDG default exists | Pass `--db <path>` or set `SLIPMEM_DB_PATH`; migration never creates a source |

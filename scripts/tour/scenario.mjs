@@ -45,7 +45,7 @@ const demoFleeting = {
   title: "Demo capture: question about agent memory",
   content:
     "Demo capture from a working session: should an agent recall permanent notes before raw conversation? Follow up later.",
-  topics: ["inbox"],
+  tags: ["inbox"],
 }
 
 const demoNotes = [
@@ -55,14 +55,14 @@ const demoNotes = [
     title: "Demo: Bounded recall keeps memory inspectable",
     content:
       "Demo note. Agent memory is recalled in bounded, cited slices. Recall results name the note ID and file that are their source instead of hiding a database row.",
-    topics: ["agent-memory", "retrieval"],
+    tags: ["agent-memory", "retrieval"],
   },
   {
     type: "permanent",
     title: "Demo: Permanent notes require human approval",
     content:
       "Demo note. An agent may capture fleeting and literature notes directly. Permanent knowledge is written only after a human reviews the proposed diff.",
-    topics: ["agent-memory", "approval"],
+    tags: ["agent-memory", "approval"],
   },
   {
     type: "literature",
@@ -70,14 +70,14 @@ const demoNotes = [
     content:
       "Demo literature note. Local-first tools keep the source of truth in portable files and treat the search index as a rebuildable cache. Recall remains inspectable.",
     reference: "https://example.com/local-first-notes",
-    topics: ["agent-memory", "local-first"],
+    tags: ["agent-memory", "local-first"],
   },
   {
     type: "permanent",
     title: "Demo: Markdown is the source of truth",
     content:
       "Demo note. Notes live as flat .md files under .slipmem/. The index is disposable, and recall can be rebuilt from the files at any time.",
-    topics: ["agent-memory", "storage", "git"],
+    tags: ["agent-memory", "storage", "git"],
   },
 ]
 
@@ -85,7 +85,7 @@ const proposal = {
   title: "Demo proposal: Recall should cite its sources",
   content:
     "Demo proposal from an MCP client. Recall should always include the note ID and file path that support a result.",
-  topics: ["agent-memory", "citations"],
+  tags: ["agent-memory", "citations"],
 }
 
 const fail = (message) => {
@@ -304,8 +304,8 @@ const prepare = (paths) => {
       note.title,
       "--content",
       note.content,
-      "--topics",
-      note.topics.join(","),
+      "--tag",
+      note.tags.join(","),
     ]
     if (note.type === "literature") {
       args.push("--reference", note.reference)

@@ -110,7 +110,7 @@ contains `source: mcp`, and that no note file exists before recording. Nothing
 is injected into `.state/pending/` by hand.
 
 All seeded notes are explicitly titled `Demo...`. The fleeting note exercises
-capture; the permanent and literature notes supply search and topic citations;
+capture; the permanent and literature notes supply search and tag citations;
 the MCP proposal becomes the reviewed permanent note. `verify` checks that the
 approved note exists with `source: mcp`, the queue is empty, and there are no
 type directories.
