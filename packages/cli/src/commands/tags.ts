@@ -6,18 +6,18 @@ import { parseLimit } from "../note-values.js"
 import { writeJson, writeLine } from "../output.js"
 import type { CommandDefinition } from "./command.js"
 
-export const topicsCommand: CommandDefinition = {
-  name: "topics",
-  summary: "List topic slugs and note counts",
-  usage: "topics [--query <topic>] [--limit <n>] [--json]",
+export const tagsCommand: CommandDefinition = {
+  name: "tags",
+  summary: "List tag slugs and note counts",
+  usage: "tags [--query <tag>] [--limit <n>] [--json]",
   options: {
-    query: { type: "string", valueName: "topic" },
+    query: { type: "string", valueName: "tag" },
     limit: { type: "number", valueName: "n" },
   },
   run: (parsed, context) =>
     Effect.gen(function* () {
       const limit = parseLimit(numberOption(parsed, "limit"), {
-        command: "topics",
+        command: "tags",
         fallback: 50,
         maximum: 200,
       })
@@ -26,11 +26,11 @@ export const topicsCommand: CommandDefinition = {
       const result = yield* withSearchIndex(context, resolved.root, (index) =>
         Effect.gen(function* () {
           yield* index.refresh()
-          const topics = yield* index.listTopics({
+          const tags = yield* index.listTags({
             limit,
             ...(query === undefined ? {} : { query }),
           })
-          return { topics, mode: index.mode }
+          return { tags, mode: index.mode }
         }),
       )
 
@@ -38,19 +38,19 @@ export const topicsCommand: CommandDefinition = {
         writeJson(context.io, {
           ok: true,
           root: resolved.root,
-          count: result.topics.length,
+          count: result.tags.length,
           index: result.mode,
-          topics: result.topics,
+          tags: result.tags,
         })
-      } else if (result.topics.length === 0) {
-        writeLine(context.io, "No topics.")
+      } else if (result.tags.length === 0) {
+        writeLine(context.io, "No tags.")
       } else {
-        const width = Math.max(5, ...result.topics.map((topic) => topic.topic.length))
-        writeLine(context.io, `${"TOPIC".padEnd(width)}  NOTES`)
-        for (const topic of result.topics) {
+        const width = Math.max(5, ...result.tags.map((tag) => tag.tag.length))
+        writeLine(context.io, `${"TAG".padEnd(width)}  NOTES`)
+        for (const tag of result.tags) {
           writeLine(
             context.io,
-            `${topic.topic.padEnd(width)}  ${topic.noteCount}`,
+            `${tag.tag.padEnd(width)}  ${tag.noteCount}`,
           )
         }
       }

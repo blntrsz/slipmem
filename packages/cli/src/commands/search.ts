@@ -44,15 +44,15 @@ const resultJson = (
 
 export const searchCommand: CommandDefinition = {
   name: "search",
-  summary: "Ranked, bounded search across note titles, topics, and bodies",
-  usage: "search <query> [--type <type>] [--topic <topic>] [--limit <n>] [--json]",
+  summary: "Ranked, bounded search across note titles, tags, and bodies",
+  usage: "search <query> [--type <type>] [--tag <tag>] [--limit <n>] [--json]",
   details: [
     "The query may be unquoted when it contains no option-like tokens.",
     "Search refreshes the disposable index first, so external edits are visible.",
   ],
   options: {
     type: { type: "string", valueName: "type" },
-    topic: { type: "string", valueName: "topic" },
+    tag: { type: "string", valueName: "tag" },
     limit: { type: "number", valueName: "n" },
   },
   minPositionals: 1,
@@ -60,7 +60,7 @@ export const searchCommand: CommandDefinition = {
     Effect.gen(function* () {
       const query = queryFrom(parsed.positionals)
       const type = parseNoteType(stringOption(parsed, "type"), "search")
-      const topic = stringOption(parsed, "topic")
+      const tag = stringOption(parsed, "tag")
       const limit = parseLimit(numberOption(parsed, "limit"), {
         command: "search",
         fallback: Markdown.DEFAULT_SEARCH_LIMIT,
@@ -74,7 +74,7 @@ export const searchCommand: CommandDefinition = {
             query,
             limit,
             ...(type === undefined ? {} : { kinds: [type] }),
-            ...(topic === undefined ? {} : { topic }),
+            ...(tag === undefined ? {} : { tag }),
           })
           return { hits, mode: index.mode, path: index.path }
         }),

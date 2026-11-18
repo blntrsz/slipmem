@@ -20,7 +20,7 @@ import { rejectCommand } from "./commands/reject.js"
 import { reviewCommand } from "./commands/review.js"
 import { searchCommand } from "./commands/search.js"
 import { showCommand } from "./commands/show.js"
-import { topicsCommand } from "./commands/topics.js"
+import { tagsCommand } from "./commands/tags.js"
 import { wikiCommand } from "./commands/wiki.js"
 import { mcpCommand, webCommand } from "./commands/wrappers.js"
 import type { CliContext } from "./context.js"
@@ -41,7 +41,7 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   editCommand,
   deleteCommand,
   searchCommand,
-  topicsCommand,
+  tagsCommand,
   checkCommand,
   cacheCommand,
   wikiCommand,

@@ -103,7 +103,7 @@ describe("slipmem review, approve, and reject", () => {
       type: "permanent",
       title: "Agent memory proposal",
       content: "A permanent note proposed by an agent.",
-      topics: ["agent-memory"],
+      tags: ["agent-memory"],
       actor: "test-agent",
     })
 

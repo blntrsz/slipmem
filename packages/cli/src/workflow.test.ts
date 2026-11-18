@@ -43,7 +43,7 @@ describe("CLI acceptance workflow", () => {
       "Inbox capture",
       "--content",
       "A quick thought about bounded recall.",
-      "--topic",
+      "--tag",
       "agent-memory",
       "--json",
     ])
@@ -57,7 +57,7 @@ describe("CLI acceptance workflow", () => {
       "Bounded recall matters",
       "--content",
       "Every list and search has a hard limit.",
-      "--topic",
+      "--tag",
       "agent-memory",
       "--json",
     ])
@@ -74,7 +74,7 @@ describe("CLI acceptance workflow", () => {
       "Recall must cite its sources.",
       "--reference",
       "Paper, 2026",
-      "--topic",
+      "--tag",
       "retrieval",
       "--json",
     ])
@@ -90,9 +90,9 @@ describe("CLI acceptance workflow", () => {
     const show = await run(["show", permanentId, "--json"])
     expect(show.code).toBe(0)
 
-    const topics = await run(["topics", "--json"])
-    expect(topics.code).toBe(0)
-    expect(parseJson<{ count: number }>(topics.stdout).count).toBe(2)
+    const tags = await run(["tags", "--json"])
+    expect(tags.code).toBe(0)
+    expect(parseJson<{ count: number }>(tags.stdout).count).toBe(2)
 
     const wiki = await run(["wiki", "agent-memory", "--json"])
     expect(wiki.code).toBe(0)
@@ -117,7 +117,7 @@ describe("CLI acceptance workflow", () => {
       "edit",
       "delete",
       "search",
-      "topics",
+      "tags",
       "check",
       "wiki",
       "review",

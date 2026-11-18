@@ -5,7 +5,7 @@ import { CliUsageError } from "./errors.js"
 const specs = {
   ...GLOBAL_OPTIONS,
   type: { type: "string" as const },
-  topic: { type: "list" as const },
+  tag: { type: "list" as const },
   limit: { type: "number" as const },
   yes: { type: "boolean" as const },
 }
@@ -29,9 +29,9 @@ describe("CLI argument parsing", () => {
         "search",
         "bounded memory",
         "--type=permanent",
-        "--topic",
+        "--tag",
         "agent-memory",
-        "--topic=retrieval",
+        "--tag=retrieval",
         "--limit",
         "5",
         "--json",
@@ -41,7 +41,7 @@ describe("CLI argument parsing", () => {
 
     expect(parsed.positionals).toEqual(["search", "bounded memory"])
     expect(parsed.options.type).toBe("permanent")
-    expect(listOption(parsed, "topic")).toEqual(["agent-memory", "retrieval"])
+    expect(listOption(parsed, "tag")).toEqual(["agent-memory", "retrieval"])
     expect(parsed.options.limit).toBe(5)
     expect(parsed.options.json).toBe(true)
   })

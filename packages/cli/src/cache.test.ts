@@ -56,7 +56,7 @@ describe("slipmem cache clear", () => {
       "Bounded recall",
       "--content",
       "Search indexes are disposable.",
-      "--topic",
+      "--tag",
       "agent-memory",
       "--json",
     ])

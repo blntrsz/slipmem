@@ -9,17 +9,17 @@ import type { CommandDefinition } from "./command.js"
 
 export const listCommand: CommandDefinition = {
   name: "list",
-  summary: "List notes with bounded type and topic filters",
-  usage: "list [--type <type>] [--topic <topic>] [--limit <n>] [--json]",
+  summary: "List notes with bounded type and tag filters",
+  usage: "list [--type <type>] [--tag <tag>] [--limit <n>] [--json]",
   options: {
     type: { type: "string", valueName: "type" },
-    topic: { type: "string", valueName: "topic" },
+    tag: { type: "string", valueName: "tag" },
     limit: { type: "number", valueName: "n" },
   },
   run: (parsed, context) =>
     Effect.gen(function* () {
       const type = parseNoteType(stringOption(parsed, "type"), "list")
-      const topic = stringOption(parsed, "topic")
+      const tag = stringOption(parsed, "tag")
       const limit = parseLimit(numberOption(parsed, "limit"), {
         command: "list",
         fallback: Markdown.DEFAULT_SEARCH_LIMIT,
@@ -30,7 +30,7 @@ export const listCommand: CommandDefinition = {
       const notes = yield* repository.listNotes({
         limit,
         ...(type === undefined ? {} : { type }),
-        ...(topic === undefined ? {} : { topic }),
+        ...(tag === undefined ? {} : { tag }),
       })
 
       if (parsed.options.json === true) {

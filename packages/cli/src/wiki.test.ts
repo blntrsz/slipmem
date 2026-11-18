@@ -7,7 +7,7 @@ interface WikiResult {
   readonly ok: boolean
   readonly out?: string
   readonly page: {
-    readonly topic: string
+    readonly tag: string
     readonly mode: string
     readonly noteCount: number
     readonly sources: ReadonlyArray<{
@@ -62,7 +62,7 @@ const create = async (
   type: string,
   title: string,
   content: string,
-  topic: string,
+  tag: string,
   reference?: string,
 ): Promise<string> => {
   const result = await runCliProcess(
@@ -76,8 +76,8 @@ const create = async (
       title,
       "--content",
       content,
-      "--topic",
-      topic,
+      "--tag",
+      tag,
       ...(reference === undefined ? [] : ["--reference", reference]),
       "--json",
     ],
@@ -132,7 +132,7 @@ describe("slipmem wiki (extractive)", () => {
     expect(result.code).toBe(0)
     const wiki = parseJson<WikiResult>(result.stdout)
     expect(wiki.page).toMatchObject({
-      topic: "agent-memory",
+      tag: "agent-memory",
       mode: "extractive",
       noteCount: 2,
     })
@@ -147,14 +147,14 @@ describe("slipmem wiki (extractive)", () => {
       expect(excerpt).toBeDefined()
       expect(section.markdown).toContain(excerpt!)
     }
-    expect(wiki.page.markdown).toContain("# Topic: agent-memory")
+    expect(wiki.page.markdown).toContain("# Tag: agent-memory")
     expect(wiki.page.markdown).toContain(`[[${bounded}]]`)
     expect(wiki.page.markdown).toContain(`[[${citation}]]`)
     expect(wiki.page.markdown).toContain("## Sources")
     expect(wiki.page.markdown).toContain("Recall must cite its sources.")
   }, 30000)
 
-  test("honors include-fleeting, limits, and empty topics without inventing text", async () => {
+  test("honors include-fleeting, limits, and empty tags without inventing text", async () => {
     const setupValue = await setup()
     await create(setupValue, "permanent", "One", "Body one.", "agent-memory")
     await create(setupValue, "permanent", "Two", "Body two.", "agent-memory")
@@ -177,12 +177,12 @@ describe("slipmem wiki (extractive)", () => {
     ])
     expect(parseJson<WikiResult>(limited.stdout).page.noteCount).toBe(1)
 
-    const empty = await run(setupValue, ["wiki", "no-such-topic", "--json"])
+    const empty = await run(setupValue, ["wiki", "no-such-tag", "--json"])
     expect(empty.code).toBe(0)
     const emptyWiki = parseJson<WikiResult>(empty.stdout)
     expect(emptyWiki.page.noteCount).toBe(0)
     expect(emptyWiki.page.sections).toEqual([])
-    expect(emptyWiki.page.markdown).toContain("No notes matched this topic")
+    expect(emptyWiki.page.markdown).toContain("No notes matched this tag")
   }, 30000)
 
   test("writes only an explicit --out outside the note root", async () => {
@@ -195,7 +195,7 @@ describe("slipmem wiki (extractive)", () => {
       "agent-memory",
     )
 
-    const outPath = join(setupValue.base, "topic.md")
+    const outPath = join(setupValue.base, "tag.md")
     const written = await run(setupValue, [
       "wiki",
       "agent-memory",
@@ -207,7 +207,7 @@ describe("slipmem wiki (extractive)", () => {
     expect(parseJson<WikiResult>(written.stdout).out).toBe(outPath)
     expect(existsSync(outPath)).toBe(true)
 
-    const inside = join(setupValue.root, "topic.md")
+    const inside = join(setupValue.root, "tag.md")
     const refused = await run(setupValue, [
       "wiki",
       "agent-memory",
@@ -233,7 +233,7 @@ describe("slipmem wiki (extractive)", () => {
       "wiki",
       "agent-memory",
       "--out",
-      join(setupValue.base, "missing", "topic.md"),
+      join(setupValue.base, "missing", "tag.md"),
       "--json",
     ])
     expect(missingParent.code).toBe(2)
@@ -245,12 +245,12 @@ describe("slipmem wiki (extractive)", () => {
       "wiki",
       "agent-memory",
       "--out",
-      join(linkedParent, "topic.md"),
+      join(linkedParent, "tag.md"),
       "--json",
     ])
     expect(throughLink.code).toBe(2)
     expect(throughLink.stderr).toContain("--out must point outside the note root")
-    expect(existsSync(join(setupValue.root, "topic.md"))).toBe(false)
+    expect(existsSync(join(setupValue.root, "tag.md"))).toBe(false)
   }, 30000)
 })
 
@@ -299,7 +299,7 @@ describe("slipmem wiki (synthesized)", () => {
     expect(result.code).toBe(0)
     const wiki = parseJson<WikiResult>(result.stdout)
     expect(wiki.page).toMatchObject({
-      topic: "agent-memory",
+      tag: "agent-memory",
       mode: "synthesized",
       noteCount: 1,
     })

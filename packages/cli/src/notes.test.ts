@@ -17,7 +17,7 @@ interface NoteResult {
     readonly type: string
     readonly title: string
     readonly content: string
-    readonly topics: ReadonlyArray<string>
+    readonly tags: ReadonlyArray<string>
     readonly reference?: string
     readonly createdAt: string
     readonly updatedAt: string
@@ -108,7 +108,7 @@ describe("slipmem note commands", () => {
       "Bounded recall",
       "--content",
       "Every recall operation has a hard limit.",
-      "--topic",
+      "--tag",
       "agent-memory,retrieval",
       "--json",
     ])
@@ -121,7 +121,7 @@ describe("slipmem note commands", () => {
     })
     expect(permanent.id).toMatch(/^\d{14}-bounded-recall$/)
     expect(permanent.filename).toBe(`${permanent.id}.md`)
-    expect(permanent.topics).toEqual(["agent-memory", "retrieval"])
+    expect(permanent.tags).toEqual(["agent-memory", "retrieval"])
     expect(permanent.citation).toBe(`.slipmem/${permanent.filename}`)
     expect(readFileSync(join(root, permanent.filename), "utf8")).toContain(
       "provenance:\n  source: cli\n  actor: user",
@@ -229,7 +229,7 @@ describe("slipmem note commands", () => {
   test("lists, filters, shows, and reports missing notes", async () => {
     const { root } = await setup()
 
-    for (const [type, title, topic] of [
+    for (const [type, title, tag] of [
       ["permanent", "Agent memory", "agent-memory"],
       ["fleeting", "Loose idea", "agent-memory"],
       ["literature", "Recall paper", "retrieval"],
@@ -244,8 +244,8 @@ describe("slipmem note commands", () => {
         title,
         "--content",
         `Body for ${title}.`,
-        "--topic",
-        topic,
+        "--tag",
+        tag,
         ...(type === "literature" ? ["--reference", "Paper, 2026"] : []),
         "--json",
       ])
@@ -268,17 +268,17 @@ describe("slipmem note commands", () => {
     expect(permanentList.count).toBe(1)
     expect(permanentList.notes[0]!.title).toBe("Agent memory")
 
-    const topic = await runCliProcess([
+    const tag = await runCliProcess([
       "list",
       "--dir",
       root,
-      "--topic",
+      "--tag",
       "agent-memory",
       "--limit",
       "1",
       "--json",
     ])
-    expect(parseJson<ListResult>(topic.stdout).count).toBe(1)
+    expect(parseJson<ListResult>(tag.stdout).count).toBe(1)
 
     const id = permanentList.notes[0]!.id
     const shown = await runCliProcess(["show", id, "--dir", root, "--json"])

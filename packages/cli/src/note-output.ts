@@ -17,8 +17,8 @@ export const writeNoteHuman = (
     `  updatedAt: ${metadata.updatedAt}`,
     `  path:      ${citationPath(root, note.filename)}`,
   ]
-  if (metadata.topics !== undefined && metadata.topics.length > 0) {
-    lines.push(`  topics:    ${metadata.topics.join(", ")}`)
+  if (metadata.tags !== undefined && metadata.tags.length > 0) {
+    lines.push(`  tags:    ${metadata.tags.join(", ")}`)
   }
   if (metadata.reference !== undefined) {
     lines.push(`  reference: ${metadata.reference}`)

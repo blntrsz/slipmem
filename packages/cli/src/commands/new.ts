@@ -7,7 +7,7 @@ import {
 import { openRepository, resolveRoot, type CliContext } from "../context.js"
 import { usageError } from "../errors.js"
 import { ensureEditor, readDraft, withTempDraft } from "../editor.js"
-import { requireNoteType, topicValues, noteToJson } from "../note-values.js"
+import { requireNoteType, tagValues, noteToJson } from "../note-values.js"
 import { writeJson, writeLine } from "../output.js"
 import type { CommandDefinition } from "./command.js"
 
@@ -24,14 +24,13 @@ export const newCommand: CommandDefinition = {
   details: [
     "Content comes from --content, non-interactive stdin, or an editor draft",
     "opened with SLIPMEM_EDITOR, VISUAL, or EDITOR. Human writes are direct.",
-    "Repeat --topic for multiple topics; comma-separated values also work.",
+    "Repeat --tag for multiple tags; comma-separated values also work.",
   ],
   options: {
     type: { type: "string", valueName: "type" },
     title: { type: "string", valueName: "title" },
     content: { type: "string", valueName: "text" },
-    topic: { type: "list", valueName: "topic" },
-    topics: { type: "list", valueName: "topic" },
+    tag: { type: "list", valueName: "tag" },
     reference: { type: "string", valueName: "source" },
   },
   run: (parsed, context) =>
@@ -39,10 +38,7 @@ export const newCommand: CommandDefinition = {
       const type = requireNoteType(stringOption(parsed, "type"), "new")
       const title = requireStringOption(parsed, "title", "new")
       const reference = stringOption(parsed, "reference")
-      const topics = topicValues([
-        ...listOption(parsed, "topic"),
-        ...listOption(parsed, "topics"),
-      ])
+      const tags = tagValues(listOption(parsed, "tag"))
 
       let content = stringOption(parsed, "content")
       if (content === undefined) {
@@ -68,7 +64,7 @@ export const newCommand: CommandDefinition = {
         type,
         title,
         content,
-        ...(topics.length === 0 ? {} : { topics }),
+        ...(tags.length === 0 ? {} : { tags }),
         ...(reference === undefined ? {} : { reference }),
         provenance: { source: "cli", actor: actor(context) },
       })

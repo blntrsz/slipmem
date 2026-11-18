@@ -14,7 +14,7 @@ export const cacheCommand: CommandDefinition = {
   details: [
     "Clears only the derived SQLite index through the shared core index API.",
     "No note file, .state entry, or cache directory is removed. The next",
-    "search, topics, or check --rebuild-index recreates the index from notes.",
+    "search, tags, or check --rebuild-index recreates the index from notes.",
   ],
   minPositionals: 1,
   maxPositionals: 1,

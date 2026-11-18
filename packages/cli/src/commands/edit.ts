@@ -133,7 +133,7 @@ export const editCommand: CommandDefinition = {
             type: edited.metadata.type,
             title: edited.metadata.title,
             content: edited.body,
-            topics: edited.metadata.topics ?? [],
+            tags: edited.metadata.tags ?? [],
             reference: edited.metadata.reference ?? null,
             ...(edited.metadata.provenance === undefined
               ? {}

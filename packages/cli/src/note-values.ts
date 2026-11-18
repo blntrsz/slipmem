@@ -50,10 +50,10 @@ export const parseLimit = (
 }
 
 /**
- * `--topic` is repeatable and each value may be a comma-separated list, so both
- * `--topic a --topic b` and `--topic a,b` work without a second option name.
+ * `--tag` is repeatable and each value may be a comma-separated list, so both
+ * `--tag a --tag b` and `--tag a,b` work without a second option name.
  */
-export const topicValues = (values: ReadonlyArray<string>): ReadonlyArray<string> =>
+export const tagValues = (values: ReadonlyArray<string>): ReadonlyArray<string> =>
   values
     .flatMap((value) => value.split(","))
     .map((value) => value.trim())
@@ -76,7 +76,7 @@ export const noteToJson = (
   title: note.metadata.title,
   createdAt: note.metadata.createdAt,
   updatedAt: note.metadata.updatedAt,
-  topics: note.metadata.topics ?? [],
+  tags: note.metadata.tags ?? [],
   ...(note.metadata.reference === undefined
     ? {}
     : { reference: note.metadata.reference }),

@@ -20,12 +20,12 @@ import { parseLimit } from "../note-values.js"
 import { writeJson, writeLine } from "../output.js"
 import type { CommandDefinition } from "./command.js"
 
-const topicFrom = (positionals: ReadonlyArray<string>): string => {
-  const topic = positionals.join(" ").trim()
-  if (topic.length === 0) {
-    throw usageError("wiki requires a non-empty topic.", "wiki")
+const tagFrom = (positionals: ReadonlyArray<string>): string => {
+  const tag = positionals.join(" ").trim()
+  if (tag.length === 0) {
+    throw usageError("wiki requires a non-empty tag.", "wiki")
   }
-  return topic
+  return tag
 }
 
 const realPathOrUndefined = (path: string): string | undefined => {
@@ -184,12 +184,12 @@ const synthesisConfig = (
 export const wikiCommand: CommandDefinition = {
   name: "wiki",
   summary:
-    "Generate a cited topic page, extractive or with a configured local synthesizer",
+    "Generate a cited tag page, extractive or with a configured local synthesizer",
   usage:
-    "wiki <topic> [--limit <n>] [--mode extractive|synthesized] [--model <id> | --agent <command>] [--agent-arg <arg>...] [--include-fleeting] [--out <path>] [--json]",
+    "wiki <tag> [--limit <n>] [--mode extractive|synthesized] [--model <id> | --agent <command>] [--agent-arg <arg>...] [--include-fleeting] [--out <path>] [--json]",
   details: [
-    "Selects permanent and literature notes whose topics or text match the",
-    "normalized topic through the shared core WikiService, then quotes each",
+    "Selects permanent and literature notes whose tags or text match the",
+    "normalized tag through the shared core WikiService, then quotes each",
     "selected note verbatim with its ID and file citation. Nothing is written",
     "under .slipmem/; stdout is the default.",
     "--agent is split into an argv array and run without a shell; the bounded",
@@ -209,7 +209,7 @@ export const wikiCommand: CommandDefinition = {
   minPositionals: 1,
   run: (parsed, context) =>
     Effect.gen(function* () {
-      const topic = topicFrom(parsed.positionals)
+      const tag = tagFrom(parsed.positionals)
       const synthesis = synthesisConfig(
         context.env,
         stringOption(parsed, "mode"),
@@ -234,7 +234,7 @@ export const wikiCommand: CommandDefinition = {
         mode: synthesis.mode,
       })
       const page = yield* service.build({
-        topic,
+        tag,
         limit,
         mode: synthesis.mode,
         includeFleeting,

@@ -23,10 +23,10 @@ interface SearchResult {
   }>
 }
 
-interface TopicsResult {
+interface TagsResult {
   readonly ok: boolean
   readonly count: number
-  readonly topics: ReadonlyArray<{ readonly topic: string; readonly noteCount: number }>
+  readonly tags: ReadonlyArray<{ readonly tag: string; readonly noteCount: number }>
 }
 
 interface CheckResult {
@@ -83,7 +83,7 @@ const create = async (
   type: string,
   title: string,
   content: string,
-  topic: string,
+  tag: string,
   reference?: string,
 ): Promise<string> => {
   const result = await run(setupValue, [
@@ -94,8 +94,8 @@ const create = async (
     title,
     "--content",
     content,
-    "--topic",
-    topic,
+    "--tag",
+    tag,
     ...(reference === undefined ? [] : ["--reference", reference]),
     "--json",
   ])
@@ -103,7 +103,7 @@ const create = async (
   return parseJson<{ note: { id: string } }>(result.stdout).note.id
 }
 
-describe("slipmem search, topics, and check", () => {
+describe("slipmem search, tags, and check", () => {
   test("searches the refreshed index with bounded filters and excerpts", async () => {
     const setupValue = await setup()
     await create(
@@ -147,16 +147,16 @@ describe("slipmem search, topics, and check", () => {
     ])
     expect(parseJson<SearchResult>(permanent.stdout).count).toBe(1)
 
-    const topic = await run(setupValue, [
+    const tag = await run(setupValue, [
       "search",
       "memory",
-      "--topic",
+      "--tag",
       "agent-memory",
       "--json",
     ])
-    const topicResult = parseJson<SearchResult>(topic.stdout)
-    expect(topicResult.count).toBe(2)
-    expect(topicResult.results.every((result) => result.type !== "literature")).toBe(
+    const tagResult = parseJson<SearchResult>(tag.stdout)
+    expect(tagResult.count).toBe(2)
+    expect(tagResult.results.every((result) => result.type !== "literature")).toBe(
       true,
     )
 
@@ -217,27 +217,27 @@ writeFileSync(path, text.replace("apples", "oranges"))
     expect(parseJson<SearchResult>(stale.stdout).count).toBe(0)
   }, 30000)
 
-  test("lists derived topics with counts and a query filter", async () => {
+  test("lists derived tags with counts and a query filter", async () => {
     const setupValue = await setup()
     await create(setupValue, "permanent", "One", "Body one.", "agent-memory")
     await create(setupValue, "fleeting", "Two", "Body two.", "agent-memory")
     await create(setupValue, "literature", "Three", "Body three.", "retrieval", "Source")
 
-    const all = await run(setupValue, ["topics", "--json"])
+    const all = await run(setupValue, ["tags", "--json"])
     expect(all.code).toBe(0)
-    const topics = parseJson<TopicsResult>(all.stdout)
-    expect(topics.count).toBe(2)
-    expect(topics.topics).toEqual([
-      { topic: "agent-memory", noteCount: 2 },
-      { topic: "retrieval", noteCount: 1 },
+    const tags = parseJson<TagsResult>(all.stdout)
+    expect(tags.count).toBe(2)
+    expect(tags.tags).toEqual([
+      { tag: "agent-memory", noteCount: 2 },
+      { tag: "retrieval", noteCount: 1 },
     ])
 
-    const filtered = await run(setupValue, ["topics", "--query", "retriev", "--json"])
-    expect(parseJson<TopicsResult>(filtered.stdout).topics).toEqual([
-      { topic: "retrieval", noteCount: 1 },
+    const filtered = await run(setupValue, ["tags", "--query", "retriev", "--json"])
+    expect(parseJson<TagsResult>(filtered.stdout).tags).toEqual([
+      { tag: "retrieval", noteCount: 1 },
     ])
 
-    const human = await run(setupValue, ["topics"])
+    const human = await run(setupValue, ["tags"])
     expect(human.stdout).toContain("agent-memory")
     expect(human.stdout).toContain("2")
   }, 30000)

@@ -32,15 +32,15 @@ SLIPMEM_DIR=/tmp/slipmem-demo bun run slipmem -- new --type permanent \
 | --- | --- |
 | `init` | Create `.slipmem/`, `.state/`, a starter README, and `.gitignore`. Idempotent. |
 | `new --type <type> --title <title>` | Create a note from `--content`, non-interactive stdin, or an editor draft. |
-| `list [--type <type>] [--topic <topic>] [--limit <n>]` | Bounded list with IDs, types, titles, and updated times. |
+| `list [--type <type>] [--tag <tag>] [--limit <n>]` | Bounded list with IDs, types, titles, and updated times. |
 | `show <id>` | Print metadata, body, and the file path. |
 | `edit <id>` | Open a full-note temporary draft, validate on save, then write atomically. |
 | `delete <id>` | Move one note to the local trash backup. Requires `--yes` when non-interactive. |
-| `search <query> [--type <type>] [--topic <topic>] [--limit <n>]` | Refresh the disposable index, then run bounded ranked search. |
-| `topics [--query <topic>] [--limit <n>]` | List derived topic slugs and note counts. |
+| `search <query> [--type <type>] [--tag <tag>] [--limit <n>]` | Refresh the disposable index, then run bounded ranked search. |
+| `tags [--query <tag>] [--limit <n>]` | List derived tag slugs and note counts. |
 | `check [--rebuild-index]` | Validate filenames, metadata, limits, duplicate IDs, conflict markers, internal link targets, non-note files, and index drift. |
 | `cache clear` | Clear only the derived search index through the core index API; notes and local state are untouched. |
-| `wiki <topic> [--mode extractive\|synthesized] [--model <id> \| --agent <command>] [--agent-arg <arg>...] [--include-fleeting] [--out <path>]` | Build an on-demand cited topic page through the shared wiki service. |
+| `wiki <tag> [--mode extractive\|synthesized] [--model <id> \| --agent <command>] [--agent-arg <arg>...] [--include-fleeting] [--out <path>]` | Build an on-demand cited tag page through the shared wiki service. |
 | `review` | List pending agent proposals with summaries, diffs, and stale/expired flags. |
 | `approve <proposal-id>` | Apply a proposal after revalidating its base hash, expiry, and note rules. |
 | `reject <proposal-id>` | Remove a proposal without changing any note. |
@@ -74,17 +74,17 @@ editor draft.
 Literature notes require `--reference`. Content limits are 1000 characters for
 fleeting notes, 2000 for permanent notes, and 5000 for literature notes.
 
-## Search, topics, check, and index
+## Search, tags, check, and index
 
 The search index lives outside the note root under
 `$XDG_CACHE_HOME/slipmem/index/<root-hash>/` and is disposable. `search` and
-`topics` refresh it before reading, so an editor change is visible without a
+`tags` refresh it before reading, so an editor change is visible without a
 manual import. `check --rebuild-index` is the full recovery path when the index
 is missing or stale.
 
 `cache clear` deletes only the derived rows through the shared core index API.
 It never removes note files, `.state/`, or the cache directory. It is safe
-before an index exists, and the next `search`, `topics`, or
+before an index exists, and the next `search`, `tags`, or
 `check --rebuild-index` repopulates it. Manual cache-directory removal remains
 an emergency fallback when no slipmem process is running.
 
@@ -94,7 +94,7 @@ warnings such as non-note files or slug drift do not.
 ## Wiki boundary
 
 `slipmem wiki` uses the shared core wiki service: permanent and literature notes
-are selected by normalized topic, each excerpt is quoted verbatim, and every
+are selected by normalized tag, each excerpt is quoted verbatim, and every
 section carries a note ID and file citation. Fleeting notes are excluded unless
 `--include-fleeting` is passed. `--out` must name an existing parent directory
 outside `.slipmem/`; the default is stdout. A symlinked parent or output symlink
