@@ -119,17 +119,18 @@ $ bun run lint && bun run typecheck && bun test && bun run web:build
 388 pass
 0 fail
 3344 expect() calls
-Ran 388 tests across 45 files. [150.69s]
+Ran 388 tests across 45 files. [190.54s]
 vite build: client and SSR bundles built successfully
 ```
 
 Lint, both TypeScript projects, all tests, and the web build passed.
 
-## Residual note for the dogfooding owner
+## Dogfood source note
 
 `.slipmem/20261118022818-source-mvp-plan-principles-architecture-and-security.md`
-said the authoritative plan "uses the historical word 'topic'" at commit
-`8094950`. After `7cbc446`, that sentence is stale: the current plan uses
-`tags` and records `topics` only as a read-compatibility note. The note was not
-edited because note ownership is separate; its owner should update the
-commit/terminology sentence.
+was inspected but not edited here. Before the plan update it described
+`docs/mvp-plan.md` as using the historical word "topic" at commit `8094950`.
+After `7cbc446` that sentence needed to distinguish the pinned historical
+snapshot from the live plan. The note owner's concurrent review updated it to
+say exactly that: the note is pinned at `8094950`, while the live plan and code
+use `tags`. No further change is required from this task.
