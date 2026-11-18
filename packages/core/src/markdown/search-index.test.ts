@@ -5,9 +5,11 @@ import { MarkdownNoteService } from "../note/markdown-note.service"
 import { Effect, Exit, Layer } from "effect"
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -26,6 +28,7 @@ import {
 } from "./repository.js"
 import {
   INDEX_FILENAME,
+  INDEX_SCHEMA_VERSION,
   MarkdownSearchIndexFromRepository,
   makeMarkdownSearchIndex,
   type MarkdownSearchIndexShape,
@@ -279,6 +282,280 @@ describe("disposable FTS search index", () => {
         )
       } finally {
         await Effect.runPromise(rebuilt.close())
+      }
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("persists derived backlinks and returns bounded typed sources", async () => {
+    const fixture = setup()
+    const seeded = await seed(fixture)
+    try {
+      const source = await Effect.runPromise(
+        seeded.repo.create({
+          type: "fleeting",
+          title: "Link source",
+          content: "Placeholder before links.",
+        }),
+      )
+      await Effect.runPromise(
+        seeded.repo.update({
+          id: source.id,
+          content: [
+            `First [[${seeded.ids.permanent}]]`,
+            `Second [literature](${seeded.ids.literature}.md) and [[${seeded.ids.permanent}]]`,
+            `Self [[${source.id}]]`,
+            "Dangling [[20261117235959-missing]]",
+            "Unsafe [bad](../escape.md)",
+          ].join("\n"),
+        }),
+      )
+      const second = await Effect.runPromise(
+        seeded.repo.create({
+          type: "fleeting",
+          title: "Second link source",
+          content: `Also [[${seeded.ids.permanent}]]`,
+        }),
+      )
+
+      const stats = await Effect.runPromise(seeded.index.rebuild())
+      expect(stats.links).toBe(6)
+
+      const permanentBacklinks = await Effect.runPromise(
+        seeded.index.backlinks(seeded.ids.permanent),
+      )
+      expect(permanentBacklinks.map((entry) => entry.id).sort()).toEqual(
+        [source.id, second.id].sort(),
+      )
+      const first = permanentBacklinks.find((entry) => entry.id === source.id)!
+      expect(first).toMatchObject({ linkCount: 2, lines: [1, 2] })
+      expect(first.path).toBe(join(fixture.root, `${source.id}.md`))
+
+      expect(
+        await Effect.runPromise(seeded.index.backlinks(source.id)),
+      ).toEqual([])
+      expect(
+        await Effect.runPromise(
+          seeded.index.backlinks("20261117235959-missing"),
+        ),
+      ).toEqual([])
+      expect(
+        (await Effect.runPromise(
+          seeded.index.backlinks(seeded.ids.permanent, 1),
+        )).length,
+      ).toBe(1)
+
+      const status = await Effect.runPromise(seeded.index.status())
+      expect(status.schemaVersion).toBe(INDEX_SCHEMA_VERSION)
+      await Effect.runPromise(seeded.index.close())
+
+      const db = new Database(join(fixture.cache, INDEX_FILENAME))
+      try {
+        expect(
+          db
+            .query<{ count: number }, []>("SELECT COUNT(*) AS count FROM links")
+            .get()!.count,
+        ).toBe(6)
+        expect(
+          db
+            .query<{ count: number }, []>(
+              "SELECT COUNT(*) AS count FROM links WHERE resolved = 0",
+            )
+            .get()!.count,
+        ).toBe(1)
+        expect(
+          db
+            .query<{ count: number }, [string, string]>(
+              "SELECT COUNT(*) AS count FROM links WHERE source_id = ?1 AND target_id = ?2",
+            )
+            .get(source.id, source.id)!.count,
+        ).toBe(1)
+      } finally {
+        db.close()
+      }
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("refreshes backlinks after external edits and deletes", async () => {
+    const fixture = setup()
+    const seeded = await seed(fixture)
+    try {
+      const source = await Effect.runPromise(
+        seeded.repo.create({
+          type: "fleeting",
+          title: "Editable link source",
+          content: `Only [[${seeded.ids.permanent}]] for now.`,
+        }),
+      )
+      await Effect.runPromise(seeded.index.rebuild())
+      expect(
+        (await Effect.runPromise(
+          seeded.index.backlinks(seeded.ids.permanent),
+        )).map((entry) => entry.id),
+      ).toEqual([source.id])
+
+      const sourcePath = join(fixture.root, `${source.id}.md`)
+      writeFileSync(
+        sourcePath,
+        readFileSync(sourcePath, "utf8").replace(
+          `[[${seeded.ids.permanent}]]`,
+          `[[${seeded.ids.literature}]]`,
+        ),
+      )
+      const edited = await Effect.runPromise(seeded.index.refresh())
+      expect(edited.updated).toBe(1)
+      expect(edited.links).toBe(1)
+      expect(
+        await Effect.runPromise(
+          seeded.index.backlinks(seeded.ids.permanent),
+        ),
+      ).toEqual([])
+      expect(
+        (await Effect.runPromise(
+          seeded.index.backlinks(seeded.ids.literature),
+        )).map((entry) => entry.id),
+      ).toEqual([source.id])
+
+      unlinkSync(join(fixture.root, `${seeded.ids.literature}.md`))
+      const targetRemoved = await Effect.runPromise(seeded.index.refresh())
+      expect(targetRemoved.removed).toBe(1)
+      expect(
+        await Effect.runPromise(
+          seeded.index.backlinks(seeded.ids.literature),
+        ),
+      ).toEqual([])
+
+      const dbPath = join(fixture.cache, INDEX_FILENAME)
+      const db = new Database(dbPath)
+      try {
+        expect(
+          db
+            .query<{ resolved: number }, [string, string]>(
+              "SELECT resolved FROM links WHERE source_id = ?1 AND target_id = ?2",
+            )
+            .all(source.id, seeded.ids.literature),
+        ).toEqual([{ resolved: 0 }])
+      } finally {
+        db.close()
+      }
+
+      unlinkSync(sourcePath)
+      const sourceRemoved = await Effect.runPromise(seeded.index.refresh())
+      expect(sourceRemoved.removed).toBe(1)
+      expect(
+        await Effect.runPromise(
+          seeded.index.backlinks(seeded.ids.permanent),
+        ),
+      ).toEqual([])
+      const reopened = new Database(dbPath)
+      try {
+        expect(
+          reopened
+            .query<{ count: number }, [string]>(
+              "SELECT COUNT(*) AS count FROM links WHERE source_id = ?1",
+            )
+            .get(source.id)!.count,
+        ).toBe(0)
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      await Effect.runPromise(seeded.index.close())
+      cleanup(fixture)
+    }
+  })
+
+  test("cache loss and copied notes rebuild identical backlink identities", async () => {
+    const fixture = setup()
+    const seeded = await seed(fixture)
+    try {
+      const source = await Effect.runPromise(
+        seeded.repo.create({
+          type: "fleeting",
+          title: "Copied link source",
+          content: `Reference [[${seeded.ids.permanent}]] and [[${seeded.ids.permanent}]].`,
+        }),
+      )
+      await Effect.runPromise(seeded.index.rebuild())
+      const before = await Effect.runPromise(
+        seeded.index.backlinks(seeded.ids.permanent),
+      )
+      expect(before).toHaveLength(1)
+      expect(before[0]).toMatchObject({ id: source.id, linkCount: 2 })
+      await Effect.runPromise(seeded.index.close())
+
+      rmSync(fixture.cache, { recursive: true, force: true })
+      const rebuilt = await searchIndex(fixture)
+      try {
+        await Effect.runPromise(rebuilt.rebuild())
+        expect(
+          await Effect.runPromise(rebuilt.backlinks(seeded.ids.permanent)),
+        ).toEqual(before)
+      } finally {
+        await Effect.runPromise(rebuilt.close())
+      }
+
+      const copy = setup()
+      try {
+        for (const name of readdirSync(fixture.root)) {
+          if (name.endsWith(".md")) {
+            copyFileSync(join(fixture.root, name), join(copy.root, name))
+          }
+        }
+        const copied = await searchIndex(copy)
+        try {
+          const stats = await Effect.runPromise(copied.rebuild())
+          expect(stats.added).toBe(4)
+          const copiedBacklinks = await Effect.runPromise(
+            copied.backlinks(seeded.ids.permanent),
+          )
+          expect(copiedBacklinks).toEqual([
+            {
+              id: source.id,
+              path: join(copy.root, `${source.id}.md`),
+              linkCount: 2,
+              lines: [1],
+            },
+          ])
+        } finally {
+          await Effect.runPromise(copied.close())
+        }
+      } finally {
+        cleanup(copy)
+      }
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("derives backlinks in the bounded linear fallback", async () => {
+    const fixture = setup()
+    const seeded = await seed(fixture)
+    try {
+      const source = await Effect.runPromise(
+        seeded.repo.create({
+          type: "fleeting",
+          title: "Linear link source",
+          content: `Fallback [[${seeded.ids.permanent}]].`,
+        }),
+      )
+      await Effect.runPromise(seeded.index.close())
+
+      const linear = await searchIndex(fixture, true)
+      try {
+        const stats = await Effect.runPromise(linear.rebuild())
+        expect(stats.mode).toBe("linear")
+        expect(stats.links).toBe(1)
+        expect(
+          (await Effect.runPromise(
+            linear.backlinks(seeded.ids.permanent),
+          )).map((entry) => entry.id),
+        ).toEqual([source.id])
+      } finally {
+        await Effect.runPromise(linear.close())
       }
     } finally {
       cleanup(fixture)
@@ -580,24 +857,42 @@ describe("disposable FTS search index", () => {
     }
   })
 
-  test("index files are user-only and a schema bump rebuilds", async () => {
+  test("index files are user-only and a schema bump rebuilds without migration", async () => {
     const fixture = setup()
     const seeded = await seed(fixture)
     try {
+      const source = await Effect.runPromise(
+        seeded.repo.create({
+          type: "fleeting",
+          title: "Schema bump link source",
+          content: `Rebuilt [[${seeded.ids.permanent}]].`,
+        }),
+      )
       await Effect.runPromise(seeded.index.rebuild())
       const dbPath = join(fixture.cache, INDEX_FILENAME)
       expect(statSync(fixture.cache).mode & 0o777).toBe(0o700)
       expect(statSync(dbPath).mode & 0o777).toBe(0o600)
       await Effect.runPromise(seeded.index.close())
 
+      // Simulate a version 1 cache: no links table and an older schema stamp.
       const db = new Database(dbPath)
-      db.query("UPDATE meta SET value = '999' WHERE key = 'schema'").run()
+      db.exec("DROP TABLE links;")
+      db.query("UPDATE meta SET value = '1' WHERE key = 'schema'").run()
       db.close()
 
       const upgraded = await searchIndex(fixture)
       try {
+        expect(
+          (await Effect.runPromise(upgraded.status())).schemaVersion,
+        ).toBe(INDEX_SCHEMA_VERSION)
         const stats = await Effect.runPromise(upgraded.rebuild())
-        expect(stats.added).toBe(3)
+        expect(stats.added).toBe(4)
+        expect(stats.links).toBe(1)
+        expect(
+          (await Effect.runPromise(
+            upgraded.backlinks(seeded.ids.permanent),
+          )).map((entry) => entry.id),
+        ).toEqual([source.id])
       } finally {
         await Effect.runPromise(upgraded.close())
       }

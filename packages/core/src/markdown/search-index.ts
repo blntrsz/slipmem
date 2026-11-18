@@ -11,6 +11,10 @@ import {
 } from "node:fs"
 import { join, resolve } from "node:path"
 import { createHash } from "node:crypto"
+import {
+  extractInternalMarkdownLinks,
+  type MarkdownLinkReference,
+} from "./check.js"
 import { MarkdownError, markdownError } from "./errors.js"
 import { readNoteFile } from "./paths.js"
 import {
@@ -23,10 +27,12 @@ import {
   isSymbolicLinkPath,
 } from "./root.js"
 
-export const INDEX_SCHEMA_VERSION = 1
+export const INDEX_SCHEMA_VERSION = 2
 export const INDEX_FILENAME = "index.sqlite"
 export const DEFAULT_TOPIC_LIMIT = 50
 export const MAX_TOPIC_LIMIT = 200
+export const DEFAULT_BACKLINK_LIMIT = 20
+export const MAX_BACKLINK_LIMIT = 100
 export const MAX_SEARCH_QUERY_LENGTH = 512
 export const MAX_SEARCH_TOKENS = 16
 
@@ -77,7 +83,21 @@ export interface IndexRefreshStats {
   readonly removed: number
   readonly unchanged: number
   readonly invalid: number
+  /** Persisted candidate link rows, including dangling references. */
+  readonly links: number
   readonly mode: SearchIndexMode
+}
+
+/**
+ * One note that links to the requested target. `linkCount` counts resolved
+ * occurrences; `lines` holds their one-based source lines, sorted and
+ * deduplicated.
+ */
+export interface MarkdownBacklinkSource {
+  readonly id: string
+  readonly path: string
+  readonly linkCount: number
+  readonly lines: ReadonlyArray<number>
 }
 
 export interface IndexSnapshotEntry {
@@ -120,6 +140,15 @@ export interface MarkdownSearchIndexShape {
   readonly listTopics: (
     input?: ListTopicsInput,
   ) => Effect.Effect<ReadonlyArray<TopicSummary>, MarkdownError>
+  /**
+   * Derived incoming-link sources for a note ID. Only resolved cross-note
+   * candidate links are returned; self-links, malformed, unsafe, and dangling
+   * references are excluded. `limit` bounds source notes, not occurrences.
+   */
+  readonly backlinks: (
+    noteId: string,
+    limit?: number,
+  ) => Effect.Effect<ReadonlyArray<MarkdownBacklinkSource>, MarkdownError>
   readonly snapshot: () => Effect.Effect<ReadonlyArray<IndexSnapshotEntry>, MarkdownError>
   readonly status: () => Effect.Effect<MarkdownSearchIndexStatus, MarkdownError>
   readonly close: () => Effect.Effect<void>
@@ -268,6 +297,27 @@ const ftsNeedsRepair = (db: Database): boolean => {
   return mismatch > 0
 }
 
+/**
+ * Link rows are derived from indexed note bodies with the shared check parser.
+ * They carry IDs, line numbers, and a resolution flag only; no note text and no
+ * filesystem path is duplicated here beyond the source note's indexed path.
+ */
+const createLinkTable = (db: Database): void => {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS links (
+      source_id TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      line INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      resolved INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS links_target
+      ON links (target_id, resolved, source_id);
+    CREATE INDEX IF NOT EXISTS links_source
+      ON links (source_id);
+  `)
+}
+
 const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
   db.exec(`
     CREATE TABLE IF NOT EXISTS meta (
@@ -289,6 +339,7 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
       content_hash TEXT NOT NULL
     );
   `)
+  createLinkTable(db)
 
   const version = db
     .query<{ value: string }, []>("SELECT value FROM meta WHERE key = 'schema'")
@@ -298,7 +349,9 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
     .get()?.value
 
   if (version !== undefined && version !== String(INDEX_SCHEMA_VERSION)) {
-    db.exec("DROP TABLE IF EXISTS notes_fts; DROP TABLE IF EXISTS notes;")
+    db.exec(
+      "DROP TABLE IF EXISTS notes_fts; DROP TABLE IF EXISTS notes; DROP TABLE IF EXISTS links;",
+    )
     db.exec(`
       CREATE TABLE notes (
         id TEXT PRIMARY KEY,
@@ -315,6 +368,7 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
         content_hash TEXT NOT NULL
       );
     `)
+    createLinkTable(db)
   }
 
   let ftsAvailable = false
@@ -366,6 +420,56 @@ const createSchema = (db: Database, forceLinearFallback: boolean): boolean => {
   ).run("fts", ftsAvailable ? "1" : "0")
 
   return ftsAvailable
+}
+
+/**
+ * Candidate links use the same `.md` suffix normalization as `check`. Unsafe
+ * and malformed references are not persisted; they are diagnostics owned by
+ * `check`, not backlink edges.
+ */
+const linkTargetId = (link: MarkdownLinkReference): string | null => {
+  if (link.status !== "candidate") {
+    return null
+  }
+  return link.target.endsWith(".md")
+    ? link.target.slice(0, -".md".length)
+    : link.target
+}
+
+/**
+ * Replaces the whole derived link set from the indexed note bodies. Recomputing
+ * on every refresh keeps target deletion/creation and external edits consistent
+ * without an authority path or a migration: the rows are disposable and a
+ * rebuild restores identical identities from the files.
+ */
+const rebuildLinkRows = (db: Database): number => {
+  const rows = db
+    .query<{ id: string; body: string }, []>("SELECT id, body FROM notes")
+    .all()
+  const noteIds = new Set(rows.map((row) => row.id))
+  const insert = db.query<never, [string, string, number, string, number]>(
+    "INSERT INTO links (source_id, target_id, line, kind, resolved) VALUES (?1, ?2, ?3, ?4, ?5)",
+  )
+
+  db.exec("DELETE FROM links;")
+  let count = 0
+  for (const row of rows) {
+    for (const link of extractInternalMarkdownLinks(row.body)) {
+      const targetId = linkTargetId(link)
+      if (targetId === null) {
+        continue
+      }
+      insert.run(
+        row.id,
+        targetId,
+        link.line,
+        link.kind,
+        noteIds.has(targetId) ? 1 : 0,
+      )
+      count++
+    }
+  }
+  return count
 }
 
 const compareText = (left: string, right: string): number =>
@@ -441,6 +545,13 @@ const effectiveTopicLimit = (limit: number | undefined): number => {
     return DEFAULT_TOPIC_LIMIT
   }
   return Math.max(1, Math.min(MAX_TOPIC_LIMIT, Math.trunc(limit)))
+}
+
+const effectiveBacklinkLimit = (limit: number | undefined): number => {
+  if (limit === undefined || !Number.isFinite(limit)) {
+    return DEFAULT_BACKLINK_LIMIT
+  }
+  return Math.max(1, Math.min(MAX_BACKLINK_LIMIT, Math.trunc(limit)))
 }
 
 const matches = (value: string, token: string): boolean =>
@@ -745,17 +856,22 @@ export const makeMarkdownSearchIndex = (
           }
         }
 
+        const links = yield* scoped("Deriving link and backlink rows", () =>
+          database.transaction(() => rebuildLinkRows(database))(),
+        )
+
         yield* scoped("Repairing the FTS table", () =>
           database.transaction(() => repairFts())(),
         )
 
-        return { added, updated, removed, unchanged, invalid, mode }
+        return { added, updated, removed, unchanged, invalid, links, mode }
       })
 
     const rebuild = (): Effect.Effect<IndexRefreshStats, MarkdownError> =>
       scoped("Rebuilding the search index", () => {
         database.transaction(() => {
           database.exec("DELETE FROM notes;")
+          database.exec("DELETE FROM links;")
           if (ftsAvailable) {
             database.exec("DELETE FROM notes_fts;")
           }
@@ -766,6 +882,7 @@ export const makeMarkdownSearchIndex = (
       scoped("Clearing the search index", () => {
         database.transaction(() => {
           database.exec("DELETE FROM notes;")
+          database.exec("DELETE FROM links;")
           if (ftsAvailable) {
             database.exec("DELETE FROM notes_fts;")
           }
@@ -969,6 +1086,67 @@ export const makeMarkdownSearchIndex = (
           .slice(0, limit)
       })
 
+    const backlinks = (
+      noteId: string,
+      limit?: number,
+    ): Effect.Effect<ReadonlyArray<MarkdownBacklinkSource>, MarkdownError> =>
+      Effect.gen(function* () {
+        const id = noteId.trim()
+        if (id.length === 0) {
+          return []
+        }
+        const bound = effectiveBacklinkLimit(limit)
+        const rows = yield* scoped("Reading backlinks", () =>
+          database
+            .query<
+              { source_id: string; path: string; line: number },
+              [string, number]
+            >(
+              `SELECT l.source_id AS source_id, n.path AS path, l.line AS line
+                 FROM links l
+                 JOIN notes n ON n.id = l.source_id
+                WHERE l.target_id = ?1
+                  AND l.resolved = 1
+                  AND l.source_id <> ?1
+                  AND l.source_id IN (
+                    SELECT DISTINCT source_id
+                      FROM links
+                     WHERE target_id = ?1
+                       AND resolved = 1
+                       AND source_id <> ?1
+                     ORDER BY source_id ASC
+                     LIMIT ?2
+                  )
+                ORDER BY n.path ASC, l.source_id ASC, l.line ASC`,
+            )
+            .all(id, bound),
+        )
+
+        const grouped = new Map<
+          string,
+          { path: string; linkCount: number; lines: Array<number> }
+        >()
+        for (const row of rows) {
+          const entry = grouped.get(row.source_id) ?? {
+            path: row.path,
+            linkCount: 0,
+            lines: [],
+          }
+          entry.linkCount++
+          if (!entry.lines.includes(row.line)) {
+            entry.lines.push(row.line)
+          }
+          grouped.set(row.source_id, entry)
+        }
+
+        return [...grouped.entries()].map(([sourceId, entry]) => ({
+          id: sourceId,
+          path: entry.path,
+          linkCount: entry.linkCount,
+          lines: entry.lines,
+        }))
+      })
+
     const snapshot = (): Effect.Effect<ReadonlyArray<IndexSnapshotEntry>, MarkdownError> =>
       scoped("Reading the index snapshot", () =>
         database
@@ -1007,6 +1185,7 @@ export const makeMarkdownSearchIndex = (
           Effect.map((hits) => hits.map((hit) => hit.note)),
         ),
       listTopics,
+      backlinks,
       snapshot,
       status,
       close: () => Effect.sync(() => database.close()),
