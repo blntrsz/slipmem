@@ -7,6 +7,7 @@ import {
 } from "./args.js"
 import type { CommandDefinition } from "./commands/command.js"
 import { approveCommand } from "./commands/approve.js"
+import { cacheCommand } from "./commands/cache.js"
 import { checkCommand } from "./commands/check.js"
 import { deleteCommand } from "./commands/delete.js"
 import { editCommand } from "./commands/edit.js"
@@ -41,6 +42,7 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   searchCommand,
   topicsCommand,
   checkCommand,
+  cacheCommand,
   wikiCommand,
   migrateCommand,
   reviewCommand,

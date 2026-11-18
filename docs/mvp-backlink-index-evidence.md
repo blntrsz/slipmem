@@ -152,18 +152,13 @@ bunx oxlint packages/core/src/markdown/search-index.ts packages/core/src/markdow
   exited 0 with no diagnostics
 ```
 
-Full repository status at this snapshot:
+The full repository gate also passed after the concurrently running migration
+work settled:
 
 ```text
-bun test
-  359 pass, 2 fail (both in migration provenance tests being edited by another
-  workstream: migration-import.test.ts and migration-plan.test.ts)
-
-bunx tsc --noEmit
-  fails only in packages/cli/src/migrate.test.ts on a concurrently changing
-  MigrationReport.sourceCheck field; no diagnostics in the backlink files
+bun run check
+  oxlint: clean
+  tsc --noEmit && tsc --noEmit -p packages/web/tsconfig.json: clean
+  bun test: 370 pass, 0 fail, 3140 expect() calls (44 files)
+  vite build (client and SSR): passed
 ```
-
-The two full-suite failures and the typecheck failure are outside this
-workstream's owned files and were present alongside uncommitted migration work.
-Re-run `bun run check` after that work settles.
