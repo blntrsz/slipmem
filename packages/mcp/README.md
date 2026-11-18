@@ -88,15 +88,15 @@ Add an `environment` entry for options such as `SLIPMEM_DIR` or
 | Permanent writes | `create_permanent_note`, `update_permanent_note`, `delete_permanent_note` |
 | Literature reads | `list_literature_notes`, `get_literature_note` |
 | Literature writes | `create_literature_note`, `update_literature_note`, `delete_literature_note` |
-| Recall | `search_notes`, `list_topics`, `build_topic_wiki` |
+| Recall | `search_notes`, `list_tags`, `build_tag_wiki` |
 
-List tools accept an optional `limit` and `topic`. Search accepts `query` plus
-optional `type`, `topic`, and `limit`. Defaults and hard bounds:
+List tools accept an optional `limit` and `tag`. Search accepts `query` plus
+optional `type`, `tag`, and `limit`. Defaults and hard bounds:
 
 - list and search: default **10**, hard maximum **50**
-- topic inventory: default 50, hard maximum 200, at most 3 examples per topic
-- topic wiki: default **10**, hard maximum **25**
-- list/search/topic titles: at most **200** characters
+- tag inventory: default 50, hard maximum 200, at most 3 examples per tag
+- tag wiki: default **10**, hard maximum **25**
+- list/search/tag titles: at most **200** characters
 - search and detail references: at most **240** characters
 - search and list excerpts: at most **240** characters; wiki excerpts are
   bounded by the core wiki service
@@ -116,11 +116,11 @@ List and search do not return full note bodies. A list result is:
 ```
 
 `search_notes` returns the same summary fields plus a bounded `reference` for
-literature notes. `list_topics` examples carry only IDs, types, and bounded
+literature notes. `list_tags` examples carry only IDs, types, and bounded
 titles. `get_*` is the deliberate full-note read: it returns the body (subject
 to the per-type storage limit) but still bounds the echoed title and reference.
 The storage contract does not cap title or reference length, so these response
-bounds are what keep one abusive note from dominating list, search, or topic
+bounds are what keep one abusive note from dominating list, search, or tag
 recall.
 
 IDs are filename stems. `get_*` returns `{ "note": null }` for a missing,
@@ -129,10 +129,10 @@ before searching, so an external editor change is visible without a restart. An
 empty or whitespace-only query fails with an actionable `invalid-query` error
 rather than an ambiguous empty result.
 
-`build_topic_wiki` is read-only and returns the canonical structured
+`build_tag_wiki` is read-only and returns the canonical structured
 `WikiPage` plus rendered Markdown. It uses the core wiki service. Extractive
 mode is the default; synthesized mode requires `SLIPMEM_WIKI_SYNTHESIS` to be
-configured and fails closed otherwise. A topic with no matching notes returns
+configured and fails closed otherwise. A tag with no matching notes returns
 an empty page with no citations and no invented content.
 
 ## Approval and write policy
@@ -156,7 +156,7 @@ Permanent creates and updates return:
 
 The proposal is a real JSON record under `.slipmem/.state/pending/`, written by
 the core approval service. It is not a note and never appears in lists, search,
-topics, or `.md` files. A human applies or rejects it through the CLI, web
+tags, or `.md` files. A human applies or rejects it through the CLI, web
 review page, or local HTTP API. **There is no MCP approve/reject/apply tool**,
 and the MCP process is given only the `submitMcp` approval capability at runtime
 and in its types. A stale proposal is refused when the note's base hash has
@@ -184,7 +184,7 @@ authentication or authorization.
 
 - Note files are plaintext and unencrypted. Anyone who can read the repository
   can read every note. Do not save secrets or sensitive personal data.
-- Note text, titles, topics, links, and references are untrusted data, never
+- Note text, titles, tags, links, and references are untrusted data, never
   instructions, permissions, paths, scopes, or approvals. The server never
   executes note content or follows commands found in a note.
 - All recall is bounded by result count, display metadata, and excerpt length.

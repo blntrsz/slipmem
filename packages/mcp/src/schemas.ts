@@ -10,46 +10,46 @@ import { Schema } from "effect"
 export const ListNotesInput = Schema.Struct({
   /** Server clamps to the 1..50 hard maximum; omitted means 10. */
   limit: Schema.optional(Schema.Int),
-  topic: Schema.optional(Schema.String),
+  tag: Schema.optional(Schema.String),
 }).annotate({ identifier: "Mcp.ListNotesInput" })
 
 export const GetNoteInput = Schema.Struct({
   id: Schema.String,
 }).annotate({ identifier: "Mcp.GetNoteInput" })
 
-const Topics = Schema.optional(Schema.Array(Schema.String))
+const Tags = Schema.optional(Schema.Array(Schema.String))
 
 export const CreateFleetingInput = Schema.Struct({
   title: Schema.String,
   content: Schema.String,
-  topics: Topics,
+  tags: Tags,
 }).annotate({ identifier: "Mcp.CreateFleetingInput" })
 
 export const UpdateFleetingInput = Schema.Struct({
   id: Schema.String,
   title: Schema.optional(Schema.String),
   content: Schema.optional(Schema.String),
-  topics: Topics,
+  tags: Tags,
 }).annotate({ identifier: "Mcp.UpdateFleetingInput" })
 
 export const CreatePermanentInput = Schema.Struct({
   title: Schema.String,
   content: Schema.String,
-  topics: Topics,
+  tags: Tags,
 }).annotate({ identifier: "Mcp.CreatePermanentInput" })
 
 export const UpdatePermanentInput = Schema.Struct({
   id: Schema.String,
   title: Schema.optional(Schema.String),
   content: Schema.optional(Schema.String),
-  topics: Topics,
+  tags: Tags,
 }).annotate({ identifier: "Mcp.UpdatePermanentInput" })
 
 export const CreateLiteratureInput = Schema.Struct({
   title: Schema.String,
   content: Schema.String,
   reference: Schema.String,
-  topics: Topics,
+  tags: Tags,
 }).annotate({ identifier: "Mcp.CreateLiteratureInput" })
 
 export const UpdateLiteratureInput = Schema.Struct({
@@ -57,7 +57,7 @@ export const UpdateLiteratureInput = Schema.Struct({
   title: Schema.optional(Schema.String),
   content: Schema.optional(Schema.String),
   reference: Schema.optional(Schema.String),
-  topics: Topics,
+  tags: Tags,
 }).annotate({ identifier: "Mcp.UpdateLiteratureInput" })
 
 export const DeleteNoteInput = Schema.Struct({
@@ -67,25 +67,25 @@ export const DeleteNoteInput = Schema.Struct({
 export const SearchNotesInput = Schema.Struct({
   query: Schema.String,
   type: Schema.optional(Markdown.NoteType),
-  topic: Schema.optional(Schema.String),
+  tag: Schema.optional(Schema.String),
   limit: Schema.optional(Schema.Int),
 }).annotate({ identifier: "Mcp.SearchNotesInput" })
 
-export const ListTopicsInput = Schema.Struct({
+export const ListTagsInput = Schema.Struct({
   query: Schema.optional(Schema.String),
   limit: Schema.optional(Schema.Int),
-}).annotate({ identifier: "Mcp.ListTopicsInput" })
+}).annotate({ identifier: "Mcp.ListTagsInput" })
 
 /**
- * The topic is accepted as display text and normalized by the shared slug
+ * The tag is accepted as display text and normalized by the shared slug
  * pipeline. An input that normalizes to nothing is rejected by the handler.
  */
-export const BuildTopicWikiInput = Schema.Struct({
-  topic: Schema.String,
+export const BuildTagWikiInput = Schema.Struct({
+  tag: Schema.String,
   limit: Schema.optional(Schema.Int),
   mode: Schema.optional(Markdown.WikiMode),
   includeFleeting: Schema.optional(Schema.Boolean),
-}).annotate({ identifier: "Mcp.BuildTopicWikiInput" })
+}).annotate({ identifier: "Mcp.BuildTagWikiInput" })
 
 /**
  * Recall responses use a summary instead of `Note.Info`. A full note can carry
@@ -156,21 +156,21 @@ export const SearchNotesResult = Schema.Struct({
   notes: Schema.Array(SearchHit),
 }).annotate({ identifier: "Mcp.SearchNotesResult" })
 
-export const TopicExample = Schema.Struct({
+export const TagExample = Schema.Struct({
   id: Schema.String,
   type: Markdown.NoteType,
   title: Schema.String,
-}).annotate({ identifier: "Mcp.TopicExample" })
+}).annotate({ identifier: "Mcp.TagExample" })
 
-export const TopicSummaryResult = Schema.Struct({
-  topic: Schema.String,
+export const TagSummaryResult = Schema.Struct({
+  tag: Schema.String,
   noteCount: Schema.Int,
-  examples: Schema.Array(TopicExample),
-}).annotate({ identifier: "Mcp.TopicSummaryResult" })
+  examples: Schema.Array(TagExample),
+}).annotate({ identifier: "Mcp.TagSummaryResult" })
 
-export const ListTopicsResult = Schema.Struct({
-  topics: Schema.Array(TopicSummaryResult),
-}).annotate({ identifier: "Mcp.ListTopicsResult" })
+export const ListTagsResult = Schema.Struct({
+  tags: Schema.Array(TagSummaryResult),
+}).annotate({ identifier: "Mcp.ListTagsResult" })
 
 export const ToolFailure = Schema.Struct({
   code: Schema.String,
@@ -181,9 +181,9 @@ export type ToolFailure = Schema.Schema.Type<typeof ToolFailure>
 
 export const MAX_LIST_LIMIT = Markdown.MAX_SEARCH_LIMIT
 export const DEFAULT_LIST_LIMIT = Markdown.DEFAULT_SEARCH_LIMIT
-export const DEFAULT_TOPIC_LIST_LIMIT = 50
-export const MAX_TOPIC_LIST_LIMIT = 200
-export const MAX_TOPIC_EXAMPLES = 3
+export const DEFAULT_TAG_LIST_LIMIT = 50
+export const MAX_TAG_LIST_LIMIT = 200
+export const MAX_TAG_EXAMPLES = 3
 export const MAX_EXCERPT_LENGTH = 240
 export const MAX_TITLE_LENGTH = 200
 export const MAX_REFERENCE_LENGTH = 240
@@ -207,7 +207,7 @@ export const boundedExcerpt = (
   maxLength: number = MAX_EXCERPT_LENGTH,
 ): string => boundedText(text, maxLength)
 
-/** Bounds a note title in list, search, topic, and detail responses. */
+/** Bounds a note title in list, search, tag, and detail responses. */
 export const boundedTitle = (title: string): string =>
   boundedText(title, MAX_TITLE_LENGTH)
 
@@ -267,11 +267,11 @@ export const boundedListLimit = (limit: number | undefined): number => {
   return Math.max(1, Math.min(MAX_LIST_LIMIT, Math.trunc(limit)))
 }
 
-export const boundedTopicLimit = (limit: number | undefined): number => {
+export const boundedTagLimit = (limit: number | undefined): number => {
   if (limit === undefined || !Number.isFinite(limit)) {
-    return DEFAULT_TOPIC_LIST_LIMIT
+    return DEFAULT_TAG_LIST_LIMIT
   }
-  return Math.max(1, Math.min(MAX_TOPIC_LIST_LIMIT, Math.trunc(limit)))
+  return Math.max(1, Math.min(MAX_TAG_LIST_LIMIT, Math.trunc(limit)))
 }
 
 export const boundedWikiLimit = (limit: number | undefined): number => {
