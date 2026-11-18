@@ -2,11 +2,12 @@
 
 Date: 2026-11-18
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md) section 13.
-Evidence snapshots: `29b7dd1` through `84d02ab` plus the uncommitted web work
-described below. Other workers committed concurrently while this note was
-written, so the quoted test counts are run boundaries, not a frozen tree hash.
-The green run is provisional and must be repeated on the landed tree before
-release.
+Evidence snapshots: `29b7dd1` through `e408e47` (code and test runs at
+`56d009c`; `e408e47` is documentation only), plus the named independent runs
+below. Other workers committed concurrently while this note was written, so the
+quoted test counts are run boundaries, not a frozen tree hash. The latest
+recorded full gate predates follow-up commits; SEC-06 remains open until a
+clean-checkout gate is recorded on the landed tree.
 
 This matrix records what the repository can actually prove, criterion by
 criterion. It is deliberately not a release checklist with optimistic ticks.
@@ -30,61 +31,81 @@ Legend:
 
 ## 0. Verification snapshot
 
-Commands run for this matrix:
+Snapshot head: `e408e47`. The focused test runs below were taken at code commit
+`56d009c`; `e408e47` changes only documentation. The working tree also carries
+uncommitted canonical-doc edits in progress. The short release gate and evidence
+index is
+[`docs/mvp-release-verification.md`](./mvp-release-verification.md).
+
+Full gate status:
+
+- **No full `bun run check` is recorded on `e408e47`.** The last recorded green
+  full gate is in
+  [`docs/mvp-backlink-index-evidence.md`](./mvp-backlink-index-evidence.md)
+  section 6: `370 pass, 0 fail, 3140 expect() calls, 44 files`, oxlint and both
+  typechecks clean, Vite client and SSR build successful. That run predates the
+  follow-up migration-source, CLI cache, legacy-reader, and full-paragraph
+  commits. SEC-06 is therefore **Pending**, not pass.
+- A clean-checkout install/quickstart verification is running in a separate
+  agent. No result is recorded here yet.
+- The first matrix draft recorded full-gate runs at 334/340/341 passing tests,
+  including a transient web-wrapper health failure and a migration timeout.
+  Those fixes landed and the focused reruns passed. The runs are superseded by
+  the commits through `e408e47` and are retained in git history; they are not
+  evidence for the current head.
+
+Focused runs executed for this update (2026-11-18):
 
 ```text
-$ bun run check        # run 1
-oxlint: clean
-tsc --noEmit (root and packages/web): clean
-bun test: 334 pass, 1 fail, 2803 expect() calls, 39 files
-web:build: not reached because the test gate failed
+$ bun test packages/core/src/migration
+41 pass, 0 fail, 547 expect() calls, 4 files
 
-failure:
-packages/cli/src/wrappers.test.ts
-"web starts the local web server and serves the resolved root"
-The web wrapper returned HTTP 500 while serving /api/health.
+$ bun test packages/core/src/markdown/search-index.test.ts packages/cli/src/cache.test.ts
+22 pass, 0 fail, 124 expect() calls, 2 files
 
-$ bun run check        # run 2, after the web edit progressed
-oxlint: one warning in an in-flight test file, no lint failure
-tsc --noEmit (root and packages/web): clean
-bun test: 340 pass, 1 fail, 1 unhandled error, 2834 expect() calls, 40 files
-web:build: not reached because the test gate failed
+$ bun test packages/cli
+52 pass, 0 fail, 453 expect() calls, 14 files
 
-failure:
-packages/cli/src/migrate.test.ts
-"imports atomically with a verified backup and then skips duplicates in merge mode"
-timed out at 5 s; the follow-up merge invocation was killed with status 143.
+$ bun test packages/cli/src/legacy.test.ts
+3 pass, 0 fail, 35 expect() calls, 1 file
 
-focused reruns after the relevant fixes landed:
-bun test packages/cli/src/wrappers.test.ts  -> 2 pass, 0 fail
-bun test packages/cli/src/migrate.test.ts   -> 5 pass, 0 fail, 80 expect calls
-
-$ bun run check        # run 3, green
-oxlint: clean
-tsc --noEmit (root and packages/web): clean
-bun test: 341 pass, 0 fail, 2859 expect() calls, 40 files
-vite build: client and SSR bundles written successfully
+$ bun test packages/core/src/wiki
+33 pass, 0 fail, 237 expect() calls, 2 files
 ```
 
-Runs 1 and 2 overlapped active web and migration edits and are retained here as
-the honest history. The fixes landed, focused reruns passed, and run 3 gives a
-clean full gate. Run 3 still includes **uncommitted** web edits
-(`packages/web/**`, plus the corresponding uncommitted docs/README edits), so
-SEC-06 is a provisional pass: repeat `bun run check` on the landed tree before a
-release claim.
+Documentation check for this update: every relative Markdown link under `docs/`
+resolves except four intentional broken-link examples in
+[`docs/mvp-link-check-evidence.md`](./mvp-link-check-evidence.md)
+(`20261117193045-note.md`, its anchor form, `diagram.png`, and `missing.md`).
+Those are fixtures for the link checker, not documentation defects.
 
 Independent runs incorporated:
 
-- Browser acceptance, 2026-11-17/18:
-  `/tmp/opencode/browser-acceptance/REPORT.md`. Production bundle, isolated XDG
-  roots, hydrated Foldkit UI. Main run **25/25** checks, supplemental review-diff
-  XSS **2/2**, zero normal-flow console/page/request errors. No blocker defect.
+- Browser acceptance, final polish at `b6f3cfe`:
+  `/tmp/opencode/browser-final-polish/REPORT.md`. Production bundle, isolated
+  XDG roots, hydrated UI. **21/21** browser checks, **36 pass / 0 fail / 177
+  expect() calls** in the focused server/web suites at the exact target commit,
+  and zero normal-flow console, page, request, or HTTP errors. The four prior
+  findings D1-D4 are fixed. `git diff b6f3cfe..e408e47 -- packages/web/src
+  packages/server/src/api.ts` is empty, so the verified web/API files are
+  unchanged at this head.
+- Browser acceptance, first run, 2026-11-17/18:
+  `/tmp/opencode/browser-acceptance/REPORT.md`. **25/25** checks and **2/2**
+  supplemental XSS checks. Superseded for D1-D4 by the final-polish report.
 - Migration adversarial verification, 2026-11-17/18:
-  `/tmp/opencode/mig/EVIDENCE.md`. Focused planner/importer/CLI suites passed
-  (`24 pass, 0 fail`), plus WAL, backup, crash, concurrency, symlink, and integer
-  probes. Its defects correspond to fixes in commits `752803a`, `8677012`,
-  `2d8ba25`, `b19f137`, `f4a4b76`, `5fbfc05`, and `efac3f2`.
-- Copy-only recovery smoke, this matrix:
+  `/tmp/opencode/mig/EVIDENCE.md`, plus the independent recheck
+  `/tmp/opencode/mig2/RESULTS.md`. All seven recheck acceptance areas pass with
+  no data-loss finding. The recheck's low reporting caveats were addressed in
+  `c1f3bf1` and documented in
+  [`docs/mvp-legacy-compat-evidence.md`](./mvp-legacy-compat-evidence.md)
+  section 4; the synchronous-import heartbeat limitation is documented rather
+  than claimed as protection.
+- Real startup migration source and legacy bootstrap:
+  [`docs/mvp-legacy-compat-evidence.md`](./mvp-legacy-compat-evidence.md)
+  sections 1 and 5. `41 pass, 0 fail, 547 expect() calls`, including a source
+  database created through `makeDatabaseLayer`/`runMigrations` and real note
+  services.
+- Copy-only recovery smoke, earlier draft:
   `/tmp/opencode/truth02-smoke.ts` and `.log`. Two note files (and nothing else)
   were copied into a fresh `.slipmem/`; CLI list/search exited 0, `GET
   /api/notes` returned 200 with both notes, and stdio MCP `search_notes`
@@ -108,7 +129,7 @@ Independent runs incorporated:
 
 | Criterion | Status | Evidence | Notes |
 | --- | --- | --- | --- |
-| TRUTH-01 Delete index, rebuild, same IDs/list/search | Pass | `packages/core/src/markdown/search-index.test.ts` "deleting the index and rebuilding returns the same IDs and search results"; CLI `search.test.ts` "checks a clean root, reports errors, and rebuilds the index"; commit `13340eb` | The index remains disposable; `check --rebuild-index` is the documented recovery path. |
+| TRUTH-01 Delete index, rebuild, same IDs/list/search | Pass | `packages/core/src/markdown/search-index.test.ts` "deleting the index and rebuilding returns the same IDs and search results" and the backlink cache-loss test; CLI `search.test.ts` "checks a clean root, reports errors, and rebuilds the index"; commits `13340eb`, `77f4175` | The index remains disposable; `check --rebuild-index` and `cache clear` are the documented recovery paths. Derived backlink identities are rebuilt from note files too. |
 | TRUTH-02 Only `.slipmem/*.md` starts CLI, MCP, and web | Pass (manual probe) | `/tmp/opencode/truth02-smoke.ts` + `.log`; existing surface tests: `packages/mcp/src/main.test.ts` "stdio tool calls read the same disposable Markdown root", `packages/server/src/app.test.ts` "files written by another surface are visible without restart" | The manual probe copied only note files into a fresh root and exercised CLI, API, and stdio MCP. There is no committed test that specifically starts all three from a note-only copy; add one if this clause needs permanent regression coverage. |
 | TRUTH-03 External editor edit visible after refresh | Pass | `packages/core/src/markdown/search-index.test.ts` "refreshes an externally edited file and removes deleted files" and "refreshes an external edit that preserves size and mtime"; MCP `tools.test.ts` "search sees an external markdown edit after refresh"; commit `a2a6009` | Refresh compares the SHA-256 content hash, not only size/mtime. |
 | TRUTH-04 No runtime path requires SQLite note tables after cutover | Pass | `packages/server/src/markdown.ts` and `packages/server/src/app.ts` build the Markdown layer; `packages/web/src/entry.server.ts` mounts it; MCP `layer.ts` and CLI `context.ts` use the repository; `packages/server/src/database.ts` is exported only for the migration/compatibility window and is used by `migrations.test.ts` | `resolveDatabasePath()` creates a parent directory if called, but no HTTP/CLI/MCP/web startup path calls it. The old SQLite file is not a runtime source of truth. |
@@ -117,9 +138,9 @@ Independent runs incorporated:
 
 | Criterion | Status | Evidence | Notes |
 | --- | --- | --- | --- |
-| SURFACE-01 CLI note immediately readable by MCP and web | Pass | `packages/server/src/app.test.ts` "files written by another surface are visible without restart"; MCP `tools.test.ts` external-edit test; browser report check 12 (external CLI note visible after navigation); `/tmp/opencode/truth02-smoke.ts` | Browser check 12 used the real CLI and hydrated UI. |
+| SURFACE-01 CLI note immediately readable by MCP and web | Pass | `packages/server/src/app.test.ts` "files written by another surface are visible without restart"; MCP `tools.test.ts` external-edit test; `packages/cli/src/wrappers.test.ts` "web serves the note root resolved outside the repository"; commit `057c83f`; browser report check 12 (external CLI note visible after navigation); `/tmp/opencode/truth02-smoke.ts` | Browser check 12 used the real CLI and hydrated UI. The wrapper test launches the real entry point from outside the checkout. |
 | SURFACE-02 stdio and HTTP MCP expose same names/schemas/limits/shapes | Pass | `packages/server/src/mcp-markdown.test.ts` "HTTP MCP uses the same Markdown registrations and approval policy as stdio"; `packages/mcp/src/main.test.ts` stdio initialize/tools; commits `91e18f6`, `e176d6e` | Both transports consume `McpNoteRegistrations` and `makeMarkdownServicesLayer`; the HTTP test also checks no approve/reject/apply tool. |
-| SURFACE-03 Web list/search/topics show all three types, no type folders | Pass | `packages/web/src/main.test.ts` list/search/topics view tests; browser report checks 1, 8, 9, 22; server `app.test.ts` search/topics test | The browser found a count inconsistency for fleeting notes (D1), not a missing type. D1 is an open UX fix, not a storage-layout failure. |
+| SURFACE-03 Web list/search/topics show all three types, no type folders | Pass | `packages/web/src/main.test.ts` list/search/topics view tests; final-polish browser report checks for all-type counts, per-type breakdown, and the fleeting toggle; server `app.test.ts` search/topics test; commit `b6f3cfe` | The earlier fleeting-count inconsistency (D1) is fixed in the production bundle and verified with a hydrated browser. No type folder was observed. |
 | SURFACE-04 Web API uses stable note IDs, not array positions or SQLite ids | Pass | `packages/server/src/app.test.ts` "canonical ID routes create, read, update, list, and delete flat Markdown notes"; `packages/web/src/main.test.ts` ID-based detail/delete tests; commit `7a1b677` | IDs are filename stems. |
 | SURFACE-05 Type route compatibility resolves through the same repository, no new layout | Pass | `packages/server/src/app.test.ts` "legacy type routes are thin adapters over the same ID repository"; browser check 22; commit `7a1b677` | A note fetched through the wrong type route returns 404; adapters create no folders. |
 
@@ -147,18 +168,18 @@ Independent runs incorporated:
 | WIKI-04 Conflicts stay separate with citations | Pass | `wiki.test.ts` "keeps conflicting notes in separate cited sections" | No merge into an unattributed claim. |
 | WIKI-05 Wiki writes nothing under `.slipmem/` unless explicit outside output | Pass | `wiki.test.ts` "treats injection text as quoted data and writes nothing"; CLI `wiki.test.ts` `--out` inside/outside and symlinked-parent tests; browser check 9 | CLI `--out` resolves the parent's real path and rejects the note root. |
 | WIKI-06 Note text is data; embedded instructions not followed | Pass | `wiki.test.ts` injection test; sandbox/argv tests; MCP instructions test; browser XSS checks | Extractive mode quotes text. Synthesized mode sends bounded JSON on stdin; no note text enters argv or environment. |
-| WIKI-07 Configured synthesizer produces a cited page; validator drops unsupported sentences | Pass (conservative) | `wiki.test.ts` "accepts only sentences with exact support spans from a real child process"; opposite-claim, paraphrase, empty-output, sandbox, secret-env, unregistered-model, and malformed-output tests; CLI `wiki.test.ts` agent tests; commits `cef9d19`, `df90921`, `4164078` | The validator checks **exact extractive support**, not semantic entailment. A paraphrase, negation, or opposite claim is omitted even with a real nearby span. This satisfies the literal §13.5 clause by being stricter, but it is not a general semantic-validity proof. Sandbox default is fail-closed bubblewrap; the unsafe no-sandbox opt-in is documented. No hosted model adapter ships; `--model` fails closed unless the embedding app registers the exact ID. |
+| WIKI-07 Configured synthesizer produces a cited page; validator drops unsupported output | Pass (conservative) | `synthesis.test.ts` and `wiki.test.ts` full-paragraph fixture process; multi-sentence extraction, paraphrase, opposite-claim, clipped-ellipsis, parenthetical, abbreviation, empty-output, sandbox, secret-env, unregistered-model, and malformed-output tests; CLI `wiki.test.ts` agent tests; commits `cef9d19`, `df90921`, `4164078`, `c6d61c1`, `05d5191` | The validator requires an **exact complete source paragraph/block** in both `text` and `quote`; it does not segment sentences and does not accept a free-form sentence even when it is a real substring. This is stricter than the literal §13.5 sentence requirement, but it is not semantic entailment or factual verification. Long multi-sentence paragraphs over the 500-character item bound are omitted rather than clipped. Sandbox default is fail-closed bubblewrap; the unsafe no-sandbox opt-in is documented. No hosted model adapter ships; `--model` fails closed unless the embedding app registers the exact ID. |
 
 ## 6. Migration (13.6)
 
 | Criterion | Status | Evidence | Notes |
 | --- | --- | --- | --- |
-| MIGRATE-01 Representative current DB imports with fields preserved | Partial | `packages/core/src/migration/migration-import.test.ts` current fixture import (types, titles, content, reference, timestamps, `legacyId`); `migration-plan.test.ts` current fixture mapping; CLI `migrate.test.ts` current fixture import; independent `/tmp/opencode/mig/EVIDENCE.md` | The "current" fixture is hand-written `packages/core/fixtures/phase0/migration/current.sql`. Its columns currently match `packages/server/drizzle/20261114044257_init/migration.sql`, but no test creates the source by running the real checked-in migrations. A real representative database has not been committed as a fixture. See gap G5. |
+| MIGRATE-01 Representative current DB imports with fields preserved | Pass (conservative) | `packages/core/src/migration/migration-current-database.test.ts` creates the source through `makeDatabaseLayer`/`runMigrations` and real note services, then asserts every mapped field, provenance, timestamp, rendered hash, and source immutability; `migration-import.test.ts` current and legacy bootstrap fixtures; CLI `migrate.test.ts`; independent `/tmp/opencode/mig/EVIDENCE.md` and `/tmp/opencode/mig2/RESULTS.md` | The source is a real startup-created database with one note of each type, a real update, and the frozen legacy bootstrap shape, not a sanitized production dump. No user-data database was available or committed. See gap G5, now narrowed rather than open. |
 | MIGRATE-02 Source unchanged; backup created | Pass | `migration-import.test.ts` current fixture source-unchanged + backup integrity/table counts; WAL backup test; CLI `migrate.test.ts` SHA assertion; independent WAL and backup probes | Backup is `VACUUM INTO` under `.state/migrations/<run>/source-backup.db`, then opened read-only and integrity-checked. |
 | MIGRATE-03 Dry run writes no notes; reports counts/collisions/invalid rows | Pass | `migration-import.test.ts` "a dry run reports the plan without writing anything" and WAL dry-run test; CLI `migrate.test.ts` dry-run test | Planning reads a private snapshot of the DB and `-wal`/`-journal`, so it does not create `-shm` beside the source. |
 | MIGRATE-04 Merge rerun does not duplicate | Pass | `migration-import.test.ts` merge idempotence, merge collision, and interrupted-run recovery tests; CLI merge test; commits `f4a4b76`, `5fbfc05` | Skips by `legacyId`, reports actual existing paths, and marks dead-owner `running` manifests `interrupted`. |
 | MIGRATE-05 Imported notes pass `slipmem check`, readable through surfaces | Pass (indirect) | `migration-import.test.ts` calls `checkNoteRoot(target)` and reads notes through the parser; CLI `migrate.test.ts` runs `check --json`; server/MCP tests prove valid roots are readable through their surfaces | There is no single automated test that imports and then calls CLI, MCP, and HTTP on that same root. The shared repository and separate surface tests make this low risk, but it is indirect. |
-| MIGRATE-06 Legacy-only/malformed row reported; not dropped/truncated | Pass | `migration-import.test.ts` quarantine, missing-column table rows, bigint/blob preservation, valid+invalid mix; `migration-plan.test.ts` exact integers/blobs; independent probes now match after commits `752803a`, `efac3f2` | Text, blobs, bigints, and blank strings are preserved. Table-level rows without a raw row remain manifest issues only. A residual low issue is noted as G8. |
+| MIGRATE-06 Legacy-only/malformed row reported; not dropped/truncated | Pass | `migration-import.test.ts` quarantine, missing-column table rows, bigint/blob preservation, valid+invalid mix, and cross-type duplicate IDs; `migration-plan.test.ts` exact integers/blobs; independent probes match after commits `752803a`, `efac3f2`, `c1f3bf1` | Text, blobs, bigints, and blank strings are preserved. Table-level rows without a raw row remain manifest issues only. The duplicate-legacy-ID reporting issue is closed as G8. |
 
 ## 7. Security and quality (13.7)
 
@@ -169,7 +190,7 @@ Independent runs incorporated:
 | SEC-03 Loopback default and documented non-loopback risk | Pass | `packages/server/src/config.test.ts` loopback/non-loopback/invalid-port tests; `packages/web/scripts/serve.ts`; README and operator guide | Non-loopback bind prints the unauthenticated/plaintext warning. |
 | SEC-04 Note content not executed; web escapes untrusted HTML | Pass | `packages/web/src/main.test.ts` escaped-content and wiki-UI tests; browser XSS check 10 and review-diff XSS supplement; `wiki.test.ts` injection test; `check-links.test.ts` | The web UI uses text nodes, not trusted HTML. Wiki output treats notes as quoted data. |
 | SEC-05 No automatic Git actions; conflict markers reported, not resolved | Pass | `checkNoteRoot` conflict-marker tests (`check-links.test.ts` "reports conflict markers and preserves every note byte-for-byte"); CLI check tests; operator guide recovery section; code search finds no `git commit`/`push`/`reset` execution | The browser and CLI probes left Git untouched. |
-| SEC-06 `bun run check` passes (lint, typecheck, tests, web build) | Pass (provisional) | Run 3: `oxlint` clean, root/web typecheck clean, **341 pass / 0 fail / 2859 expect() calls**, Vite client and SSR build successful. Earlier red runs and focused reruns are recorded in section 0. | The green run includes uncommitted `packages/web/**` edits. Repeat the gate after those land; do not treat this as a frozen-tree release result. |
+| SEC-06 `bun run check` passes (lint, typecheck, tests, web build) | Pending | Last recorded green full gate: `370 pass / 0 fail / 3140 expect() calls / 44 files`, oxlint and both typechecks clean, Vite client and SSR build successful, in [`docs/mvp-backlink-index-evidence.md`](./mvp-backlink-index-evidence.md) section 6. Focused suites at `56d009c` are recorded in section 0. | That gate predates the follow-up commits (`043de62` through `e408e47`). A full gate must be rerun on the clean landed head and repeated in a clean checkout before a release claim. Do not treat focused counts as the full gate. |
 
 ## 8. Definition of done (13.8)
 
@@ -178,31 +199,35 @@ tracked separately.
 
 | Step | Status | Evidence | Notes |
 | --- | --- | --- | --- |
-| 1. Clone, install dependencies | Pending | README quickstart; `bun install`/`bun run check` documented | No clean-clone run is recorded at this snapshot. The repository itself is not fresh because other workers are mid-edit. |
+| 1. Clone, install dependencies | Pending | README quickstart; `bun install`/`bun run check` documented | A clean-checkout install/quickstart verification is running in a separate agent; no result is recorded at this snapshot. The working repository is not a clean clone because other workers are active. |
 | 2. `init`; create fleeting/permanent/literature | Pass | CLI `workflow.test.ts` "runs the local loop offline through the root script"; `init.test.ts`; `notes.test.ts`; browser checks 2-4 | Literature without a reference is rejected. |
 | 3. Search and browse locally | Pass | CLI `search.test.ts`, `notes.test.ts`; web `main.test.ts`; browser checks 1, 8, 9 | Search refreshes the disposable index before reading. |
 | 4. MCP capture fleeting, write literature, propose permanent | Pass | MCP `tools.test.ts` direct writes and pending permanent tests; `mcp-markdown.test.ts`; browser checks 13-14 | No note file for the permanent proposal until approval. |
 | 5. Approve proposal from CLI or web | Pass | CLI `approval.test.ts`; server `app.test.ts` review test; browser checks 14-15 | Stale proposals fail closed. |
 | 6. Open a cited topic page on demand | Pass | Core/CLI/MCP/server wiki tests; browser check 9 | Extractive default; synthesized opt-in is conservative. |
-| 7. Delete cache, rebuild, identical content | Pass | `search-index.test.ts` delete/rebuild test; CLI `check --rebuild-index` test | Manual deletion and rebuild works. The separate **clear-cache command** required by §12 is missing (G1); this step does not require that command. |
-| 8. Migrate SQLite with no data loss/source modification | Partial | Fixture and independent migration evidence; see MIGRATE-01/02 | No real representative production database has been committed and imported. Source preservation is well tested. |
+| 7. Delete cache, rebuild, identical content | Pass | `search-index.test.ts` delete/rebuild and backlink cache-loss tests; CLI `check --rebuild-index` test; `packages/cli/src/cache.test.ts`; commits `13340eb`, `77f4175`, `5002d7b` | Manual deletion, `check --rebuild-index`, and the landed `slipmem cache clear` command rebuild the same note and backlink identities from files. |
+| 8. Migrate SQLite with no data loss/source modification | Pass (conservative) | Real-startup-created and legacy bootstrap import tests; independent migration evidence; see MIGRATE-01/02/06 | Source preservation, field mapping, merge recovery, WAL, crash, and malformed-row handling are tested. The narrowness is evidence: no sanitized production database dump was imported. |
 | 9. Read notes in a text editor and commit to Git without slipmem Git actions | Pass | Flat Markdown files; browser check 22; SEC-05 | slipmem never runs `git add/commit/push/reset`; the user owns Git. |
 
-## 9. Requirements outside section 13 that are still missing
+## 9. Requirements outside section 13 that are tracked
 
 These are **not** counted as §13 failures unless noted, but they are explicit
 plan deliverables and should be tracked rather than silently treated as done.
+Gap statuses use **Closed** (landed and tested at this snapshot), **In progress**
+(part landed, surface incomplete), **Narrowed** (the deliverable is met with
+documented narrower evidence), or **Conservative** (deliberate narrower
+behavior).
 
 | ID | Requirement | Status | Evidence / impact | Classification |
 | --- | --- | --- | --- | --- |
-| G1 | Provide a clear-cache command (plan §12, "Index") | **Missing** | `MarkdownSearchIndex.clear` exists in `packages/core/src/markdown/search-index.ts`, but `packages/cli/src/commands/` has no `cache` command. The operator guide's cache section and its known-gaps list say to remove the cache manually or use `check --rebuild-index`. | Hard MVP gap. The security table says "Provide a clear-cache command"; manual removal is not that command. It is not a §13 numbered criterion, but it is a release requirement. |
-| G2 | Search index records backlinks as derived data (plan §5.6, §6.1) | **Missing** | `packages/core/src/markdown/check.ts` derives backlinks for `NoteCheckReport.links.backlinks` (`check-links.test.ts`). `search-index.ts` has no backlink table/API; `docs/mvp-link-check-evidence.md` §4 records this as remaining work. | Plan contract gap. Not in §13, and no current MCP/web consumer requires persisted backlinks, so it is not a demonstrated user blocker. Either add the derived table/API or amend the plan to say backlinks are check-time only. |
-| G3 | Migration defaults to the current DB path and `SLIPMEM_DB_PATH` (Phase 5) | **Missing** | `packages/cli/src/commands/migrate.ts` calls `requireStringOption(parsed, "db", ...)`; `--db` is mandatory. `packages/server/src/config.ts` still has `resolveDatabasePath()` but the CLI never uses it. | Phase 5 deliverable gap. MIGRATE-01 can pass with an explicit `--db`; automatic default resolution is absent. |
-| G4 | Read-only compatibility path for the old SQLite DB for one release (Phase 5) | **Missing** | `packages/server/src/database.ts` still builds a writable Drizzle layer and runs migrations; it is exported and used only by `migrations.test.ts`. No server/CLI/MCP/web route opens the old DB read-only. The untouched SQLite file is an archive, not a compatibility path. | Phase 5 deliverable gap. TRUTH-04 is still satisfied because Markdown is the only runtime source. Decide whether the one-release read-only path is required for the MVP or explicitly drop it in the plan. |
-| G5 | Migration fixtures match a real migrated production database | **Partial** | `packages/core/fixtures/phase0/migration/current.sql` is hand-written; it currently matches `packages/server/drizzle/20261114044257_init/migration.sql`, but tests read the fixture, never run the runtime migrations to create the source. | Evidence gap for MIGRATE-01, not a known data-loss bug. Add a test that creates a DB through the real migration path, inserts rows, and imports it, or commit a sanitized real DB fixture. |
-| G6 | Synthesized wiki semantic validity and sandbox proof | Conservative, not missing | `packages/core/src/wiki/synthesis.ts` validates exact extractive support; it does not prove entailment. `sandbox.ts` probes bubblewrap and fails closed; unsafe opt-in is documented. Tests in `wiki.test.ts` cover opposite claims, paraphrase rejection, argv/stdin separation, and secret-free env. | Deliberate narrower implementation. §13.5/§9 require a citation validator for unsupported sentences, not semantic entailment. Do not describe it as semantic validation. A host without a working bubblewrap cannot run agent synthesis without the explicit unsafe opt-in. |
-| G7 | Browser acceptance defects D1-D4 | Pending web fixes | `/tmp/opencode/browser-acceptance/REPORT.md`: D1 topic counts include fleeting while cited pages exclude them; D2 health count stale; D3 duplicated service name; D4 synthesized CTA returns 501 when unconfigured. All are Low/Trivial, not blockers. Uncommitted web edits at this snapshot add per-type topic counts, health refresh/label changes, and a synthesis capability gate; do not mark them fixed until those edits land and the browser run is repeated. | UX/doc polish, not an acceptance blocker. D4 overlaps G6's conservative synthesis behavior. |
-| G8 | Residual migration low-severity reporting issues | Pending verification | The independent migration log's item 7 included a duplicate-`legacyId`-across-tables warning that imports both rows once but reports a permanent `skipped-conflict` on every merge. The post-audit fixes address exact integers, live locks, WAL planning, `.state` symlinks, interrupted runs, skipped paths, table-shaped quarantine, and false success; this duplicate warning is not named in the fix summary. | Low. Verify against current `migration-import.ts` and either fix or document before release. Not a data-loss issue in the tested case. |
+| G1 | Provide a clear-cache command (plan §12, "Index") | **Closed** | `packages/cli/src/commands/cache.ts` and `packages/cli/src/cache.test.ts`; registered in `packages/cli/src/cli.ts`; commit `5002d7b`. Focused `bun test packages/core/src/markdown/search-index.test.ts packages/cli/src/cache.test.ts` and the full CLI suite pass at `56d009c`. | `slipmem cache clear` deletes only derived index rows through `MarkdownSearchIndex.clear`; notes and local state are untouched. `check --rebuild-index` and manual cache removal remain documented fallbacks. |
+| G2 | Search index records backlinks as derived data (plan §5.6, §6.1) | **Closed** | `packages/core/src/markdown/search-index.ts` schema version 2 with a derived `links` table and bounded `backlinks(noteId, limit)` API; `search-index.test.ts` persistence/bounds, external-refresh, cache-loss, and linear-fallback tests; commit `77f4175`; [`docs/mvp-backlink-index-evidence.md`](./mvp-backlink-index-evidence.md). | Backlinks are cache-only derived data rebuilt from Markdown; note files remain the authority. No CLI/MCP/web consumer is required for the plan contract. |
+| G3 | Migration defaults to the current DB path and `SLIPMEM_DB_PATH` (Phase 5) | **Closed** | `packages/cli/src/database-path.ts` plus `packages/cli/src/commands/migrate.ts`; resolution order is explicit `--db`, `SLIPMEM_DB_PATH`, then `$XDG_DATA_HOME/slipmem/slipmem.db`; commits `043de62`, `9d299fe`; `migrate.test.ts` "resolves the migration source from --db, SLIPMEM_DB_PATH, then XDG data". | An explicitly empty `--db` is rejected instead of silently falling back. The resolved path matches `packages/server/src/config.ts`. |
+| G4 | Read-only compatibility path for the old SQLite DB for one release (Phase 5) | **Closed** | Read-only core API `getLegacyNote`/`listLegacyNotes` in `packages/core/src/migration/legacy-read.ts`, exported from `@slipmem/core`; commits `f6627a4`, `e1b7192`. User-facing `slipmem legacy list` / `legacy show` in `packages/cli/src/commands/legacy.ts`, with bounded list/show, one-release warning, default source resolution, and tests in `packages/cli/src/legacy.test.ts`; commit `56d009c`; [`docs/mvp-cli-evidence.md`](./mvp-cli-evidence.md). The core API is described in [`docs/mvp-legacy-compat-evidence.md`](./mvp-legacy-compat-evidence.md) section 2; that note predates the CLI command. | Both surfaces are explicit read-only opt-ins and are not CLI/MCP/web/server startup behavior, so `.slipmem/*.md` remains the only runtime source. The CLI never imports, repairs, or writes. `bun test packages/cli/src/legacy.test.ts` -> 3 pass. |
+| G5 | Migration fixtures match a real migrated production database | **Closed, narrowed** | `packages/core/src/migration/migration-current-database.test.ts` creates the source with `makeDatabaseLayer`/`runMigrations` and writes through the real note services, then imports and verifies every field and source hash; second test adopts the legacy bootstrap fixture; commit `c4e7aff`. `bun test packages/core/src/migration` -> `41 pass, 0 fail, 547 expect() calls`. | The source is real startup-created, not a sanitized production dump. No user-data database was available or committed; do not claim real-user-data coverage. The original "hand-written SQL only" limitation is gone. |
+| G6 | Synthesized wiki semantic validity and sandbox proof | **Conservative** | `packages/core/src/wiki/synthesis.ts` validates an exact complete source paragraph/block in both `text` and `quote`; it does not segment sentences and does not prove entailment. `sandbox.ts` probes bubblewrap and fails closed; unsafe opt-in is documented. Tests cover full-paragraph acceptance, single-sentence rejection, paraphrase/opposite/clipped cases, argv/stdin separation, and secret-free env; commits `c6d61c1`, `05d5191`. | §13.5/§9 require a citation validator for unsupported sentences, not semantic entailment. The whole-paragraph rule is stricter than the sentence clause, but it is not semantic validation. Do not describe it as verifying truth. |
+| G7 | Browser acceptance defects D1-D4 | **Closed** | `/tmp/opencode/browser-final-polish/REPORT.md`: **21/21** browser checks and **36 pass / 0 fail / 177 expect() calls** at exact commit `b6f3cfe`, production bundle, hydrated UI. D1 per-type topic counts and fleeting toggle, D2 health refresh/label, D3 single service name, and D4 unconfigured synthesis gate are verified. | All four findings were Low/Trivial. `git diff b6f3cfe..e408e47 -- packages/web/src packages/server/src/api.ts` is empty, so the verified web/API files are unchanged at this head. |
+| G8 | Residual migration low-severity reporting issues | **Closed** | `packages/core/src/migration/migration-import.ts` keys merge identity by `(type, legacyId)`; `migration-import.test.ts` "merge keeps the same legacyId distinct across note types" asserts two first-import notes, zero writes and two `skipped-legacy-id` on merge, zero effective collisions, no `legacy-id-conflict`, unchanged files. Checkpointed manifests, target-derived recovery counts, no rounded structured provenance copy, and PID-start reuse handling landed in `c1f3bf1`; documented in [`docs/mvp-legacy-compat-evidence.md`](./mvp-legacy-compat-evidence.md) sections 3-4. | Cross-type duplicate IDs are now idempotent and stable. The synchronous-import heartbeat limitation remains documented in section 4.3 of the evidence note; ownership checks, not heartbeat age, protect the lock. |
 | G9 | Prior SQLite-first docs marked superseded (plan §15) | Not applicable / unverified | The repository currently contains only the MVP plan, evidence notes, operator guide, and Markdown READMEs. No prior SQLite-first document remains to mark, and no `superseded` marker was added. | If older docs exist outside this checkout, mark them when imported. Do not claim a docs migration that has no file to point at. |
 
 ## 10. What can be claimed now
@@ -210,31 +235,39 @@ plan deliverables and should be tracked rather than silently treated as done.
 Supported by committed tests or named independent runs:
 
 - Flat `.slipmem/` storage, safe parsing, atomic writes, collision suffixes,
-  unknown-key preservation, and disposable-index recovery.
+  unknown-key preservation, and disposable-index recovery, including derived
+  backlinks rebuilt from note files.
 - CLI, MCP (stdio + HTTP), and web/API parity on IDs, bounds, and shared
   Markdown services.
 - Approval policy, pending permanent/deletes, direct fleeting/literature writes,
   no MCP approval tool, and under-lock stale-base protection.
 - Extractive cited wiki, empty/conflict handling, injection-as-data, explicit
-  `--out`, and a fail-closed conservative synthesized mode.
-- Migration source preservation, backup, dry run, merge idempotence, malformed
-  row quarantine, exact bigints/blobs, WAL handling, symlink-safe state, and
-  interrupted-run recovery on the committed fixtures.
-- A clean full gate on the current working tree: lint, typecheck, 341 tests,
-  and the client/SSR web build.
+  `--out`, and a fail-closed conservative synthesized mode with exact
+  whole-paragraph support checking.
+- Migration source preservation, backup, dry run, merge idempotence including
+  cross-type duplicate IDs, malformed-row quarantine, exact bigints/blobs, WAL
+  handling, symlink-safe state, and interrupted-run recovery on real
+  startup-created and frozen bootstrap sources.
+- `slipmem cache clear` (G1) and migration source default resolution
+  (`--db`, `SLIPMEM_DB_PATH`, XDG data; G3).
+- The read-only legacy database path (G4): the core API and the bounded,
+  warning-first `slipmem legacy list/show` commands. Both are explicit opt-ins
+  and neither is startup behavior.
+- Browser findings D1-D4 fixed at `b6f3cfe` (G7), with the web/API files
+  unchanged through `e408e47`.
+- The focused suites recorded in section 0 at code commit `56d009c`.
 
 Not claimable yet:
 
-- A final gate on the landed tree (the green run included uncommitted web
-  edits) or a clean-clone release run.
-- A real representative SQLite database import (MIGRATE-01).
-- A `clear-cache` command (G1), index-recorded backlinks (G2), migration default
-  source resolution (G3), or a read-only old-DB compatibility path (G4).
-- Semantic validation of synthesized prose (G6); only exact extractive support
-  is proven.
-- That browser defects D1-D4 are fixed (G7).
+- A full `bun run check` on the landed head or a clean-clone release run.
+  The last recorded full gate (`370 pass`) predates follow-up commits.
+- A sanitized production/user-data SQLite database import. The evidence covers
+  a real startup-created source and the frozen bootstrap fixture (G5).
+- Semantic entailment, factual correctness, or truth for synthesized prose.
+  Only exact complete-paragraph extraction is proven (G6).
+- That the focused test counts in section 0 are the full repository gate.
 
 The outstanding items are bounded. None of the committed evidence shows note
-data loss or a broken approval boundary. The release decision should wait for
-the web edit to land, a repeat full check on that landed tree, a clean-clone run,
-and an explicit decision on G1/G3/G4.
+data loss or a broken approval boundary. The release decision should wait for a
+clean-checkout full gate, a clean-clone quickstart, and the pending product
+video.

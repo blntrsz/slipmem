@@ -1,12 +1,14 @@
 # MVP implementation log
 
-Status: **Phases 0-5 implemented on `main`; hardening and release verification
-are in progress.** The criterion-by-criterion record is now
+Status: **Phases 0-5 implemented on `main`; the tracked hardening gaps are
+closed or narrowed, and release verification is in progress.** The
+criterion-by-criterion record is now
 [`docs/mvp-acceptance-matrix.md`](./mvp-acceptance-matrix.md).
 Date: 2026-11-18
-Evidence snapshots: `29b7dd1` through `84d02ab` plus the in-flight web work
-called out in the matrix; other workers committed concurrently, so the final
-release gate must be rerun on the landed tree.
+Evidence snapshots: `29b7dd1` through `e408e47` (code and test runs at
+`56d009c`; the later commit is documentation); other workers committed
+concurrently, so the final release gate must be rerun on the landed tree.
+The last recorded full gate predates the final follow-up commits.
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md). This log records decisions,
 baseline evidence, commit boundaries, and acceptance status. It does not replace
 the plan, and it does not turn an evidence note into a passing test.
@@ -333,16 +335,16 @@ keeps only the phase-level summary.
 | Area | Criteria | Status | Evidence or next gate |
 | --- | --- | --- | --- |
 | Phase 0 contract | Filename, metadata, topic, approval, wiki rules frozen | pass | `packages/schemas/src/markdown.ts`; hardened in `8b4d463`; contract evidence in `docs/mvp-contract-verification.md` |
-| Phase 0 fixtures | Notes, Unicode, collisions, every type, malformed YAML, migration shapes, payloads | pass | `packages/core/fixtures/phase0/`; `phase0-fixtures.test.ts`; migration fixture parity guard is still missing (matrix G5) |
+| Phase 0 fixtures | Notes, Unicode, collisions, every type, malformed YAML, migration shapes, payloads | pass | `packages/core/fixtures/phase0/`; `phase0-fixtures.test.ts`; real-startup migration source test `c4e7aff` closes the hand-written-only gap (matrix G5) |
 | STOR-01..08 | Flat `.slipmem/`, filenames, frontmatter, limits, collisions, unknown keys, atomic failure | pass | Parser, `MarkdownNoteRepository`, `check`; `repository.test.ts`; `docs/mvp-storage-review-fixes.md` |
-| TRUTH-01..04 | Disposable index, files-only recovery, external edits, no SQLite runtime | pass | `search-index.test.ts`; surface startup paths; copy-only smoke in the matrix |
+| TRUTH-01..04 | Disposable index, files-only recovery, external edits, no SQLite runtime | pass | `search-index.test.ts` including derived backlink rebuild; `slipmem cache clear`; surface startup paths; copy-only smoke in the matrix |
 | SURFACE-01..05 | CLI/MCP/web parity, same tool schemas, ID routes, adapters | pass | CLI, MCP, server, and web suites; `docs/mvp-cli-evidence.md`, `docs/mvp-mcp-evidence.md`, `docs/mvp-web-evidence.md` |
 | APPROVE-01..09 | Pending permanent/delete, direct fleeting/literature, stale hash, no MCP approval | pass | `packages/core/src/approval/approval.test.ts`; CLI/server approval tests; `docs/mvp-approval-wiki-evidence.md`; CAS commits `f6641c5`, `cef9d19` |
-| WIKI-01..07 | Bounded selection, citations, empty/conflict handling, no persisted page, injection-safe synthesis | pass, conservative synthesis | `packages/core/src/wiki/wiki.test.ts`; CLI wiki tests; `docs/mvp-approval-wiki-evidence.md`; exact extractive support only |
-| MIGRATE-01..06 | Lossless import, untouched source, dry run, idempotency, check, malformed reporting | partial | `migration-*.test.ts`; CLI migrate tests; `docs/mvp-migration-evidence.md`; independent `/tmp/opencode/mig/EVIDENCE.md`; real-DB fixture parity still open (matrix G5) |
+| WIKI-01..07 | Bounded selection, citations, empty/conflict handling, no persisted page, injection-safe synthesis | pass, conservative synthesis | `packages/core/src/wiki/wiki.test.ts`; CLI wiki tests; `docs/mvp-approval-wiki-evidence.md`; exact complete-paragraph support only, not entailment |
+| MIGRATE-01..06 | Lossless import, untouched source, dry run, idempotency, check, malformed reporting | pass, narrowed evidence | Real-startup-created and legacy bootstrap sources (`migration-current-database.test.ts`); CLI migrate tests; `docs/mvp-migration-evidence.md`; `docs/mvp-legacy-compat-evidence.md`; independent `/tmp/opencode/mig/EVIDENCE.md` and `/tmp/opencode/mig2/RESULTS.md`; no sanitized production dump (matrix G5) |
 | SEC-01..05 | Paths, size bounds, loopback, untrusted text, no Git actions | pass | Storage, CLI, server, web, and browser evidence |
-| SEC-06 | `bun run check` passes | pass (provisional) | Run 3: lint clean, root/web typecheck clean, 341 pass / 0 fail / 2859 expect calls, Vite client and SSR builds successful. The green run includes uncommitted `packages/web/**` edits; repeat on the landed tree. |
-| Definition of done | Full local loop and migration in section 13.8 | partial | Local loop is exercised; clean clone, real representative DB import, and final gates remain |
+| SEC-06 | `bun run check` passes | pending | Last recorded full gate: lint clean, root/web typecheck clean, 370 pass / 0 fail / 3140 expect calls, Vite client and SSR builds successful (`docs/mvp-backlink-index-evidence.md`). It predates follow-up commits `043de62` through `e408e47`; rerun on the landed head and in a clean checkout. |
+| Definition of done | Full local loop and migration in section 13.8 | partial | Local loop and migration are exercised; clean-clone quickstart, a full gate on the landed head, and the product video remain |
 
 ### 5.1 Phase 2-6 landing record
 
@@ -350,10 +352,12 @@ The Phase 1 log above is historical. The later phases landed as vertical
 slices:
 
 - **CLI (`packages/cli`).** `f032517`, `4947344`, `80232f9`, `7c79865`,
-  `df9466a`, `3cd3942`, `955ee07`, `46eff30`, `df90921`, `ee6705a`.
+  `df9466a`, `3cd3942`, `955ee07`, `46eff30`, `df90921`, `ee6705a`,
+  `5002d7b`, `043de62`, `9d299fe`, `56d009c`.
   Commands cover init, create, list, show, edit, delete, search, topics, check,
-  wiki (extractive + synthesized), migrate, review, approve, reject, and the
-  MCP/web wrappers. Evidence: `docs/mvp-cli-evidence.md`.
+  cache clear, wiki (extractive + synthesized), migrate, legacy list/show,
+  review, approve, reject, and the MCP/web wrappers. Evidence:
+  `docs/mvp-cli-evidence.md`.
 - **MCP parity and approvals.** `9c8f771`, `e6b2260`, `91e18f6`, `88035a8`,
   `e176d6e`, `3c36f7e`. Both transports share `McpNoteRegistrations`; the MCP
   process receives only `submitMcp`. Evidence: `docs/mvp-mcp-evidence.md`.
@@ -364,46 +368,64 @@ slices:
   `docs/mvp-approval-wiki-evidence.md`.
 - **Web/API cutover.** `7a1b677`, `2f4cac7`, `8a35212`, `1a9cb8c`,
   `4ea0678`. Canonical ID API, type adapters, Foldkit routes, review queue,
-  wiki, and health. Evidence: `docs/mvp-web-evidence.md`; independent browser
-  report at `/tmp/opencode/browser-acceptance/REPORT.md`.
+  wiki, and health. Evidence: `docs/mvp-web-evidence.md`; independent final
+  browser report at `/tmp/opencode/browser-final-polish/REPORT.md`.
 - **Migration hardening.** `70c6117`, `dd9d941`, `752803a`, `8677012`,
   `2d8ba25`, `b19f137`, `f4a4b76`, `5fbfc05`, `efac3f2`, `ee6705a`. Read-only
   private source snapshot, exact integers/blobs, live-lock protection,
   interrupted-run recovery, truthful skipped paths, and verification status.
   Evidence: `docs/mvp-migration-evidence.md`; independent migration log at
   `/tmp/opencode/mig/EVIDENCE.md`.
-- **Link checking.** `463741c`. `check` validates wikilinks and direct `.md`
-  links and returns check-time backlinks. Evidence:
-  `docs/mvp-link-check-evidence.md`.
+- **Link checking and derived backlinks.** `463741c`, `77f4175`. `check`
+  validates wikilinks and direct `.md` links. The disposable index now stores
+  derived link/backlink rows (schema version 2) and exposes a bounded
+  `backlinks` lookup rebuilt from files. Evidence:
+  `docs/mvp-link-check-evidence.md`, `docs/mvp-backlink-index-evidence.md`.
+- **Cache and migration source defaults.** `5002d7b`, `043de62`, `9d299fe`,
+  `057c83f`. `slipmem cache clear` clears only derived rows; migration resolves
+  `--db`, then `SLIPMEM_DB_PATH`, then XDG data and rejects an empty explicit
+  path; the web health wrapper test runs from outside the checkout. Evidence:
+  `docs/mvp-cli-evidence.md`, `docs/mvp-operator-docs-evidence.md`.
+- **Real migration sources and legacy read.** `c4e7aff`, `f6627a4`, `e1b7192`,
+  `56d009c`. Tests create and adopt databases through the real startup layer;
+  the core read-only `getLegacyNote`/`listLegacyNotes` API snapshots WAL safely
+  and warns on a missing type table; `slipmem legacy list/show` exposes the same
+  bounded read-only view with a one-release warning. Evidence:
+  `docs/mvp-legacy-compat-evidence.md`, `docs/mvp-cli-evidence.md`.
+- **Migration merge and crash hardening.** `c1f3bf1`. Merge identity is keyed by
+  `(type, legacyId)`, which makes cross-type duplicate IDs idempotent; running
+  manifests checkpoint, recovery derives written counts from target files, and
+  PID start time guards reused processes. Evidence:
+  `docs/mvp-legacy-compat-evidence.md` sections 3-4; independent
+  `/tmp/opencode/mig2/RESULTS.md`.
+- **Browser polish.** `b6f3cfe`. Per-type topic counts, fleeting include toggle,
+  fresh health counts, single service heading, and a truthful synthesis
+  capability gate. Evidence:
+  `/tmp/opencode/browser-final-polish/REPORT.md` (21/21 checks, 36 focused
+  tests).
+- **Full-paragraph synthesis validation.** `c6d61c1`, `c15c367`, `05d5191`.
+  The validator now requires an exact complete source paragraph/block in both
+  `text` and `quote`; it does not accept free-form sentences. Evidence:
+  `docs/mvp-approval-wiki-evidence.md`.
 
-### 5.2 Open release gaps
+### 5.2 Release gap status
 
-The matrix is authoritative; these are the bounded items that must not be
-mistaken for done:
+The matrix is authoritative. The plan-gap ledger that was open in the first
+draft now reads:
 
-1. **G1, clear-cache command.** Plan §12 requires one; only
-   `check --rebuild-index` and manual cache removal exist.
-2. **G2, backlinks in the index.** Plan §5.6 says the index records backlinks;
-   today `check` derives them in memory only.
-3. **G3, migration source default.** `--db` is mandatory; the Phase 5 plan says
-   to support the current default path and `SLIPMEM_DB_PATH`.
-4. **G4, read-only old-DB compatibility path.** Not implemented; the SQLite
-   archive is untouched but no runtime reads it.
-5. **G5, real migration fixture parity.** Current fixtures are hand-written and
-   match the checked-in migration SQL today, but no test creates the source by
-   running the real migrations.
-6. **G6, synthesized semantic validity.** The validator proves exact extractive
-   support, not entailment. This is a documented conservative implementation of
-   the plan, not a semantic guarantee.
-7. **G7, browser low-severity UX fixes.** D1-D4 from the independent browser run
-   were being addressed in uncommitted web work at this snapshot; rerun the
-   browser acceptance after they land.
-8. **G8, residual low migration reporting item.** Verify the
-   duplicate-`legacyId`-across-tables merge warning still described by the
-   independent migration log.
-9. **SEC-06/final gate.** The current working tree passes `bun run check`
-   (provisional, because web edits are uncommitted). Repeat it after those edits
-   land and add a clean-clone smoke run before a release claim.
+| Gap | Status | Landed evidence or remaining work |
+| --- | --- | --- |
+| G1, clear-cache command | closed | `slipmem cache clear` (`5002d7b`); `cache.test.ts`; clears only derived rows. |
+| G2, backlinks in the index | closed | Schema v2 `links` table and bounded `backlinks` API (`77f4175`); rebuilds from files. See `docs/mvp-backlink-index-evidence.md`. |
+| G3, migration source default | closed | `--db`, `SLIPMEM_DB_PATH`, then XDG data; empty `--db` rejected (`043de62`, `9d299fe`). |
+| G4, read-only old-DB path | closed | Core `getLegacyNote`/`listLegacyNotes` reader (`f6627a4`, `e1b7192`) plus `slipmem legacy list/show` (`56d009c`); bounded, warning-first, no write path. See `docs/mvp-legacy-compat-evidence.md`. |
+| G5, real migration fixture parity | closed, narrowed | Source created through `makeDatabaseLayer`/`runMigrations` plus real note services (`c4e7aff`); legacy bootstrap adopts through the same path. No sanitized production dump. |
+| G6, synthesized semantic validity | conservative | Exact complete-paragraph extraction is required in both `text` and `quote` (`05d5191`); this is not entailment or factual verification. |
+| G7, browser D1-D4 | closed | `b6f3cfe`; final-polish report 21/21 checks and 36 focused tests; web/API files unchanged through `e408e47`. |
+| G8, duplicate `legacyId` reporting | closed | Merge identity keyed by `(type, legacyId)` plus crash/report fixes (`c1f3bf1`); regression asserts idempotent cross-type merge. |
+| SEC-06, full gate | pending | Last green full gate is `370 pass` in `docs/mvp-backlink-index-evidence.md`, before follow-ups `043de62` through `e408e47`. Rerun on the landed head and in a clean checkout. |
+| Clean-clone quickstart | pending | A separate agent is verifying install/init/local loop; no result recorded here. |
+| Product video | pending | The tour scaffold is committed; the final recording is not part of this log's evidence. |
 
 ## 6. Architectural pointers
 
@@ -414,6 +436,7 @@ mistaken for done:
 - Fixture corpus: `packages/core/fixtures/phase0/README.md`.
 - Fixture tests: `packages/core/src/markdown/phase0-fixtures.test.ts`.
 - Current criterion record: `docs/mvp-acceptance-matrix.md`.
+- Release gate and evidence index: `docs/mvp-release-verification.md`.
 - Current runtime paths: `packages/server/src/markdown.ts`,
   `packages/mcp/src/layer.ts`, `packages/cli/src/context.ts`,
   `packages/web/src/entry.server.ts`.
@@ -445,20 +468,16 @@ The Phase 1 surface-wiring task is complete; CLI, MCP, web, approval, wiki, and
 migration all consume the Markdown services. The remaining work is release
 hardening, not a source-of-truth cutover.
 
-1. **Finish the in-flight web UX fixes** for browser findings D1-D4, then rerun
-   the independent browser acceptance and record a fresh report.
-2. **Repeat the clean full gate** (`bun run check`) and run a clean-clone
-   quickstart after the web edits land. The current working tree passes, but that
-   run includes uncommitted files.
-3. **Decide and implement the explicit plan gaps:** clear-cache command (G1),
-   index-recorded backlinks (G2), migration default source (G3), and the
-   read-only legacy DB compatibility path (G4). Each needs either a narrow
-   implementation or a plan amendment; do not leave them implicit.
-4. **Add real migration fixture parity** (G5): create a source DB through the
-   actual checked-in migration path, insert representative rows, and import it
-   in a regression test.
-5. **Re-check the residual migration warning** in G8 and the synthesized-wiki
-   wording in G6. Keep semantic entailment out of any claim.
+1. **Record a full `bun run check` on the landed head** and repeat it in a clean
+   checkout. The last full gate predates `043de62` through `e408e47`; focused
+   suites are not a substitute. This is the SEC-06 release gate.
+2. **Finish the clean-clone quickstart verification** (clone, install, init,
+   create/read/search, MCP, web) and record the result.
+3. **Do not broaden claims.** There is no sanitized production database import
+   (G5), no semantic entailment guarantee (G6), and no full gate yet (SEC-06).
+   Keep those limits in the README and release notes.
+4. **Record the final product video/tour** if it remains a release deliverable;
+   the scenario is scaffolded, but the recording is pending.
 
 Do not duplicate the parser, path, locking, ranking, approval, or wiki rules in
 a surface. The acceptance matrix is the source of truth for what is still open.

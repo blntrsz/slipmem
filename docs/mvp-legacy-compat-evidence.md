@@ -123,8 +123,10 @@ Report shape (both functions):
 - `schema: 1`, `compatibility: "one-release-read-only"`, `readOnly: true`
 - `source: { path, bytes, sha256 }` for the untouched main database
 - `warnings`: always includes `read-only-one-release`; table-level codes are
-  `unsupported-note-table`, `missing-required-column`, and (for `get`)
-  `missing-note-table`
+  `unsupported-note-table`, `missing-required-column`, and
+  `missing-note-table`. `missing-note-table` applies when `get` names a type
+  with no table and when `list` is given an explicit `type`; an untyped `list`
+  stays silent about a type that never existed in that database.
 - list adds `type`, `offset`, `limit`, `total`, `rows`
 - get adds `type`, `legacyId`, `row: LegacyReadRow | null`
 
