@@ -56,16 +56,12 @@ Documented command forms matched the help text, including:
 - `approve <proposal-id> [--json]`
 - `reject <proposal-id> [--json]`
 
-Known entrypoint gap: `slipmem mcp` and `slipmem web` are listed by help but
-fail in this tree because `packages/cli/src/commands/wrappers.ts` resolves
-`repositoryRoot` to `packages/` and then joins `packages/mcp` / `packages/web`,
-producing `packages/packages/...`. The guide marks these wrappers as broken and
-uses the direct entry points. Observed:
-
-```text
-$ SLIPMEM_DIR=... bun run slipmem -- mcp
-error: Module not found ".../packages/packages/mcp/src/main.ts"
-```
+Known entrypoint gap resolved after the first draft: `slipmem mcp` and
+`slipmem web` previously resolved `repositoryRoot` to `packages/`, producing
+`packages/packages/...`. The wrappers now resolve the checkout root four levels
+up, start from the caller's cwd, and pass the resolved note root to the child.
+The CLI workstream added real launch tests; see
+[`docs/mvp-cli-evidence.md`](./mvp-cli-evidence.md).
 
 ## 3. CLI note workflow smoke test
 
@@ -126,12 +122,21 @@ Observed:
   and file paths and wrote nothing under the note root.
 - `--out /tmp/wiki.md` wrote outside the root.
 - `--out "$ROOT/wiki.md"` exited 2: `--out must point outside the note root`.
-- `--mode synthesized` exited 2 with `wiki-synthesis-unavailable`; no page was
-  written.
+- A synthesized request without a configured synthesizer exits 1 with
+  `synthesis-config`; it does not downgrade or write a page.
+- A local fixture agent configured through `--agent`/`--agent-arg` produced a
+  cited synthesized page over argv with bounded JSON on stdin. The fixture used
+  the documented `SLIPMEM_WIKI_AGENT_UNSAFE=1` opt-in because the test host's
+  bubblewrap probe failed.
+- `--model local-model` exited 1 with `synthesis-adapter-unsupported`; the CLI
+  ships no model adapter and never guesses a provider.
+- A missing `--out` parent and a symlinked parent into the note root both
+  exited 2 before writing.
 - Cache path was `~/.cache/slipmem/index/<root-key>/index.sqlite`, directory
   mode `0700`, file mode `0600`.
 - Deleting the cache directory and rerunning `search` recreated the index and
-  returned the same result.
+  returned the same result. There is no `cache clear` command; the guide
+  documents `check --rebuild-index` and manual removal with no process running.
 
 ## 5. Git conflict recovery
 
@@ -186,7 +191,26 @@ Observed:
   `manifest.json`, `source-backup.db`, `quarantine/*.json`, and
   `quarantine/index.json` remained; source SHA unchanged.
 - Quarantine files contained the full raw source row and the issue code(s); text
-  was not truncated.
+  was not truncated. A note table missing required columns is no longer skipped
+  at table level: every row becomes an error issue with its complete raw row and
+  is quarantined. The remaining table-level case, an unsupported object such as
+  a view at a note table name, has no rows to read and is reported in the
+  plan/manifest without a row quarantine file.
+- A pre-write failure (for example a refused non-empty root) prints
+  `verification: not run`; it does not present the empty report's `ok: true` as a
+  successful target verification.
+- A merge re-run reports effective collisions in `counts.collisions` (zero when
+  all rows were already imported), and each skipped note points at the actual
+  existing target path; the human sample mapping prints that path.
+- A manifest left `running` by a dead process is marked `interrupted` and appears
+  in `interruptedRuns` and the human "Interrupted runs" section. A live owner is
+  reported as `interrupted-run-active` and is never overwritten.
+- JSON output tags unsafe integers and BLOBs as `$bigint` and `$base64` instead
+  of rounding them or failing serialization.
+- `source-changed` before the backup or writes stops the import with no notes.
+  The final post-write check can also fail with `source-changed`; in that case
+  imported notes, backup, manifest, and quarantine remain and must be inspected
+  before any retry. The guide documents both phases.
 
 ## 7. MCP writes and approval policy
 
@@ -284,20 +308,20 @@ Verified in the current implementation, not only from prose:
 
 The guide intentionally marks these gaps:
 
-- `slipmem mcp` and `slipmem web` are listed by help but currently fail due to
-  the wrapper path bug. Direct `bun run packages/mcp/src/main.ts` and
-  `bun run web:build && bun run web:serve` work.
-- `slipmem check --help` says it validates links; the checker implementation does
-  not inspect link targets.
 - `slipmem cache clear` does not exist; use `check --rebuild-index` or manually
   remove the cache with no process running.
-- Synthesized wiki mode is implemented in core but the CLI reports it as
-  unavailable and writes no page.
+- The CLI ships no model adapter registry. A `--model` request is forwarded to
+  the core and fails closed with `synthesis-adapter-unsupported` unless the
+  embedding application registered that exact ID. The agent path is verified.
+- Agent synthesis depends on a working bubblewrap probe. When the probe fails,
+  the core refuses the agent unless the documented unsafe
+  `SLIPMEM_WIKI_AGENT_UNSAFE=1` opt-in is set; the guide states the privilege
+  consequence rather than claiming sandbox isolation.
 - The root README and package READMEs were being updated by other workers during
   this task and were not edited here.
-- The working tree was not frozen. The final smoke run was against HEAD
-  `955ee07` plus concurrent changes; re-run the commands above after the cutover
-  settles.
+- The working tree was not frozen. The final smoke run was against the CLI
+  commits plus concurrent core changes; re-run the commands above after the
+  cutover settles.
 
 ## 11. Verification commands used
 
@@ -314,6 +338,10 @@ bun run slipmem -- topics --dir <disposable>
 bun run slipmem -- check --dir <disposable>
 bun run slipmem -- check --rebuild-index --dir <disposable>
 bun run slipmem -- wiki <topic> --dir <disposable>
+bun run slipmem -- wiki <topic> --mode synthesized --agent "<bun> <fixture-agent>" \
+  --agent-arg=--fixture-flag --dir <disposable>
+SLIPMEM_DIR=<root> bun run slipmem -- mcp        # MCP initialize over stdio
+SLIPMEM_DIR=<root> PORT=<port> bun run slipmem -- web
 bun run slipmem -- migrate sqlite --db <db> --dry-run --dir <disposable>
 bun run slipmem -- migrate sqlite --db <db> --dir <disposable>
 bun run slipmem -- migrate sqlite --db <db> --merge --dir <disposable>
@@ -326,3 +354,37 @@ SLIPMEM_DIR=<root> PORT=<port> bun run web:serve
 
 MCP and API smoke clients were disposable Bun scripts under `/tmp/opencode/`;
 no repository source or fixture was modified by the tests.
+
+## 12. Follow-up verification after the CLI fixes
+
+The operator guide was updated again when the CLI workstream closed the
+documented gaps:
+
+```text
+$ bun test packages/cli
+ 45 pass
+ 0 fail
+ 383 expect() calls
+Ran 45 tests across 12 files.
+```
+
+The added launch coverage runs from a disposable directory outside the
+repository:
+
+- `slipmem mcp` starts the real stdio server and completes an MCP `initialize`
+  handshake with `--dir` pointing at the disposable root.
+- `slipmem web` launches the real Vite entry point with forwarded argv from the
+  same disposable cwd and exits successfully without a `packages/packages`
+  path error. The operator guide's separate HTTP section covers the serving
+  surface.
+- Synthesized wiki fixtures cover argv-only agent execution, environment
+  selection, the extractive override, missing synthesizer, unregistered model,
+  mutually exclusive flags, and the sandbox/unsafe opt-in boundary.
+- Migration coverage asserts the human report prints `verification: not run`
+  for a pre-write failure, uses effective collisions on a merge re-run, prints
+  actual skipped target paths and interrupted runs, and tags unsafe integers and
+  blobs in JSON.
+
+The source-of-truth evidence for these CLI changes remains
+[`docs/mvp-cli-evidence.md`](./mvp-cli-evidence.md). This note records the
+operator-facing commands and the guide's accuracy checks.

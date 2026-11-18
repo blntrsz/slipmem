@@ -15,7 +15,7 @@ and are not written as if they work.
 | --- | --- | --- |
 | CLI notes | **available** | `init`, `new`, `list`, `show`, `edit`, `delete` |
 | CLI recall | **available** | `search`, `topics`, `check`, including `check --rebuild-index` |
-| CLI wiki | **available, extractive** | `wiki` writes a cited page to stdout or `--out`; synthesized mode is reported unavailable |
+| CLI wiki | **available** | `wiki` writes a cited extractive page to stdout or `--out`; opt-in synthesized pages use a sandboxed local agent or a registered model adapter |
 | CLI migration | **available** | `migrate sqlite --db <path> [--dry-run] [--merge]` |
 | CLI approvals | **available** | `review`, `approve`, `reject` over the shared approval service |
 | stdio MCP | **available** | bounded read tools plus policy-enforced write tools over `.slipmem/` |
@@ -23,8 +23,8 @@ and are not written as if they work.
 | Human review / approve / reject | **available** | CLI `review`/`approve`/`reject` and local web/API `/api/pending` |
 | Browser UI | **available locally** | list, detail, new, edit, search, topics, wiki, review, and health routes load from the local server |
 | HTTP MCP endpoint | **mounted by the web server** | `/mcp` shares the stdio registrations when the web build is served; stdio remains the simplest local setup |
-| `slipmem mcp` / `slipmem web` wrappers | **listed, currently broken** | they resolve `packages/packages/...` in this tree; use the direct entry points instead |
-| Clear-cache CLI | **planned** | use `check --rebuild-index` or manual cache removal |
+| `slipmem mcp` / `slipmem web` wrappers | **available** | they resolve the note root in the caller's context and start the same MCP stdio or Vite development entry point |
+| Clear-cache CLI | **not shipped** | use `check --rebuild-index` or the documented manual cache removal |
 
 When in doubt, run `bun run slipmem -- --help`. The command list is the
 authoritative list of what the binary accepts.
@@ -42,8 +42,10 @@ the same files.
 - There are no `fleeting/`, `permanent/`, `literature/`, or date
   subdirectories. Type is frontmatter metadata.
 - `.slipmem/.state/` is local implementation state (locks, migration runs,
-  pending proposals). It is gitignored by the repository's generated
-  `.gitignore`, is not a note, and is not part of backup or sync.
+  pending proposals). The generated `.slipmem/.gitignore` contains exactly
+  `.state/`, so Git ignores that directory but still tracks the notes, README,
+  and `.gitignore` itself. `.state/` is not a note and is not part of backup or
+  sync.
 - The search index lives outside the note root. The default is
   `$XDG_CACHE_HOME/slipmem/index/<root-key>/index.sqlite`, falling back to
   `~/.cache/slipmem/index/<root-key>/index.sqlite`.
@@ -192,18 +194,50 @@ through `edit`.
 bun run slipmem -- wiki agent-memory
 bun run slipmem -- wiki agent-memory --include-fleeting --limit 10
 bun run slipmem -- wiki agent-memory --out /tmp/agent-memory.md
+
+# Opt-in synthesis with a reviewed local agent.
+bun run slipmem -- wiki agent-memory --mode synthesized \
+  --agent "/opt/local-synthesizer --flag" --agent-arg "--model=small"
+
+# The same selection through the environment used by other surfaces.
+SLIPMEM_WIKI_SYNTHESIS=agent \
+SLIPMEM_WIKI_AGENT=/opt/local-synthesizer \
+SLIPMEM_WIKI_AGENT_ARGS='["--flag","--model=small"]' \
+bun run slipmem -- wiki agent-memory
 ```
 
 `wiki` selects permanent and literature notes by default, adds fleeting notes
 only with `--include-fleeting`, and quotes each selected note with its ID and
 file citation. Default 10 notes, hard maximum 25. Output goes to stdout unless
-`--out` names a path **outside** `.slipmem/`; an output path inside the note root
-is rejected. The wiki is derived and is never a stored note.
+`--out` names a path **outside** `.slipmem/`. The parent directory must already
+exist. A symlinked parent, or an existing output symlink, that resolves into the
+note root is rejected before anything is written. The wiki is derived and is
+never a stored note.
 
-This build supports extractive mode only. `--mode synthesized`, `--model`, and
-`--agent` exit 2 with `wiki-synthesis-unavailable`; the command does not silently
-downgrade or write a partial page. Note text is quoted as untrusted data and is
-never followed as instructions.
+Extractive mode is the default and the guaranteed fallback. Synthesized mode is
+opt-in with `--mode synthesized` plus `--agent` or `--model`, or with
+`SLIPMEM_WIKI_SYNTHESIS`. `--agent` is split into an argv array and started with
+`shell: false`; there is no shell expansion, globbing, or command substitution.
+Use `--agent-arg` (for example `--agent-arg=--model=small`) for extra arguments.
+The bounded selected notes arrive as JSON on stdin, and the agent must print
+`{"sentences":[{"text":"...","noteId":"...","quote":"..."}]}`. Every sentence
+needs a selected note ID, an exact supporting quote, and `text` copied from that
+quote (whitespace, wrapping quotes, and terminal punctuation are normalized). A
+paraphrase, widening, or opposite claim is omitted even if a real span exists;
+this is extractive validation, not semantic entailment.
+
+The core probes for a working bubblewrap sandbox before running an agent. If the
+probe fails, the command fails closed. `SLIPMEM_WIKI_AGENT_UNSAFE=1` is the
+explicit, documented unsafe opt-in to run the agent without that sandbox; the
+process then has the slipmem user's full filesystem privileges. Use it only for a
+reviewed local command.
+
+`--model <id>` is passed to the core adapter registry. The CLI ships no model
+providers, so an unregistered ID fails with `synthesis-adapter-unsupported`
+instead of guessing a service. `--mode extractive` forces the fallback and
+cannot be combined with `--model` or `--agent`. A synthesized request never
+silently downgrades or writes a partial page. Note text is quoted as untrusted
+data and is never followed as instructions.
 
 ### Validate and rebuild
 
@@ -214,13 +248,15 @@ bun run slipmem -- check --rebuild-index
 
 `check` is read-only with respect to notes. It reports errors and warnings for
 note filenames, metadata, body limits, duplicate IDs, unexpected files, slug
-drift, and index drift. Errors exit 1; warnings do not fail the command. It
-never renames, repairs, or resolves anything.
+drift, internal link targets, and index drift. Internal wikilinks and direct
+`.md` links are resolved against the flat root; broken links are errors, and
+traversal, absolute paths, and separator injection are reported as unsafe.
+Errors exit 1; warnings do not fail the command. It never renames, repairs, or
+resolves anything.
 
 `--rebuild-index` rebuilds the disposable index first and then checks drift.
 This is the normal recovery command after an external edit, a manual note move,
-or a deleted cache. The command's help text mentions links; the current checker
-does not validate link targets.
+or a deleted cache.
 
 ### Deleting and retiring notes
 
@@ -276,7 +312,8 @@ Preferred recovery:
 bun run slipmem -- check --rebuild-index
 ```
 
-Manual clear-cache fallback, with no slipmem CLI or web/MCP process running:
+There is no `slipmem cache clear` command. Manual removal is the documented
+fallback, with no slipmem CLI or web/MCP process running:
 
 ```sh
 root=$(realpath .slipmem)
@@ -284,10 +321,9 @@ key=$(printf '%s' "$root" | sha256sum | cut -c1-24)
 rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/slipmem/index/$key"
 ```
 
-The next `search`, `topics`, or `check --rebuild-index` recreates it. There is no
-`slipmem cache clear` command yet. If FTS5 is unavailable, the index reports
-`linear` mode and search still works with the same bounds; that is a degraded
-mode, not note loss.
+The next `search`, `topics`, or `check --rebuild-index` recreates it. If FTS5 is
+unavailable, the index reports `linear` mode and search still works with the same
+bounds; that is a degraded mode, not note loss.
 
 ### Locking
 
@@ -320,6 +356,9 @@ Common `check` outcomes:
 | `slug-drift` | Title no longer matches the filename slug | Usually leave it; renaming is not automatic |
 | `unexpected-file` | README, `.gitignore`, or another non-note file | Informational; it is ignored by the index |
 | `duplicate-id` | Two files resolve to the same ID | Resolve manually; do not delete blindly |
+| `broken-link` | A wikilink or `.md` link names no note ID in the flat root | Fix the target or restore the note; links are never rewritten automatically |
+| `unsafe-link` | A link uses traversal, an absolute path, or separator injection | Replace it with a direct note ID or `.md` filename |
+| `malformed-link` | A wikilink has an empty target | Use `[[note-id]]` or a same-note `[[#heading]]` anchor |
 
 ## 6. Git backup, restore, and conflict recovery
 
@@ -335,9 +374,11 @@ git status --short .slipmem   # confirm .state/ is not staged
 git commit -m "Update slipmem notes"
 ```
 
-The generated `.slipmem/.gitignore` excludes `.state/`. The cache is outside the
-note root, so it is not in the repository. A commit of `.slipmem/*.md` plus the
-generated README and `.gitignore` is the complete portable backup.
+The generated `.slipmem/.gitignore` contains `.state/`, so Git ignores that
+directory while still tracking the notes, README, and `.gitignore` itself. The
+cache is outside the note root, so it is not in the repository. A commit of
+`.slipmem/*.md` plus the generated README and `.gitignore` is the complete
+portable backup.
 
 ### Restore
 
@@ -408,21 +449,40 @@ A real import:
 
 - Refuses a non-empty target root unless `--merge` is given.
 - Creates `.slipmem/.state/migrations/<run-id>/` with `manifest.json`,
-  `source-backup.db`, and `quarantine/`.
-- Verifies the source database and its WAL bytes before and after planning and
-  backup. If they change, it fails with `source-changed` and writes no notes.
+  `source-backup.db`, and `quarantine/`. A newly created target root also gets a
+  `.gitignore` that ignores `.state/`; an existing user `.gitignore` is appended
+  to only when it does not already ignore that directory, never replaced.
+- Verifies the source database and its WAL bytes before planning, before the
+  backup, while backing up, and after writing. A change before writing stops the
+  import with `source-changed` and no notes; a change after writing fails the
+  command but leaves the imported notes and audit files as described below.
 - Backs up the source with a consistent SQLite copy, checks `integrity_check`,
   and compares table counts.
 - Renders every note through the shared Markdown serializer and parser, writes
   atomically, then re-reads and compares content hashes.
 - Imports valid rows even when some source rows are malformed. It then fails
   with `invalid-rows`; the valid notes, manifest, backup, and quarantine remain.
-- Preserves every invalid row's full raw row in
+- Preserves every **row-level** invalid row's full raw row in
   `quarantine/<table>-row-<n>-<legacy-id>.json` plus `quarantine/index.json`.
-  It never truncates or repairs the source text.
+  It never truncates or repairs the source text. A note table with missing
+  required columns is not silently skipped: every row in it becomes an
+  error-severity issue with its complete raw row, so the rows are quarantined
+  and the run fails with `invalid-rows`. The remaining narrow case, an
+  unsupported object (such as a view) occupying a note table name, has no rows
+  to read; it is reported at table level in the plan/manifest and is not a row
+  quarantine file.
 - In merge mode, matches existing notes by `legacyId` and skips them. A matching
   `legacyId` with different content is reported as `skipped-conflict` and is not
   overwritten. Keep `legacyId` if you want idempotent re-runs.
+
+`source-changed` has two phases. If the source fingerprint changes between
+planning and backup, or while the backup is being created, the import stops
+**before any note is written**; the CLI prints `verification: not run`. If the
+fingerprint changes only after notes were written, the command still fails with
+`source-changed`, but valid notes, the manifest, the backup, and quarantine
+already remain. Inspect the manifest before retrying, stop any writer touching
+the source, and do not assume the target root is untouched. A dry run still
+writes nothing and reports `verification: not applicable`.
 
 The source SQLite file is never deleted or rewritten. The migration is additive:
 the untouched source database is the rollback for source data. For the target,
@@ -438,9 +498,20 @@ bun run slipmem -- migrate sqlite --db /path/to/slipmem.db \
 
 Use `--merge` only after reviewing the dry run. A re-run over notes previously
 imported by slipmem reports them as `skipped-legacy-id`; it does not duplicate
-them. A plan may show `collisions` because existing filenames are taken, but
-those rows are still skipped by `legacyId`. Do not remove `legacyId` from a note
-if you want idempotent re-runs.
+them. The planner may list filename collisions because existing files occupy the
+planned names, but `report.counts.collisions` is the effective count for the run
+and drops collisions that disappear when a `legacyId` is already imported. The
+human report labels it `collisions (effective)`, and a skipped note points at the
+actual existing file and target path (with `plannedFilename` when it differs).
+Do not remove `legacyId` from a note if you want idempotent re-runs.
+
+If an earlier import process died after writing its `running` manifest, the next
+import detects the dead owner, marks that manifest `interrupted`, and reports it
+under `interruptedRuns` and in the human "Interrupted runs" section. A manifest
+owned by a live process is never overwritten; it is reported as
+`interrupted-run-active` so you can stop that process or inspect the run. Merge
+mode then imports only the missing `legacyId` rows and reuses the notes the
+interrupted run already wrote.
 
 ### Verify and inspect
 
@@ -450,10 +521,22 @@ bun run slipmem -- list --dir /path/to/notes
 ```
 
 `--json` returns the complete report, including per-note status, source
-fingerprints, backup verification, target verification, counts, warnings, and
-quarantine paths. Inspect the manifest under `.state/migrations/<run-id>/`
-before removing anything. The migration backup is local state: it is gitignored,
-so copy it elsewhere if it is part of your rollback plan.
+fingerprints, backup verification, target verification, effective counts,
+interrupted runs, warnings, and quarantine paths. The human report prints
+`verification: not run` when the run stopped before writing any note,
+`verification: not applicable` for a dry run, and `verification: OK` or `FAILED`
+only after a real target check. It also prints each sampled note's actual
+`targetPath` and any interrupted run manifest.
+
+SQLite values that cannot be represented exactly in a JavaScript number are
+preserved rather than rounded: JSON output and manifests tag unsafe integers as
+`{"$bigint":"..."}`, BLOBs as `{"$base64":"..."}`, and non-finite numbers as
+`{"$number":"..."}`. Check the raw value under the tag when comparing an
+imported note with the source.
+
+Inspect the manifest under `.state/migrations/<run-id>/` before removing
+anything. The migration backup is local state: it is gitignored, so copy it
+elsewhere if it is part of your rollback plan.
 
 ## 8. Local MCP access for agents
 
@@ -623,9 +706,16 @@ HTTP MCP endpoint has the same tool names, bounds, and approval policy as stdio.
 It is also unauthenticated and loopback-only in practice; do not expose it.
 
 Use stdio for MCP clients unless you specifically need the HTTP transport. The
-`slipmem mcp` wrapper is currently broken in this tree (it resolves
-`packages/packages/mcp`); use `bun run packages/mcp/src/main.ts` from the
-repository root instead.
+`slipmem mcp` wrapper now resolves the caller's note root (`SLIPMEM_DIR`,
+ancestor `.slipmem/`, or `--dir`) and starts `packages/mcp/src/main.ts` from the
+caller's working directory. It exits with the child process status. With `--dir`
+the wrapper passes the resolved absolute root to the child through
+`SLIPMEM_DIR`:
+
+```sh
+SLIPMEM_DIR=/path/to/notes bun run slipmem -- mcp
+bun run slipmem -- mcp --dir /path/to/notes
+```
 
 ## 9. Local HTTP security
 
@@ -662,8 +752,19 @@ the same Markdown root. The verified page routes are `/`, `/notes/<id>`,
 `/api/search`, `/api/topics`, `/api/wiki/<topic>`, and `/api/pending` back them.
 The process binds to loopback unless `HOST` is set.
 
-Use `bun run web:serve` (after `web:build`). The `slipmem web` wrapper is
-currently broken in this tree because it resolves the wrong repository path.
+Use `bun run web:serve` (after `web:build`) for the production server. The
+`slipmem web` wrapper starts the Vite development host — the same entry point as
+`bun run web` — after resolving the caller's note root. It reads `HOST` and
+`PORT` through the Vite config and passes the absolute root to the child as
+`SLIPMEM_DIR`:
+
+```sh
+HOST=127.0.0.1 PORT=3000 bun run slipmem -- web
+bun run slipmem -- web --dir /path/to/notes
+```
+
+The wrapper inherits stdio, so stop it with the normal interrupt key. It is not a
+production server and does not run `web:build`.
 
 ### Do not expose this server
 
@@ -687,31 +788,30 @@ to a network you do not fully trust, even if the UI loads successfully.
 | MCP delete returns `pending_approval` | Expected approval policy | Nothing was deleted; run `review` then `approve` or `reject` |
 | `delete` refuses without `--yes` | Non-interactive session | Re-run with `--yes` after checking the ID, or delete interactively |
 | MCP exits immediately | Note root missing or invalid | Run `init`, set `SLIPMEM_DIR`, check stderr |
-| `slipmem mcp` says module not found under `packages/packages/...` | Wrapper path bug in this tree | Use `bun run packages/mcp/src/main.ts` |
-| `slipmem web` says module not found under `packages/packages/...` | Wrapper path bug in this tree | Use `bun run web:build && bun run web:serve` |
+| `synthesis-config` from `wiki` | Synthesized mode has no usable synthesizer, or no working agent sandbox | Configure `SLIPMEM_WIKI_AGENT`/`SLIPMEM_WIKI_AGENT_ARGS`, install a usable `bwrap`, or use `--mode extractive` |
+| Agent starts but is refused | Bubblewrap probe failed | Install usable user namespaces/bubblewrap, or set the documented unsafe `SLIPMEM_WIKI_AGENT_UNSAFE=1` for a reviewed command |
+| `synthesis-adapter-unsupported` | `--model`/env model ID has no registered adapter in this CLI | Use `--agent` or `--mode extractive`; the CLI ships no model providers |
 | `--limit` rejected | Limit outside 1..50 (or 1..200 for topics) | Use a bounded value |
-| `wiki-synthesis-unavailable` | Synthesized mode not shipped | Use `--mode extractive` |
+| `--out` rejected before writing | Output parent missing, or a symlink resolves into the note root | Create the parent directory and choose a regular path outside `.slipmem/` |
 | `root-not-empty` from migration | Target already has notes | Add `--merge` after reviewing the dry run |
-| `source-changed` from migration | A writer changed the database during import | Stop writers, verify the source, rerun; no notes were written |
+| `source-changed` before notes | A writer changed the database before the backup or writes | Stop writers, verify the source, rerun; no notes were written |
+| `source-changed` after notes | The final source fingerprint changed after writes | Inspect the manifest; valid notes, backup, and quarantine remain; stop writers before any retry |
+| `interrupted-run` / `interrupted-run-active` | An earlier import left a `running` manifest, or its owner is still alive | Review "Interrupted runs"; merge imports missing rows, and never stop a live owner by deleting its manifest |
 
 ## 11. Planned commands and documentation gaps
 
-These are not available or not reliable in this tree. They are listed so the
-final cutover can update this guide without pretending they work:
+These are not available in this tree. They are listed so the cutover can update
+this guide without pretending they work:
 
-- A `slipmem cache clear` command
-- Synthesized wiki mode exposed through the CLI
-- Working `slipmem mcp` and `slipmem web` wrappers (the underlying entry points
-  work; the wrappers currently resolve the wrong path)
+- A `slipmem cache clear` command. Use `check --rebuild-index` or the manual
+  removal steps in section 5.
 
 Known documentation gaps to resolve at final update:
 
 - The root README and package READMEs still describe the SQLite-first runtime
   and are owned elsewhere.
-- `slipmem check --help` mentions link validation; the checker does not inspect
-  link targets.
 - The browser UI page routes, approval API, and `/mcp` mount were verified
   locally; any later UI or transport changes must be rechecked before this guide
   is treated as final.
-- `slipmem mcp` and `slipmem web` are listed by help but currently fail; fix or
-  remove them before publishing this guide as final.
+- Synthesized wiki behavior depends on the core sandbox probe and the model
+  adapter registry. Re-run the agent and model examples after either changes.
