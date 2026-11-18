@@ -304,6 +304,57 @@ test("canonical writes enforce type, content, reference, id, and limit rules", a
   })
 })
 
+test("writes reject the legacy topics field instead of silently dropping tags", async () => {
+  await withApi(async (api) => {
+    const create = await api.handler(
+      request("/api/notes", "POST", {
+        type: "permanent",
+        title: "Legacy write",
+        content: "Must not lose metadata.",
+        topics: ["legacy"],
+      }),
+    )
+    expect(create.status).toBe(400)
+    const createBody = (await create.json()) as {
+      readonly code: string
+      readonly error: string
+    }
+    expect(createBody.code).toBe("invalid-field")
+    expect(createBody.error).toContain("tags")
+    expect(createBody.error).toContain("legacy `topics` frontmatter")
+
+    const notes = await api.handler(request("/api/notes"))
+    expect(await readNotes(notes)).toEqual([])
+
+    const created = await api.handler(
+      request("/api/notes", "POST", {
+        type: "permanent",
+        title: "Canonical write",
+        content: "Tags stay intact.",
+        tags: ["agent-memory"],
+      }),
+    )
+    expect(created.status).toBe(201)
+    const note = await readNote(created)
+
+    const update = await api.handler(
+      request(`/api/notes/${note.id}`, "PUT", {
+        topics: ["legacy"],
+      }),
+    )
+    expect(update.status).toBe(400)
+    const updateBody = (await update.json()) as {
+      readonly code: string
+      readonly error: string
+    }
+    expect(updateBody.code).toBe("invalid-field")
+    expect(updateBody.error).toContain("tags")
+
+    const reread = await api.handler(request(`/api/notes/${note.id}`))
+    expect((await readNote(reread)).tags).toEqual(["agent-memory"])
+  })
+})
+
 test("search and tags refresh the disposable index and stay bounded", async () => {
   await withApi(async (api) => {
     const created = await api.handler(

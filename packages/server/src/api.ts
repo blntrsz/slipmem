@@ -277,6 +277,23 @@ const optionalStringArray = (
 const isJsonContentType = (contentType: string | undefined): boolean =>
   contentType?.toLowerCase().startsWith("application/json") === true
 
+/**
+ * The frontmatter reader still accepts legacy `topics` on existing notes, but
+ * no write surface accepts it. Ignoring the key would report success while
+ * silently dropping the caller's tags, so fail closed with the canonical field
+ * name instead.
+ */
+const rejectLegacyTagsField = (
+  body: Readonly<Record<string, unknown>>,
+): Effect.Effect<void, ApiError> =>
+  Object.prototype.hasOwnProperty.call(body, "topics")
+    ? fail(
+        400,
+        "invalid-field",
+        "The `topics` write field was renamed to `tags`. Use `tags`; legacy `topics` frontmatter is only read for existing notes.",
+      )
+    : Effect.void
+
 const MAX_JSON_BODY_BYTES = Markdown.MAX_NOTE_FILE_BYTES + 64 * 1024
 
 /**
@@ -390,6 +407,7 @@ const readCreateBody = (
   forcedType?: Markdown.NoteType,
 ): Effect.Effect<CreateBody, ApiError> =>
   Effect.gen(function* () {
+    yield* rejectLegacyTagsField(body)
     const type =
       forcedType === undefined
         ? yield* parseType(body.type)
@@ -421,6 +439,7 @@ const readUpdateBody = (
   body: Readonly<Record<string, unknown>>,
 ): Effect.Effect<UpdateBody, ApiError> =>
   Effect.gen(function* () {
+    yield* rejectLegacyTagsField(body)
     const type =
       body.type === undefined ? undefined : yield* parseType(body.type)
     const title =

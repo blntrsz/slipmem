@@ -128,7 +128,11 @@ const BuildTagWiki = readOnlyTool(Tool.make("build_tag_wiki", {
 const localTool = <T extends Tool.Any>(tool: T): T =>
   tool
     .annotate(Tool.OpenWorld, false)
-    .annotate(Tool.Destructive, false) as T
+    .annotate(Tool.Destructive, false)
+    // Write inputs are a closed contract. In particular, a stale client that
+    // still sends the removed `topics` key must fail instead of reporting a
+    // successful write whose tags were silently discarded.
+    .annotate(Tool.Strict, true) as T
 
 const CreateFleetingNote = localTool(Tool.make("create_fleeting_note", {
   description:

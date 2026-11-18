@@ -165,6 +165,40 @@ test("the MCP process receives only the submitMcp approval capability", async ()
   }
 })
 
+test("write tools reject the removed topics key instead of dropping tags", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const create = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({
+          name: "create_fleeting_note",
+          arguments: { title: "Legacy", content: "Body", topics: ["legacy"] },
+        }),
+    )
+
+    expect(create.isError).toBe(true)
+    expect((create.content[0] as { text: string }).text).toContain("topics")
+
+    const notes = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({ name: "list_fleeting_notes", arguments: {} }),
+    )
+    expect((notes.structuredContent as { notes: ReadonlyArray<Note> }).notes).toEqual(
+      [],
+    )
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
 test("list tools default to ten and cap at fifty", async () => {
   const disposable = await makeDisposableRoot()
   const clock = makeTestClock()
