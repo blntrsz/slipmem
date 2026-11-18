@@ -36,7 +36,7 @@ const note = (
     id,
     title,
     content,
-    topics: ["agent-memory"],
+    tags: ["agent-memory"],
     path: `/notes/${id}.md`,
     contentHash: "hash",
     createdAt: 1,
@@ -70,7 +70,7 @@ const literature = note(
 
 const homeRoute = AppRoute.Home({
   type: Option.none(),
-  topic: Option.none(),
+  tag: Option.none(),
 })
 
 const baseModel = (
@@ -82,7 +82,7 @@ const baseModel = (
     notes: AsyncData.Idle(),
     note: AsyncData.Idle(),
     search: AsyncData.Idle(),
-    topics: AsyncData.Idle(),
+    tags: AsyncData.Idle(),
     wiki: AsyncData.Idle(),
     pending: AsyncData.Idle(),
     health: AsyncData.Idle(),
@@ -92,7 +92,7 @@ const baseModel = (
     notesRequestId: 0,
     noteRequestId: 0,
     searchRequestId: 0,
-    topicsRequestId: 0,
+    tagsRequestId: 0,
     wikiRequestId: 0,
     pendingRequestId: 0,
     healthRequestId: 0,
@@ -139,9 +139,9 @@ test("init enters the requested route and issues one bounded load command", () =
     "LoadWiki",
   ])
 
-  const topics = init(url("/topics"))
-  expect(Array.map(topics.commands ?? [], (command) => command.name)).toEqual([
-    "LoadTopics",
+  const tags = init(url("/tags"))
+  expect(Array.map(tags.commands ?? [], (command) => command.name)).toEqual([
+    "LoadTags",
   ])
 
   const search = init(url("/search?q=recall"))
@@ -200,19 +200,19 @@ test("a loaded note opens the edit form with note metadata as text", () => {
       expect(editor.type).toBe("literature")
       expect(editor.form.title).toBe("A source")
       expect(editor.form.reference).toBe("Book, chapter 2")
-      expect(editor.form.topics).toBe("agent-memory")
+      expect(editor.form.tags).toBe("agent-memory")
     }),
     Story.Command.expectNone(),
   )
 })
 
-test("the editor validates content limits, references, and topics locally", () => {
+test("the editor validates content limits, references, and tags locally", () => {
   expect(
     formError("fleeting", {
       title: " ",
       content: "body",
       reference: "",
-      topics: "",
+      tags: "",
     }),
   ).toEqual(Option.some("Title is required."))
 
@@ -221,7 +221,7 @@ test("the editor validates content limits, references, and topics locally", () =
       title: "Title",
       content: "a".repeat(1001),
       reference: "",
-      topics: "",
+      tags: "",
     }),
   ).toEqual(Option.some("fleeting notes are limited to 1000 characters."))
 
@@ -230,7 +230,7 @@ test("the editor validates content limits, references, and topics locally", () =
       title: "Title",
       content: "body",
       reference: "",
-      topics: "",
+      tags: "",
     }),
   ).toEqual(Option.some("Literature notes require a reference."))
 
@@ -239,16 +239,16 @@ test("the editor validates content limits, references, and topics locally", () =
       title: "Title",
       content: "body",
       reference: "",
-      topics: "日本語",
+      tags: "日本語",
     }),
-  ).toEqual(Option.some("Every topic needs at least one letter or digit."))
+  ).toEqual(Option.some("Every tag needs at least one letter or digit."))
 
   expect(
     formError("permanent", {
       title: "Title",
       content: "body",
       reference: "",
-      topics: "agent-memory, retrieval",
+      tags: "agent-memory, retrieval",
     }),
   ).toEqual(Option.none())
 })
@@ -261,13 +261,13 @@ test("saving a new note takes the request id, shows saving, and navigates to the
         editor: EditorState.Open({
           type: "permanent",
           maybeId: Option.none(),
-          form: { title: "", content: "", reference: "", topics: "" },
+          form: { title: "", content: "", reference: "", tags: "" },
         }),
       }),
     ),
     Story.message(Message.UpdatedTitle({ value: "A durable idea" })),
     Story.message(Message.UpdatedContent({ value: "Write it down properly." })),
-    Story.message(Message.UpdatedTopics({ value: "agent-memory" })),
+    Story.message(Message.UpdatedTags({ value: "agent-memory" })),
     Story.message(Message.SubmittedEditor()),
     Story.model((model) => {
       expect(model.editor._tag).toBe("Saving")
@@ -329,7 +329,7 @@ test("refresh reloads the current route without dropping filters", () => {
       baseModel(
         AppRoute.Home({
           type: Option.some("permanent"),
-          topic: Option.some("agent-memory"),
+          tag: Option.some("agent-memory"),
         }),
         {
           notes: AsyncData.Success({ data: [permanent] }),
@@ -344,7 +344,7 @@ test("refresh reloads the current route without dropping filters", () => {
       expect(model.route).toMatchObject({
         _tag: "Home",
         type: Option.some("permanent"),
-        topic: Option.some("agent-memory"),
+        tag: Option.some("agent-memory"),
       })
     }),
     Story.Command.expectHas(LoadNotes),
@@ -358,7 +358,7 @@ test("refresh reloads the current route without dropping filters", () => {
   )
 })
 
-test("the home list renders IDs, topics, and note text as escaped content", () => {
+test("the home list renders IDs, tags, and note text as escaped content", () => {
   const dangerous = note(
     "fleeting",
     "20261117220000-injection",
@@ -435,15 +435,15 @@ test("search results render the note ID, path, and excerpt", () => {
   )
 })
 
-test("topics render counts and link to cited topic pages", () => {
+test("tags render counts and link to cited tag pages", () => {
   Scene.scene(
     { update, view },
     Scene.given(
-      baseModel(AppRoute.Topics(), {
-        topics: AsyncData.Success({
+      baseModel(AppRoute.Tags(), {
+        tags: AsyncData.Success({
           data: [
             {
-              topic: "agent-memory",
+              tag: "agent-memory",
               noteCount: 2,
               byType: { fleeting: 1, literature: 0, permanent: 1 },
             },
@@ -451,11 +451,11 @@ test("topics render counts and link to cited topic pages", () => {
         }),
       }),
     ),
-    Scene.expect(Scene.role("heading", { name: "Topics" })).toExist(),
+    Scene.expect(Scene.role("heading", { name: "Tags" })).toExist(),
     Scene.expect(Scene.text("agent-memory")).toExist(),
     Scene.expect(Scene.text("2 notes (1 fleeting, 1 permanent)")).toExist(),
     Scene.expect(Scene.text(/Counts include every note type/)).toExist(),
-    Scene.expect(Scene.role("link", { name: "Open topic page" })).toExist(),
+    Scene.expect(Scene.role("link", { name: "Open tag page" })).toExist(),
     Scene.expect(Scene.role("link", { name: "Include fleeting" })).toExist(),
   )
 })
@@ -472,14 +472,14 @@ test("wiki sections and citations render without persisted HTML", () => {
     Scene.given(
       baseModel(
         AppRoute.Wiki({
-          topic: "agent-memory",
+          tag: "agent-memory",
           mode: Option.none(),
           includeFleeting: Option.none(),
         }),
         {
           wiki: AsyncData.Success({
             data: {
-              topic: "agent-memory",
+              tag: "agent-memory",
               generatedAt: "2026-11-17T20:10:00Z",
               mode: "extractive",
               noteCount: 1,
@@ -506,13 +506,13 @@ test("wiki sections and citations render without persisted HTML", () => {
                   ],
                 },
               ],
-              markdown: "# Topic: agent-memory\n\n> Every recall operation has a hard maximum.",
+              markdown: "# Tag: agent-memory\n\n> Every recall operation has a hard maximum.",
             },
           }),
         },
       ),
     ),
-    Scene.expect(Scene.role("heading", { name: "Topic: agent-memory" })).toExist(),
+    Scene.expect(Scene.role("heading", { name: "Tag: agent-memory" })).toExist(),
     Scene.expect(Scene.text(/Derived on demand/)).toExist(),
     Scene.expect(Scene.text(/Permanent and literature notes are cited by default/)).toExist(),
     Scene.expect(Scene.text(/Synthesized mode is not configured/)).toExist(),
@@ -529,14 +529,14 @@ test("wiki offers synthesis only when the server reports it configured", () => {
     Scene.given(
       baseModel(
         AppRoute.Wiki({
-          topic: "agent-memory",
+          tag: "agent-memory",
           mode: Option.none(),
           includeFleeting: Option.some("true"),
         }),
         {
           wiki: AsyncData.Success({
             data: {
-              topic: "agent-memory",
+              tag: "agent-memory",
               generatedAt: "2026-11-17T20:10:00Z",
               mode: "extractive",
               noteCount: 1,
@@ -547,7 +547,7 @@ test("wiki offers synthesis only when the server reports it configured", () => {
               },
               sources: [],
               sections: [],
-              markdown: "# Topic: agent-memory",
+              markdown: "# Tag: agent-memory",
             },
           }),
         },
@@ -565,7 +565,7 @@ test("a failed synthesized page keeps an extractive fallback link", () => {
     Scene.given(
       baseModel(
         AppRoute.Wiki({
-          topic: "agent-memory",
+          tag: "agent-memory",
           mode: Option.some("synthesized"),
           includeFleeting: Option.none(),
         }),
@@ -592,7 +592,7 @@ test("the new-note form offers a type selector with the route type selected", ()
         editor: EditorState.Open({
           type: "permanent",
           maybeId: Option.none(),
-          form: { title: "", content: "", reference: "", topics: "" },
+          form: { title: "", content: "", reference: "", tags: "" },
         }),
       }),
     ),

@@ -2,7 +2,7 @@
 
 The HTTP surface for slipmem. Notes are Markdown files under the local
 `.slipmem/` root; this package serves the canonical ID-based JSON API, the
-on-demand cited topic wiki, the human approval queue, and the shared HTTP MCP
+on-demand cited tag wiki, the human approval queue, and the shared HTTP MCP
 endpoint. The Foldkit server entry in `@slipmem/web` mounts it in the same
 process as the pages.
 
@@ -53,25 +53,25 @@ Canonical routes are ID-based. A note ID is the Markdown filename stem:
 | Method | Path | Result |
 | --- | --- | --- |
 | `GET` | `/api/health` | Service status, refreshed index mode/count, wiki synthesis capability |
-| `GET` | `/api/notes` | Bounded list; `type`, `topic`, `limit` filters |
+| `GET` | `/api/notes` | Bounded list; `type`, `tag`, `limit` filters |
 | `POST` | `/api/notes` | Create with `type` in the JSON body |
 | `GET` | `/api/notes/:id` | One note or 404 |
 | `PUT` | `/api/notes/:id` | Partial update; human web write |
 | `DELETE` | `/api/notes/:id` | Move the note to the local backup directory |
 | `GET` | `/api/search` | Bounded ranked search; requires `q` |
-| `GET` | `/api/topics` | Topic inventory with all-type counts and a per-type breakdown |
-| `GET` | `/api/wiki/:topic` | Structured cited page with synthesis capability; `format=markdown` for text |
+| `GET` | `/api/tags` | Tag inventory with all-type counts and a per-type breakdown |
+| `GET` | `/api/wiki/:tag` | Structured cited page with synthesis capability; `format=markdown` for text |
 | `GET` | `/api/pending` | Pending proposals with inspectable diffs |
 | `POST` | `/api/pending/:proposalId/approve` | Apply a proposal |
 | `POST` | `/api/pending/:proposalId/reject` | Discard a proposal |
 
 Single-note responses are `{ "note": ... }`. Lists are `{ "notes": [...] }` or
-`{ "topics": [...] }`. Errors are `{ "error": "...", "code": "..." }`.
+`{ "tags": [...] }`. Errors are `{ "error": "...", "code": "..." }`.
 
 Create and update bodies require `title` and `content`; literature notes also
 require `reference`. Mutating requests require `content-type:
 application/json`. The Markdown repository enforces the type content limits
-(1000 / 2000 / 5000 characters), topic normalization, and the literature
+(1000 / 2000 / 5000 characters), tag normalization, and the literature
 reference rule, so the API, CLI, and MCP cannot drift.
 
 List, search, and wiki results are bounded on the server. Defaults are 10 for
@@ -96,7 +96,7 @@ same ID repository and never create type folders or a second store:
 
 ## Wiki and review
 
-`GET /api/wiki/:topic` defaults to structured sections with sources and
+`GET /api/wiki/:tag` defaults to structured sections with sources and
 citations; `format=markdown` returns only the rendered Markdown. Generation is
 read-only and bounded. Extractive mode quotes selected notes verbatim and is
 the guaranteed fallback. Synthesized mode is opt-in and requires an explicitly
@@ -108,8 +108,8 @@ runs it with the slipmem user's full filesystem privileges. The response and
 server cannot resolve. `includeFleeting=true` opts fleeting notes into the
 citation set; permanent and literature notes are the default.
 
-`GET /api/topics` counts every note type and also returns `byType` so clients
-can explain why a topic page cites fewer notes than the count. Topic pages are
+`GET /api/tags` counts every note type and also returns `byType` so clients
+can explain why a tag page cites fewer notes than the count. Tag pages are
 derived; `GET /api/health` refreshes the disposable index before reporting its
 count.
 
@@ -123,7 +123,7 @@ This is a local approval policy, not authentication and not an OS sandbox. Any
 process that can reach the unauthenticated loopback port can read and write
 notes directly. The loopback bind and filesystem permissions are the boundary.
 
-Pending proposals never appear in the note list, search, topics, or the note
+Pending proposals never appear in the note list, search, tags, or the note
 root.
 
 ## Network posture

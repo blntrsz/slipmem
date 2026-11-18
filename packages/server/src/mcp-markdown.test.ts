@@ -127,8 +127,8 @@ test("HTTP MCP uses the same Markdown registrations and approval policy as stdio
         "update_literature_note",
         "delete_literature_note",
         "search_notes",
-        "list_topics",
-        "build_topic_wiki",
+        "list_tags",
+        "build_tag_wiki",
       ])
       expect(tools.some((name) => /approve|reject|apply/.test(name))).toBe(false)
 

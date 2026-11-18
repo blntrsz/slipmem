@@ -12,7 +12,7 @@ import { defineRouteUnion, literal, restString, slash, string } from "foldkit/ro
 export const AppRoute = defineRouteUnion({
   Home: {
     type: Schema.OptionFromOptional(Schema.String),
-    topic: Schema.OptionFromOptional(Schema.String),
+    tag: Schema.OptionFromOptional(Schema.String),
   },
   NewNote: { type: Schema.OptionFromOptional(Schema.String) },
   NoteDetail: { noteId: Schema.String },
@@ -22,9 +22,9 @@ export const AppRoute = defineRouteUnion({
     q: Schema.OptionFromOptional(Schema.String),
     type: Schema.OptionFromOptional(Schema.String),
   },
-  Topics: {},
+  Tags: {},
   Wiki: {
-    topic: Schema.String,
+    tag: Schema.String,
     mode: Schema.OptionFromOptional(Schema.String),
     includeFleeting: Schema.OptionFromOptional(Schema.String),
   },
@@ -37,7 +37,7 @@ export type AppRoute = typeof AppRoute.Type
 
 const homeQuery = Schema.Struct({
   type: Schema.OptionFromOptional(Schema.String),
-  topic: Schema.OptionFromOptional(Schema.String),
+  tag: Schema.OptionFromOptional(Schema.String),
 })
 
 export const homeRouter = pipe(
@@ -87,11 +87,11 @@ export const searchRouter = pipe(
   Route.mapTo(AppRoute.Search),
 )
 
-export const topicsRouter = pipe(literal("topics"), Route.mapTo(AppRoute.Topics))
+export const tagsRouter = pipe(literal("tags"), Route.mapTo(AppRoute.Tags))
 
 export const wikiRouter = pipe(
   literal("wiki"),
-  slash(string("topic")),
+  slash(string("tag")),
   Route.query(
     Schema.Struct({
       mode: Schema.OptionFromOptional(Schema.String),
@@ -113,7 +113,7 @@ const routeParser = Route.oneOf(
   noteDetailRouter,
   newNoteRouter,
   searchRouter,
-  topicsRouter,
+  tagsRouter,
   wikiRouter,
   reviewRouter,
   healthRouter,
@@ -145,14 +145,14 @@ export const searchHref = (q: string, type?: string): string =>
   })
 
 export const wikiHref = (
-  topic: string,
+  tag: string,
   options: {
     readonly mode?: string
     readonly includeFleeting?: boolean
   } = {},
 ): string =>
   wikiRouter({
-    topic,
+    tag,
     mode: Option.fromNullishOr(options.mode),
     includeFleeting:
       options.includeFleeting === true ? Option.some("true") : Option.none(),

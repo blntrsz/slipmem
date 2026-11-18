@@ -382,7 +382,7 @@ interface CreateBody {
   readonly title: string
   readonly content: string
   readonly reference: string | undefined
-  readonly topics: ReadonlyArray<string> | undefined
+  readonly tags: ReadonlyArray<string> | undefined
 }
 
 const readCreateBody = (
@@ -404,9 +404,9 @@ const readCreateBody = (
       )
     }
     const reference = yield* optionalString(body, "reference")
-    const topics = yield* optionalStringArray(body, "topics")
+    const tags = yield* optionalStringArray(body, "tags")
 
-    return { type, title, content, reference, topics }
+    return { type, title, content, reference, tags }
   })
 
 interface UpdateBody {
@@ -414,7 +414,7 @@ interface UpdateBody {
   readonly title: string | undefined
   readonly content: string | undefined
   readonly reference: string | null | undefined
-  readonly topics: ReadonlyArray<string> | undefined
+  readonly tags: ReadonlyArray<string> | undefined
 }
 
 const readUpdateBody = (
@@ -433,9 +433,9 @@ const readUpdateBody = (
       body.reference === null
         ? null
         : yield* optionalString(body, "reference")
-    const topics = yield* optionalStringArray(body, "topics")
+    const tags = yield* optionalStringArray(body, "tags")
 
-    return { type, title, content, reference, topics }
+    return { type, title, content, reference, tags }
   })
 
 const noteNotFound = (id: string): ApiError =>
@@ -479,7 +479,7 @@ const listNotes = (
   repository: MarkdownNoteRepositoryShape,
   filters: {
     readonly type?: Markdown.NoteType
-    readonly topic?: string
+    readonly tag?: string
     readonly limit?: number
   },
 ) =>
@@ -492,7 +492,7 @@ const listNotes = (
  *
  * List and detail reads always scan the Markdown repository, so a note changed
  * by the CLI, an external editor, or MCP is visible on the next request.
- * Search and topics refresh the disposable index before reading it.
+ * Search and tags refresh the disposable index before reading it.
  */
 export const MarkdownApiRoutes = Layer.unwrap(
   Effect.gen(function* () {
@@ -534,9 +534,9 @@ export const MarkdownApiRoutes = Layer.unwrap(
             typeValue === undefined
               ? undefined
               : yield* parseType(typeValue)
-          const topic = queryValue(url, "topic")
+          const tag = queryValue(url, "tag")
           const limit = yield* parseLimit(url)
-          const notes = yield* listNotes(repository, { type, topic, limit })
+          const notes = yield* listNotes(repository, { type, tag, limit })
           return json({ notes })
         }),
       )
@@ -585,7 +585,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
             title: input.title,
             content: input.content,
             ...(input.reference === undefined ? {} : { reference: input.reference }),
-            ...(input.topics === undefined ? {} : { topics: input.topics }),
+            ...(input.tags === undefined ? {} : { tags: input.tags }),
             provenance: webProvenance(),
           })
           return json({ note: toApiNote(note) }, 201)
@@ -623,7 +623,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
             ...(input.reference === undefined
               ? {}
               : { reference: input.reference }),
-            ...(input.topics === undefined ? {} : { topics: input.topics }),
+            ...(input.tags === undefined ? {} : { tags: input.tags }),
             provenance: webProvenance(),
           })
           return json({ note: toApiNote(note) })
@@ -710,13 +710,13 @@ export const MarkdownApiRoutes = Layer.unwrap(
           const typeValue = queryValue(url, "type")
           const type =
             typeValue === undefined ? undefined : yield* parseType(typeValue)
-          const topic = queryValue(url, "topic")
+          const tag = queryValue(url, "tag")
           const limit = yield* parseLimit(url)
           yield* index.refresh()
           const hits = yield* index.search({
             query,
             ...(type === undefined ? {} : { kinds: [type] }),
-            ...(topic === undefined ? {} : { topic }),
+            ...(tag === undefined ? {} : { tag }),
             ...(limit === undefined ? {} : { limit }),
           })
           return json({
@@ -731,40 +731,40 @@ export const MarkdownApiRoutes = Layer.unwrap(
         }),
       )
 
-    const topics = (request: HttpServerRequest.HttpServerRequest) =>
+    const tags = (request: HttpServerRequest.HttpServerRequest) =>
       route(
         Effect.gen(function* () {
           const url = requestUrl(request)
           const query = queryValue(url, "q")
           const limit = yield* parseLimit(url)
           yield* index.refresh()
-          const items = yield* index.listTopics({
+          const items = yield* index.listTags({
             ...(query === undefined ? {} : { query }),
             ...(limit === undefined ? {} : { limit }),
           })
-          // Topic counts include every note type. The wiki cites permanent and
+          // Tag counts include every note type. The wiki cites permanent and
           // literature notes by default, so expose a per-type breakdown too;
-          // otherwise a fleeting-only topic looks empty on its topic page.
+          // otherwise a fleeting-only tag looks empty on its tag page.
           const scan = yield* repository.scan()
           const counts = new Map<
             string,
             { fleeting: number; literature: number; permanent: number }
           >()
           for (const note of scan.notes) {
-            for (const topic of note.metadata.topics ?? []) {
-              const current = counts.get(topic) ?? {
+            for (const tag of note.metadata.tags ?? []) {
+              const current = counts.get(tag) ?? {
                 fleeting: 0,
                 literature: 0,
                 permanent: 0,
               }
               current[note.metadata.type] += 1
-              counts.set(topic, current)
+              counts.set(tag, current)
             }
           }
           return json({
-            topics: items.map((item) => ({
+            tags: items.map((item) => ({
               ...item,
-              byType: counts.get(item.topic) ?? {
+              byType: counts.get(item.tag) ?? {
                 fleeting: 0,
                 literature: 0,
                 permanent: 0,
@@ -779,12 +779,12 @@ export const MarkdownApiRoutes = Layer.unwrap(
         Effect.gen(function* () {
           const params = yield* HttpRouter.params
           const url = requestUrl(request)
-          const rawTopic = params.topic
-          if (rawTopic === undefined || Markdown.slugifyTopic(rawTopic) === "") {
+          const rawTag = params.tag
+          if (rawTag === undefined || Markdown.slugifyTag(rawTag) === "") {
             return yield* fail(
               400,
-              "invalid-topic",
-              "A topic must normalize to a lowercase kebab-case slug.",
+              "invalid-tag",
+              "A tag must normalize to a lowercase kebab-case slug.",
             )
           }
 
@@ -808,7 +808,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
           const includeFleeting = url.searchParams.get("includeFleeting") === "true"
 
           const page = yield* wiki.build({
-            topic: rawTopic,
+            tag: rawTag,
             ...(limit === undefined ? {} : { limit }),
             ...(mode === undefined ? {} : { mode }),
             ...(includeFleeting ? { includeFleeting } : {}),
@@ -921,8 +921,8 @@ export const MarkdownApiRoutes = Layer.unwrap(
       HttpRouter.add("PUT", "/api/notes/:type/:id", updateByType),
       HttpRouter.add("DELETE", "/api/notes/:type/:id", removeByType),
       HttpRouter.add("GET", "/api/search", search),
-      HttpRouter.add("GET", "/api/topics", topics),
-      HttpRouter.add("GET", "/api/wiki/:topic", wikiPage),
+      HttpRouter.add("GET", "/api/tags", tags),
+      HttpRouter.add("GET", "/api/wiki/:tag", wikiPage),
       HttpRouter.add("GET", "/api/pending", pending),
       HttpRouter.add("POST", "/api/pending/:proposalId/approve", approve),
       HttpRouter.add("POST", "/api/pending/:proposalId/reject", reject),

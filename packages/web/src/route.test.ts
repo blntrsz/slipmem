@@ -36,11 +36,11 @@ test("note detail, edit, and delete are distinct ID-based routes", () => {
   expect(parse("/notes")).toMatchObject({ _tag: "NotFound" })
 })
 
-test("list, search, topics, wiki, review, and health routes decode their queries", () => {
-  expect(parse("/?type=permanent&topic=agent-memory")).toMatchObject({
+test("list, search, tags, wiki, review, and health routes decode their queries", () => {
+  expect(parse("/?type=permanent&tag=agent-memory")).toMatchObject({
     _tag: "Home",
     type: Option.some("permanent"),
-    topic: Option.some("agent-memory"),
+    tag: Option.some("agent-memory"),
   })
   expect(parse("/new?type=literature")).toMatchObject({
     _tag: "NewNote",
@@ -51,15 +51,15 @@ test("list, search, topics, wiki, review, and health routes decode their queries
     q: Option.some("bounded recall"),
     type: Option.some("permanent"),
   })
-  expect(parse("/topics")).toMatchObject({ _tag: "Topics" })
+  expect(parse("/tags")).toMatchObject({ _tag: "Tags" })
   expect(parse("/wiki/agent-memory?mode=synthesized")).toMatchObject({
     _tag: "Wiki",
-    topic: "agent-memory",
+    tag: "agent-memory",
     mode: Option.some("synthesized"),
   })
   expect(parse("/wiki/agent-memory?includeFleeting=true")).toMatchObject({
     _tag: "Wiki",
-    topic: "agent-memory",
+    tag: "agent-memory",
     includeFleeting: Option.some("true"),
   })
   expect(parse("/review")).toMatchObject({ _tag: "Review" })
@@ -72,13 +72,13 @@ test("list, search, topics, wiki, review, and health routes decode their queries
 
 test("href builders round-trip through the route parser", () => {
   const hrefs = [
-    homeRouter({ type: Option.some("fleeting"), topic: Option.none() }),
+    homeRouter({ type: Option.some("fleeting"), tag: Option.none() }),
     newNoteHref("permanent"),
     noteHref(noteId),
     editNoteHref(noteId),
     deleteNoteHref(noteId),
     searchHref("bounded recall"),
-    "/topics",
+    "/tags",
     wikiHref("agent-memory", { mode: "extractive" }),
     wikiHref("agent-memory", { includeFleeting: true }),
     "/review",

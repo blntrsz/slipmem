@@ -20,7 +20,7 @@ interface ApiNoteResponse {
   readonly title: string
   readonly content: string
   readonly reference?: string
-  readonly topics: ReadonlyArray<string>
+  readonly tags: ReadonlyArray<string>
   readonly path: string
   readonly createdAt: number
   readonly updatedAt: number
@@ -136,7 +136,7 @@ test("canonical ID routes create, read, update, list, and delete flat Markdown n
         type: "fleeting",
         title: "Quick thought",
         content: "Capture it before it disappears.",
-        topics: ["Agent Memory"],
+        tags: ["Agent Memory"],
       }),
     )
     expect(createdResponse.status).toBe(201)
@@ -145,7 +145,7 @@ test("canonical ID routes create, read, update, list, and delete flat Markdown n
       type: "fleeting",
       title: "Quick thought",
       content: "Capture it before it disappears.",
-      topics: ["agent-memory"],
+      tags: ["agent-memory"],
     })
     expect(created.id).toMatch(/^\d{14}-[a-z0-9]+(?:-[a-z0-9]+)*$/)
 
@@ -304,14 +304,14 @@ test("canonical writes enforce type, content, reference, id, and limit rules", a
   })
 })
 
-test("search and topics refresh the disposable index and stay bounded", async () => {
+test("search and tags refresh the disposable index and stay bounded", async () => {
   await withApi(async (api) => {
     const created = await api.handler(
       request("/api/notes", "POST", {
         type: "permanent",
         title: "Bounded recall",
         content: "Every recall operation has a hard maximum.",
-        topics: ["retrieval", "agent-memory"],
+        tags: ["retrieval", "agent-memory"],
       }),
     )
     expect(created.status).toBe(201)
@@ -322,7 +322,7 @@ test("search and topics refresh the disposable index and stay bounded", async ()
         type: "fleeting",
         title: "Fleeting recall",
         content: "A quick recall thought.",
-        topics: ["agent-memory"],
+        tags: ["agent-memory"],
       }),
     )
     expect(fleetingResponse.status).toBe(201)
@@ -350,23 +350,23 @@ test("search and topics refresh the disposable index and stay bounded", async ()
         .results,
     ).toHaveLength(0)
 
-    const topicsResponse = await api.handler(request("/api/topics?limit=10"))
-    expect(topicsResponse.status).toBe(200)
-    const topics = (await topicsResponse.json()) as {
-      readonly topics: ReadonlyArray<{
-        topic: string
+    const tagsResponse = await api.handler(request("/api/tags?limit=10"))
+    expect(tagsResponse.status).toBe(200)
+    const tags = (await tagsResponse.json()) as {
+      readonly tags: ReadonlyArray<{
+        tag: string
         noteCount: number
         byType: { fleeting: number; literature: number; permanent: number }
       }>
     }
-    expect(topics.topics).toEqual([
+    expect(tags.tags).toEqual([
       {
-        topic: "agent-memory",
+        tag: "agent-memory",
         noteCount: 2,
         byType: { fleeting: 1, literature: 0, permanent: 1 },
       },
       {
-        topic: "retrieval",
+        tag: "retrieval",
         noteCount: 1,
         byType: { fleeting: 0, literature: 0, permanent: 1 },
       },
@@ -443,7 +443,7 @@ test("files written by another surface are visible without restart", async () =>
         title: "External capture",
         content: "Written outside the HTTP process.",
         reference: "Notebook, page 4",
-        topics: ["external"],
+        tags: ["external"],
       }),
     )
 
@@ -473,7 +473,7 @@ test("wiki pages are cited, derived, and available as structured JSON or Markdow
         type: "permanent",
         title: "Bounded recall",
         content: "Every list, search, and recall operation has a hard maximum.",
-        topics: ["agent-memory"],
+        tags: ["agent-memory"],
       }),
     )
     const note = await readNote(created)
@@ -483,7 +483,7 @@ test("wiki pages are cited, derived, and available as structured JSON or Markdow
         type: "fleeting",
         title: "Fleeting recall note",
         content: "A fleeting idea about agent memory.",
-        topics: ["agent-memory"],
+        tags: ["agent-memory"],
       }),
     )
     expect(fleetingResponse.status).toBe(201)
@@ -498,7 +498,7 @@ test("wiki pages are cited, derived, and available as structured JSON or Markdow
     )
     expect(structured.status).toBe(200)
     const page = (await structured.json()) as {
-      readonly topic: string
+      readonly tag: string
       readonly mode: string
       readonly noteCount: number
       readonly synthesis: {
@@ -517,7 +517,7 @@ test("wiki pages are cited, derived, and available as structured JSON or Markdow
       readonly markdown: string
     }
     expect(page).toMatchObject({
-      topic: "agent-memory",
+      tag: "agent-memory",
       mode: "extractive",
       noteCount: 1,
     })
@@ -550,7 +550,7 @@ test("wiki pages are cited, derived, and available as structured JSON or Markdow
     expect(markdown.headers.get("content-type")).toContain("text/markdown")
     expect(await markdown.text()).toContain("## Bounded recall")
 
-    const empty = await api.handler(request("/api/wiki/no-such-topic"))
+    const empty = await api.handler(request("/api/wiki/no-such-tag"))
     expect(empty.status).toBe(200)
     expect(((await empty.json()) as { noteCount: number }).noteCount).toBe(0)
 

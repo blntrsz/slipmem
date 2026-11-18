@@ -22,7 +22,7 @@ const Provenance = Schema.Struct({
 })
 
 const ApiNoteFields = {
-  topics: Schema.Array(Schema.String),
+  tags: Schema.Array(Schema.String),
   path: Schema.String,
   contentHash: Schema.String,
   provenance: Schema.optional(Provenance),
@@ -70,16 +70,16 @@ export const ApiSynthesis = Schema.Struct({
 }).annotate({ identifier: "Api.Synthesis" })
 export type ApiSynthesis = typeof ApiSynthesis.Type
 
-export const ApiTopic = Schema.Struct({
-  topic: Schema.String,
+export const ApiTag = Schema.Struct({
+  tag: Schema.String,
   noteCount: Schema.Int,
   byType: Schema.Struct({
     fleeting: Schema.Int,
     literature: Schema.Int,
     permanent: Schema.Int,
   }),
-}).annotate({ identifier: "Api.Topic" })
-export type ApiTopic = typeof ApiTopic.Type
+}).annotate({ identifier: "Api.Tag" })
+export type ApiTag = typeof ApiTag.Type
 
 export const ApiHealth = Schema.Struct({
   ok: Schema.Boolean,
@@ -116,7 +116,7 @@ export type ApiPendingProposal = typeof ApiPendingProposal.Type
 const NotesResponse = Schema.Struct({ notes: Schema.Array(ApiNote) })
 const NoteResponse = Schema.Struct({ note: ApiNote })
 const SearchResponse = Schema.Struct({ results: Schema.Array(ApiSearchHit) })
-const TopicsResponse = Schema.Struct({ topics: Schema.Array(ApiTopic) })
+const TagsResponse = Schema.Struct({ tags: Schema.Array(ApiTag) })
 export const ApiWikiPage = Schema.Struct({
   ...Markdown.WikiPage.fields,
   synthesis: ApiSynthesis,
@@ -205,7 +205,7 @@ const query = (
 
 export interface ListNotesInput {
   readonly type?: NoteType
-  readonly topic?: string
+  readonly tag?: string
   readonly limit?: number
 }
 
@@ -215,7 +215,7 @@ export const listNotes = (input: ListNotesInput = {}) =>
     const response = yield* client.get(
       query("/api/notes", {
         type: input.type,
-        topic: input.topic,
+        tag: input.tag,
         limit: input.limit,
       }),
     )
@@ -266,7 +266,7 @@ export const deleteNote = (id: string) =>
 export interface SearchNotesInput {
   readonly query: string
   readonly type?: NoteType
-  readonly topic?: string
+  readonly tag?: string
   readonly limit?: number
 }
 
@@ -277,7 +277,7 @@ export const searchNotes = (input: SearchNotesInput) =>
       query("/api/search", {
         q: input.query,
         type: input.type,
-        topic: input.topic,
+        tag: input.tag,
         limit: input.limit,
       }),
     )
@@ -285,16 +285,16 @@ export const searchNotes = (input: SearchNotesInput) =>
     return body.results
   })
 
-export const listTopics = (limit?: number) =>
+export const listTags = (limit?: number) =>
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
-    const response = yield* client.get(query("/api/topics", { limit }))
-    const body = yield* decodeResponse(TopicsResponse, response)
-    return body.topics
+    const response = yield* client.get(query("/api/tags", { limit }))
+    const body = yield* decodeResponse(TagsResponse, response)
+    return body.tags
   })
 
 export const getWiki = (
-  topic: string,
+  tag: string,
   options: {
     readonly mode?: Markdown.WikiMode
     readonly limit?: number
@@ -304,7 +304,7 @@ export const getWiki = (
   Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient
     const response = yield* client.get(
-      query(`/api/wiki/${encodeURIComponent(topic)}`, {
+      query(`/api/wiki/${encodeURIComponent(tag)}`, {
         mode: options.mode,
         limit: options.limit,
         includeFleeting: options.includeFleeting === true ? "true" : undefined,

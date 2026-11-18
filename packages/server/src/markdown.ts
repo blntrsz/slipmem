@@ -61,10 +61,10 @@ export const makeMarkdownLayer = (options: MarkdownLayerOptions) => {
 /**
  * The JSON representation of a note. It extends the existing `Note.Info`
  * wire union with the metadata the web UI and API clients need to render
- * topics, paths, and citations without a second request.
+ * tags, paths, and citations without a second request.
  */
 export type ApiNote = Note.Info & {
-  readonly topics: ReadonlyArray<string>
+  readonly tags: ReadonlyArray<string>
   readonly path: string
   readonly contentHash: string
   readonly provenance?: { readonly source?: string; readonly actor?: string }
@@ -72,7 +72,7 @@ export type ApiNote = Note.Info & {
 
 export const toApiNote = (note: ParsedMarkdownNote): ApiNote => ({
   ...note.info,
-  topics: note.metadata.topics ?? [],
+  tags: note.metadata.tags ?? [],
   path: note.path,
   contentHash: note.contentHash,
   ...(note.metadata.provenance === undefined

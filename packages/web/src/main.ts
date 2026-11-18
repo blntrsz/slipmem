@@ -14,7 +14,7 @@ import {
   ApiNote,
   ApiPendingProposal,
   ApiSearchHit,
-  ApiTopic,
+  ApiTag,
   ApiWikiPage,
   apiErrorMessage,
   approveProposal,
@@ -25,7 +25,7 @@ import {
   getWiki,
   listNotes,
   listPending,
-  listTopics,
+  listTags,
   rejectProposal,
   searchNotes,
   updateNote,
@@ -41,7 +41,7 @@ import {
   noteHref,
   reviewRouter,
   searchHref,
-  topicsRouter,
+  tagsRouter,
   urlToAppRoute,
   wikiHref,
 } from "./route"
@@ -57,8 +57,8 @@ export const SearchData = AsyncData.Schema(
   Schema.Array(ApiSearchHit),
   Schema.String,
 )
-export const TopicsData = AsyncData.Schema(
-  Schema.Array(ApiTopic),
+export const TagsData = AsyncData.Schema(
+  Schema.Array(ApiTag),
   Schema.String,
 )
 export const WikiData = AsyncData.Schema(ApiWikiPage, Schema.String)
@@ -77,7 +77,7 @@ export const NoteForm = Schema.Struct({
   title: Schema.String,
   content: Schema.String,
   reference: Schema.String,
-  topics: Schema.String,
+  tags: Schema.String,
 })
 export type NoteForm = typeof NoteForm.Type
 
@@ -85,7 +85,7 @@ const emptyForm: NoteForm = {
   title: "",
   content: "",
   reference: "",
-  topics: "",
+  tags: "",
 }
 
 export const EditorState = defineTaggedUnion({
@@ -109,7 +109,7 @@ export const Model = Schema.Struct({
   notes: NotesData.schema,
   note: NoteData.schema,
   search: SearchData.schema,
-  topics: TopicsData.schema,
+  tags: TagsData.schema,
   wiki: WikiData.schema,
   pending: PendingData.schema,
   health: HealthData.schema,
@@ -119,7 +119,7 @@ export const Model = Schema.Struct({
   notesRequestId: Schema.Int,
   noteRequestId: Schema.Int,
   searchRequestId: Schema.Int,
-  topicsRequestId: Schema.Int,
+  tagsRequestId: Schema.Int,
   wikiRequestId: Schema.Int,
   pendingRequestId: Schema.Int,
   healthRequestId: Schema.Int,
@@ -138,15 +138,15 @@ export const Message = defineMessageUnion({
   ClickedRefresh: {},
   ClickedNewNote: { type: Schema.Option(Schema.String) },
   ClickedSearch: {},
-  ClickedTopics: {},
+  ClickedTags: {},
   ClickedReview: {},
-  ClickedWiki: { topic: Schema.String },
+  ClickedWiki: { tag: Schema.String },
   UpdatedSearchInput: { value: Schema.String },
   SubmittedSearch: {},
   UpdatedTitle: { value: Schema.String },
   UpdatedContent: { value: Schema.String },
   UpdatedReference: { value: Schema.String },
-  UpdatedTopics: { value: Schema.String },
+  UpdatedTags: { value: Schema.String },
   SubmittedEditor: {},
   CancelledEditor: {},
   ConfirmedDelete: {},
@@ -169,8 +169,8 @@ export const Message = defineMessageUnion({
     results: Schema.Array(ApiSearchHit),
   },
   FailedSearch: { requestId: Schema.Int, message: Schema.String },
-  SucceededTopics: { requestId: Schema.Int, topics: Schema.Array(ApiTopic) },
-  FailedTopics: { requestId: Schema.Int, message: Schema.String },
+  SucceededTags: { requestId: Schema.Int, tags: Schema.Array(ApiTag) },
+  FailedTags: { requestId: Schema.Int, message: Schema.String },
   SucceededWiki: {
     requestId: Schema.Int,
     wiki: ApiWikiPage,
@@ -216,13 +216,13 @@ export const LoadNotes = Command.define("LoadNotes", {
   args: {
     requestId: Schema.Int,
     type: Schema.Option(Markdown.NoteType),
-    topic: Schema.Option(Schema.String),
+    tag: Schema.Option(Schema.String),
   },
   messages: [Message.SucceededLoadNotes, Message.FailedLoadNotes],
-  execute: ({ requestId, type, topic }) =>
+  execute: ({ requestId, type, tag }) =>
     listNotes({
       ...(Option.isSome(type) ? { type: type.value } : {}),
-      ...(Option.isSome(topic) ? { topic: topic.value } : {}),
+      ...(Option.isSome(tag) ? { tag: tag.value } : {}),
     }).pipe(
       Effect.map((notes) => Message.SucceededLoadNotes({ requestId, notes })),
       Effect.catch((error) =>
@@ -275,9 +275,9 @@ export const SaveNote = Command.define("SaveNote", {
       title: form.title,
       content: form.content,
       ...(type === "literature" ? { reference: form.reference } : {}),
-      ...(form.topics.trim() === ""
+      ...(form.tags.trim() === ""
         ? {}
-        : { topics: form.topics.split(",").map((topic) => topic.trim()) }),
+        : { tags: form.tags.split(",").map((tag) => tag.trim()) }),
     }
 
     const save = Option.match(noteId, {
@@ -343,17 +343,17 @@ export const LoadSearch = Command.define("LoadSearch", {
     ),
 })
 
-export const LoadTopics = Command.define("LoadTopics", {
+export const LoadTags = Command.define("LoadTags", {
   args: { requestId: Schema.Int },
-  messages: [Message.SucceededTopics, Message.FailedTopics],
+  messages: [Message.SucceededTags, Message.FailedTags],
   execute: ({ requestId }) =>
-    listTopics().pipe(
-      Effect.map((topics) => Message.SucceededTopics({ requestId, topics })),
+    listTags().pipe(
+      Effect.map((tags) => Message.SucceededTags({ requestId, tags })),
       Effect.catch((error) =>
         Effect.succeed(
-          Message.FailedTopics({
+          Message.FailedTags({
             requestId,
-            message: failureMessage(error, "Could not load topics."),
+            message: failureMessage(error, "Could not load tags."),
           }),
         ),
       ),
@@ -364,13 +364,13 @@ export const LoadTopics = Command.define("LoadTopics", {
 export const LoadWiki = Command.define("LoadWiki", {
   args: {
     requestId: Schema.Int,
-    topic: Schema.String,
+    tag: Schema.String,
     mode: Schema.Option(Markdown.WikiMode),
     includeFleeting: Schema.Boolean,
   },
   messages: [Message.SucceededWiki, Message.FailedWiki],
-  execute: ({ requestId, topic, mode, includeFleeting }) =>
-    getWiki(topic, {
+  execute: ({ requestId, tag, mode, includeFleeting }) =>
+    getWiki(tag, {
       ...(Option.isSome(mode) ? { mode: mode.value } : {}),
       ...(includeFleeting ? { includeFleeting: true } : {}),
     }).pipe(
@@ -379,7 +379,7 @@ export const LoadWiki = Command.define("LoadWiki", {
         Effect.succeed(
           Message.FailedWiki({
             requestId,
-            message: failureMessage(error, "Could not build the topic page."),
+            message: failureMessage(error, "Could not build the tag page."),
           }),
         ),
       ),
@@ -466,7 +466,7 @@ const emptyModel = (route: AppRoute): Model => ({
   notes: AsyncData.Idle(),
   note: AsyncData.Idle(),
   search: AsyncData.Idle(),
-  topics: AsyncData.Idle(),
+  tags: AsyncData.Idle(),
   wiki: AsyncData.Idle(),
   pending: AsyncData.Idle(),
   health: AsyncData.Idle(),
@@ -476,7 +476,7 @@ const emptyModel = (route: AppRoute): Model => ({
   notesRequestId: 0,
   noteRequestId: 0,
   searchRequestId: 0,
-  topicsRequestId: 0,
+  tagsRequestId: 0,
   wikiRequestId: 0,
   pendingRequestId: 0,
   healthRequestId: 0,
@@ -526,7 +526,7 @@ const editorForRoute = (route: AppRoute): EditorState =>
     EditNote: () => EditorState.Closed(),
     DeleteNote: () => EditorState.Closed(),
     Search: () => EditorState.Closed(),
-    Topics: () => EditorState.Closed(),
+    Tags: () => EditorState.Closed(),
     Wiki: () => EditorState.Closed(),
     Review: () => EditorState.Closed(),
     Health: () => EditorState.Closed(),
@@ -543,7 +543,7 @@ const enterRoute = (model: Model, route: AppRoute): UpdateReturn => {
   })
 
   return AppRoute.match(route, {
-    Home: ({ type, topic }) => {
+    Home: ({ type, tag }) => {
       const requestId = model.notesRequestId + 1
       const kind = Option.flatMap(type, (candidate) =>
         Match.value(candidate).pipe(
@@ -558,7 +558,7 @@ const enterRoute = (model: Model, route: AppRoute): UpdateReturn => {
           notes: () => AsyncData.Loading(),
           notesRequestId: () => requestId,
         }),
-        commands: [LoadNotes({ requestId, type: kind, topic })],
+        commands: [LoadNotes({ requestId, type: kind, tag })],
       }
     },
     NewNote: () => ({ model: base }),
@@ -620,17 +620,17 @@ const enterRoute = (model: Model, route: AppRoute): UpdateReturn => {
         commands: [LoadSearch({ requestId, query, type: kind })],
       }
     },
-    Topics: () => {
-      const requestId = model.topicsRequestId + 1
+    Tags: () => {
+      const requestId = model.tagsRequestId + 1
       return {
         model: modifyFields(base, {
-          topics: () => AsyncData.Loading(),
-          topicsRequestId: () => requestId,
+          tags: () => AsyncData.Loading(),
+          tagsRequestId: () => requestId,
         }),
-        commands: [LoadTopics({ requestId })],
+        commands: [LoadTags({ requestId })],
       }
     },
-    Wiki: ({ topic, mode, includeFleeting }) => {
+    Wiki: ({ tag, mode, includeFleeting }) => {
       const requestId = model.wikiRequestId + 1
       return {
         model: modifyFields(base, {
@@ -640,7 +640,7 @@ const enterRoute = (model: Model, route: AppRoute): UpdateReturn => {
         commands: [
           LoadWiki({
             requestId,
-            topic,
+            tag,
             mode: wikiModeFromQuery(mode),
             includeFleeting: includeFleetingFromQuery(includeFleeting),
           }),
@@ -710,12 +710,12 @@ export const formError = (type: NoteType, form: NoteForm): Option.Option<string>
   if (type === "literature" && form.reference.trim() === "") {
     return Option.some("Literature notes require a reference.")
   }
-  const topics = form.topics
+  const tags = form.tags
     .split(",")
-    .map((topic) => topic.trim())
-    .filter((topic) => topic.length > 0)
-  if (topics.some((topic) => Markdown.slugifyTopic(topic) === "")) {
-    return Option.some("Every topic needs at least one letter or digit.")
+    .map((tag) => tag.trim())
+    .filter((tag) => tag.length > 0)
+  if (tags.some((tag) => Markdown.slugifyTag(tag) === "")) {
+    return Option.some("Every tag needs at least one letter or digit.")
   }
   return Option.none()
 }
@@ -765,7 +765,7 @@ const noteFormFromNote = (note: ApiNote): NoteForm => ({
   title: note.title,
   content: note.content,
   reference: note.type === "literature" ? note.reference : "",
-  topics: note.topics.join(", "),
+  tags: note.tags.join(", "),
 })
 
 const noteTypeOption = (
@@ -783,14 +783,14 @@ const noteTypeOption = (
 /** Reloads the current route without changing its URL or filters. */
 const refreshRoute = (model: Model): UpdateReturn =>
   AppRoute.match(model.route, {
-    Home: ({ type, topic }) => {
+    Home: ({ type, tag }) => {
       const requestId = model.notesRequestId + 1
       return {
         model: modifyFields(model, {
           notes: () => AsyncData.Loading(),
           notesRequestId: () => requestId,
         }),
-        commands: [LoadNotes({ requestId, type: noteTypeOption(type), topic })],
+        commands: [LoadNotes({ requestId, type: noteTypeOption(type), tag })],
       }
     },
     Review: () => {
@@ -803,14 +803,14 @@ const refreshRoute = (model: Model): UpdateReturn =>
         commands: [LoadPending({ requestId })],
       }
     },
-    Topics: () => {
-      const requestId = model.topicsRequestId + 1
+    Tags: () => {
+      const requestId = model.tagsRequestId + 1
       return {
         model: modifyFields(model, {
-          topics: () => AsyncData.Loading(),
-          topicsRequestId: () => requestId,
+          tags: () => AsyncData.Loading(),
+          tagsRequestId: () => requestId,
         }),
-        commands: [LoadTopics({ requestId })],
+        commands: [LoadTags({ requestId })],
       }
     },
     NoteDetail: ({ noteId }) => {
@@ -859,7 +859,7 @@ const refreshRoute = (model: Model): UpdateReturn =>
         ],
       }
     },
-    Wiki: ({ topic, mode, includeFleeting }) => {
+    Wiki: ({ tag, mode, includeFleeting }) => {
       const requestId = model.wikiRequestId + 1
       return {
         model: modifyFields(model, {
@@ -869,7 +869,7 @@ const refreshRoute = (model: Model): UpdateReturn =>
         commands: [
           LoadWiki({
             requestId,
-            topic,
+            tag,
             mode: wikiModeFromQuery(mode),
             includeFleeting: includeFleetingFromQuery(includeFleeting),
           }),
@@ -928,9 +928,9 @@ export const update = (model: Model, message: Message) =>
       commands: [NavigateInternal({ url: "/search" })],
     }),
 
-    ClickedTopics: () => ({
+    ClickedTags: () => ({
       model,
-      commands: [NavigateInternal({ url: topicsRouter() })],
+      commands: [NavigateInternal({ url: tagsRouter() })],
     }),
 
     ClickedReview: () => ({
@@ -938,9 +938,9 @@ export const update = (model: Model, message: Message) =>
       commands: [NavigateInternal({ url: reviewRouter() })],
     }),
 
-    ClickedWiki: ({ topic }) => ({
+    ClickedWiki: ({ tag }) => ({
       model,
-      commands: [NavigateInternal({ url: wikiHref(topic) })],
+      commands: [NavigateInternal({ url: wikiHref(tag) })],
     }),
 
     UpdatedSearchInput: ({ value }) => ({
@@ -973,8 +973,8 @@ export const update = (model: Model, message: Message) =>
       }),
     }),
 
-    UpdatedTopics: ({ value }) => ({
-      model: modifyFields(model, { editor: () => withForm(model.editor, { topics: value }) }),
+    UpdatedTags: ({ value }) => ({
+      model: modifyFields(model, { editor: () => withForm(model.editor, { tags: value }) }),
     }),
 
     SubmittedEditor: () => submitEditor(model),
@@ -987,7 +987,7 @@ export const update = (model: Model, message: Message) =>
           commands: [
             NavigateInternal({
               url: Option.match(maybeId, {
-                onNone: () => homeRouter({ type: Option.none(), topic: Option.none() }),
+                onNone: () => homeRouter({ type: Option.none(), tag: Option.none() }),
                 onSome: (id) => noteHref(id),
               }),
             }),
@@ -1010,7 +1010,7 @@ export const update = (model: Model, message: Message) =>
         NoteDetail: () => ({ model }),
         EditNote: () => ({ model }),
         Search: () => ({ model }),
-        Topics: () => ({ model }),
+        Tags: () => ({ model }),
         Wiki: () => ({ model }),
         Review: () => ({ model }),
         Health: () => ({ model }),
@@ -1084,7 +1084,7 @@ export const update = (model: Model, message: Message) =>
         NoteDetail: () => ({ model: next }),
         DeleteNote: () => ({ model: next }),
         Search: () => ({ model: next }),
-        Topics: () => ({ model: next }),
+        Tags: () => ({ model: next }),
         Wiki: () => ({ model: next }),
         Review: () => ({ model: next }),
         Health: () => ({ model: next }),
@@ -1176,7 +1176,7 @@ export const update = (model: Model, message: Message) =>
           lastError: () => Option.none(),
         }),
         commands: [
-          NavigateInternal({ url: homeRouter({ type: Option.none(), topic: Option.none() }) }),
+          NavigateInternal({ url: homeRouter({ type: Option.none(), tag: Option.none() }) }),
         ],
       }
     },
@@ -1213,24 +1213,24 @@ export const update = (model: Model, message: Message) =>
       }
     },
 
-    SucceededTopics: ({ requestId, topics }) => {
-      if (requestId !== model.topicsRequestId) {
+    SucceededTags: ({ requestId, tags }) => {
+      if (requestId !== model.tagsRequestId) {
         return { model }
       }
       return {
         model: modifyFields(model, {
-          topics: () => AsyncData.Success({ data: topics }),
+          tags: () => AsyncData.Success({ data: tags }),
         }),
       }
     },
 
-    FailedTopics: ({ requestId, message }) => {
-      if (requestId !== model.topicsRequestId) {
+    FailedTags: ({ requestId, message }) => {
+      if (requestId !== model.tagsRequestId) {
         return { model }
       }
       return {
         model: modifyFields(model, {
-          topics: () => AsyncData.Failure({ error: message }),
+          tags: () => AsyncData.Failure({ error: message }),
         }),
       }
     },
@@ -1403,7 +1403,7 @@ const navigation = (model: Model, h: HtmlBuilder<Message>): Html =>
         [h.Class("flex flex-wrap items-center justify-between gap-4")],
         [
           h.a(
-            [h.Href(homeRouter({ type: Option.none(), topic: Option.none() }))],
+            [h.Href(homeRouter({ type: Option.none(), tag: Option.none() }))],
             [
               h.span(
                 [h.Class("text-2xl font-bold tracking-tight")],
@@ -1434,14 +1434,14 @@ const navigation = (model: Model, h: HtmlBuilder<Message>): Html =>
         [h.Class("flex flex-wrap gap-1"), h.AriaLabel("Primary")],
         [
           navLink(
-            homeRouter({ type: Option.none(), topic: Option.none() }),
+            homeRouter({ type: Option.none(), tag: Option.none() }),
             "Notes",
             isRoute(model.route, "Home"),
             h,
           ),
           navLink(newNoteHref(), "New", isRoute(model.route, "NewNote"), h),
           navLink("/search", "Search", isRoute(model.route, "Search"), h),
-          navLink(topicsRouter(), "Topics", isRoute(model.route, "Topics"), h),
+          navLink(tagsRouter(), "Tags", isRoute(model.route, "Tags"), h),
           navLink(reviewRouter(), "Review", isRoute(model.route, "Review"), h),
           navLink("/health", "Health", isRoute(model.route, "Health"), h),
         ],
@@ -1482,15 +1482,15 @@ const failureView = (
     [h.p([h.Class("text-sm text-red-300")], [message]), retry(h)],
   )
 
-const topicChips = (
+const tagChips = (
   note: ApiNote,
   h: HtmlBuilder<Message>,
 ): Html =>
-  note.topics.length === 0
+  note.tags.length === 0
     ? h.empty
     : h.ul(
-        [h.Class("flex flex-wrap gap-2"), h.AriaLabel("Topics")],
-        Array.map(note.topics, (topic) =>
+        [h.Class("flex flex-wrap gap-2"), h.AriaLabel("Tags")],
+        Array.map(note.tags, (tag) =>
           h.li(
             [],
             [
@@ -1499,12 +1499,12 @@ const topicChips = (
                   h.Href(
                     homeRouter({
                       type: Option.none(),
-                      topic: Option.some(topic),
+                      tag: Option.some(tag),
                     }),
                   ),
                   h.Class(badgeClass),
                 ],
-                [topic],
+                [tag],
               ),
             ],
           ),
@@ -1564,7 +1564,7 @@ const noteCard = (note: ApiNote, h: HtmlBuilder<Message>): Html =>
             [`Source: ${note.reference}`],
           )
         : h.empty,
-      topicChips(note, h),
+      tagChips(note, h),
     ],
   )
 
@@ -1611,12 +1611,12 @@ const listOf = (
 
 const homeView = (model: Model, h: HtmlBuilder<Message>): Html =>
   AppRoute.match(model.route, {
-    Home: ({ type, topic }) => {
+    Home: ({ type, tag }) => {
       const selected = Option.getOrNull(type)
       const filterLink = (label: string, value: Option.Option<string>) =>
         h.a(
           [
-            h.Href(homeRouter({ type: value, topic })),
+            h.Href(homeRouter({ type: value, tag })),
             h.Class(
               Option.getOrNull(type) === Option.getOrNull(value)
                 ? "rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-slate-950"
@@ -1636,12 +1636,12 @@ const homeView = (model: Model, h: HtmlBuilder<Message>): Html =>
                 [h.Class("flex flex-col gap-1")],
                 [
                   h.h1([h.Class("text-3xl font-bold")], ["Notes"]),
-                  Option.match(topic, {
+                  Option.match(tag, {
                     onNone: () => h.p([h.Class(mutedClass)], [
                       "Every note is one Markdown file in the local note root.",
                     ]),
                     onSome: (value) =>
-                      h.p([h.Class(mutedClass)], [`Topic: ${value}`]),
+                      h.p([h.Class(mutedClass)], [`Tag: ${value}`]),
                   }),
                 ],
               ),
@@ -1682,7 +1682,7 @@ const homeView = (model: Model, h: HtmlBuilder<Message>): Html =>
     EditNote: () => editorView(model, h),
     DeleteNote: () => deleteView(model, h),
     Search: () => searchView(model, h),
-    Topics: () => topicsView(model, h),
+    Tags: () => tagsView(model, h),
     Wiki: () => wikiView(model, h),
     Review: () => reviewView(model, h),
     Health: () => healthView(model, h),
@@ -1829,15 +1829,15 @@ const editorView = (model: Model, h: HtmlBuilder<Message>): Html =>
                   )
                 : h.empty,
               field(
-                "Topics (comma separated)",
-                "note-topics",
+                "Tags (comma separated)",
+                "note-tags",
                 h.input([
-                  h.Id("note-topics"),
+                  h.Id("note-tags"),
                   h.Class(inputClass),
-                  h.Value(form.topics),
+                  h.Value(form.tags),
                   h.Placeholder("agent-memory, retrieval"),
                   h.Autocomplete("off"),
-                  h.OnInput((value) => Message.UpdatedTopics({ value })),
+                  h.OnInput((value) => Message.UpdatedTags({ value })),
                 ]),
                 h,
               ),
@@ -1921,7 +1921,7 @@ const noteDetailView = (model: Model, h: HtmlBuilder<Message>): Html =>
                     : h.empty,
                   h.div(
                     [h.Class("mt-4")],
-                    [topicChips(note, h)],
+                    [tagChips(note, h)],
                   ),
                   h.pre(
                     [
@@ -2085,7 +2085,7 @@ const searchView = (model: Model, h: HtmlBuilder<Message>): Html =>
     ],
   )
 
-const topicBreakdown = (item: ApiTopic): string => {
+const tagBreakdown = (item: ApiTag): string => {
   const parts = [
     item.byType.fleeting === 0 ? undefined : `${item.byType.fleeting} fleeting`,
     item.byType.literature === 0
@@ -2098,29 +2098,29 @@ const topicBreakdown = (item: ApiTopic): string => {
   return parts.length === 0 ? "no notes" : parts.join(", ")
 }
 
-const topicsList = (topics: ReadonlyArray<ApiTopic>, h: HtmlBuilder<Message>): Html =>
-  Array.match(topics, {
-    onEmpty: () => h.p([h.Class(mutedClass)], ["No topics have been assigned yet."]),
+const tagsList = (tags: ReadonlyArray<ApiTag>, h: HtmlBuilder<Message>): Html =>
+  Array.match(tags, {
+    onEmpty: () => h.p([h.Class(mutedClass)], ["No tags have been assigned yet."]),
     onNonEmpty: (items) =>
       h.ul(
         [h.Class("grid gap-3 sm:grid-cols-2")],
         Array.map(items, (item) =>
           h.keyed("li")(
-            item.topic,
+            item.tag,
             [h.Class("rounded-xl border border-slate-800 bg-slate-950/60 p-4")],
             [
               h.a(
                 [
-                  h.Href(wikiHref(item.topic)),
+                  h.Href(wikiHref(item.tag)),
                   h.Class("text-lg font-semibold text-emerald-300"),
                 ],
-                [item.topic],
+                [item.tag],
               ),
               h.p([h.Class("mt-1 text-xs text-slate-400")], [
-                `${item.noteCount} ${item.noteCount === 1 ? "note" : "notes"} (${topicBreakdown(item)})`,
+                `${item.noteCount} ${item.noteCount === 1 ? "note" : "notes"} (${tagBreakdown(item)})`,
               ]),
               h.p([h.Class("mt-2 text-xs text-slate-500")], [
-                "Counts include every note type. Topic pages cite permanent and literature notes by default; fleeting notes are opt-in.",
+                "Counts include every note type. Tag pages cite permanent and literature notes by default; fleeting notes are opt-in.",
               ]),
               h.div(
                 [h.Class("mt-3 flex flex-wrap gap-3 text-xs")],
@@ -2130,7 +2130,7 @@ const topicsList = (topics: ReadonlyArray<ApiTopic>, h: HtmlBuilder<Message>): H
                       h.Href(
                         homeRouter({
                           type: Option.none(),
-                          topic: Option.some(item.topic),
+                          tag: Option.some(item.tag),
                         }),
                       ),
                       h.Class(linkClass),
@@ -2138,15 +2138,15 @@ const topicsList = (topics: ReadonlyArray<ApiTopic>, h: HtmlBuilder<Message>): H
                     ["Browse notes"],
                   ),
                   h.a(
-                    [h.Href(wikiHref(item.topic)), h.Class(linkClass)],
-                    ["Open topic page"],
+                    [h.Href(wikiHref(item.tag)), h.Class(linkClass)],
+                    ["Open tag page"],
                   ),
                   item.byType.fleeting === 0
                     ? h.empty
                     : h.a(
                         [
                           h.Href(
-                            wikiHref(item.topic, { includeFleeting: true }),
+                            wikiHref(item.tag, { includeFleeting: true }),
                           ),
                           h.Class(linkClass),
                         ],
@@ -2160,7 +2160,7 @@ const topicsList = (topics: ReadonlyArray<ApiTopic>, h: HtmlBuilder<Message>): H
       ),
   })
 
-const topicsView = (model: Model, h: HtmlBuilder<Message>): Html =>
+const tagsView = (model: Model, h: HtmlBuilder<Message>): Html =>
   h.section(
     [h.Class("flex flex-col gap-4")],
     [
@@ -2170,9 +2170,9 @@ const topicsView = (model: Model, h: HtmlBuilder<Message>): Html =>
           h.div(
             [h.Class("flex flex-col gap-1")],
             [
-              h.h1([h.Class("text-3xl font-bold")], ["Topics"]),
+              h.h1([h.Class("text-3xl font-bold")], ["Tags"]),
               h.p([h.Class(mutedClass)], [
-                "Topics are frontmatter metadata. Counts come from the disposable index.",
+                "Tags are frontmatter metadata. Counts come from the disposable index.",
               ]),
             ],
           ),
@@ -2186,17 +2186,17 @@ const topicsView = (model: Model, h: HtmlBuilder<Message>): Html =>
           ),
         ],
       ),
-      AsyncData.match(model.topics, {
-        onIdle: () => status("Loading topics...", h),
-        onLoading: () => status("Loading topics...", h),
-        onRefreshing: (topics) =>
+      AsyncData.match(model.tags, {
+        onIdle: () => status("Loading tags...", h),
+        onLoading: () => status("Loading tags...", h),
+        onRefreshing: (tags) =>
           h.div(
             [h.Class("flex flex-col gap-3")],
-            [status("Refreshing topics...", h), topicsList(topics, h)],
+            [status("Refreshing tags...", h), tagsList(tags, h)],
           ),
         onStale: ({ error }) => failureView(error, h),
         onFailure: (error) => failureView(error, h),
-        onSuccess: (topics) => topicsList(topics, h),
+        onSuccess: (tags) => tagsList(tags, h),
       }),
     ],
   )
@@ -2246,7 +2246,7 @@ const wikiBody = (
     wiki.mode === "synthesized"
       ? h.a(
           [
-            h.Href(wikiHref(wiki.topic, { includeFleeting })),
+            h.Href(wikiHref(wiki.tag, { includeFleeting })),
             h.Class(buttonClass),
           ],
           ["Use extractive"],
@@ -2255,7 +2255,7 @@ const wikiBody = (
         ? h.a(
             [
               h.Href(
-                wikiHref(wiki.topic, { mode: "synthesized", includeFleeting }),
+                wikiHref(wiki.tag, { mode: "synthesized", includeFleeting }),
               ),
               h.Class(buttonClass),
             ],
@@ -2272,7 +2272,7 @@ const wikiBody = (
           h.div(
             [h.Class("flex flex-col gap-1")],
             [
-              h.h1([h.Class("text-3xl font-bold")], [`Topic: ${wiki.topic}`]),
+              h.h1([h.Class("text-3xl font-bold")], [`Tag: ${wiki.tag}`]),
               h.p([h.Class(mutedClass)], [
                 `Generated ${wiki.generatedAt} from ${wiki.noteCount} ${
                   wiki.noteCount === 1 ? "note" : "notes"
@@ -2299,7 +2299,7 @@ const wikiBody = (
               modeLink,
               h.a(
                 [
-                  h.Href(wikiHref(wiki.topic, { mode: wiki.mode, includeFleeting: !includeFleeting })),
+                  h.Href(wikiHref(wiki.tag, { mode: wiki.mode, includeFleeting: !includeFleeting })),
                   h.Class(buttonClass),
                 ],
                 [includeFleeting ? "Exclude fleeting" : "Include fleeting"],
@@ -2314,20 +2314,20 @@ const wikiBody = (
             [
               h.p([h.Class(mutedClass)], [
                 includeFleeting
-                  ? "No notes matched this topic. No content was invented."
-                  : "No notes matched this topic with the default citation scope. Fleeting notes are excluded; no content was invented.",
+                  ? "No notes matched this tag. No content was invented."
+                  : "No notes matched this tag with the default citation scope. Fleeting notes are excluded; no content was invented.",
               ]),
               h.a(
                 [
                   h.Href(
                     homeRouter({
                       type: Option.none(),
-                      topic: Option.some(wiki.topic),
+                      tag: Option.some(wiki.tag),
                     }),
                   ),
                   h.Class(linkClass),
                 ],
-                ["Browse every note with this topic"],
+                ["Browse every note with this tag"],
               ),
             ],
           )
@@ -2368,7 +2368,7 @@ const wikiBody = (
 
 const wikiFailure = (
   message: string,
-  topic: string,
+  tag: string,
   includeFleeting: boolean,
   h: HtmlBuilder<Message>,
 ): Html =>
@@ -2384,7 +2384,7 @@ const wikiFailure = (
         [
           h.a(
             [
-              h.Href(wikiHref(topic, { includeFleeting })),
+              h.Href(wikiHref(tag, { includeFleeting })),
               h.Class(primaryButtonClass),
             ],
             ["Use extractive page"],
@@ -2397,7 +2397,7 @@ const wikiFailure = (
 
 const wikiView = (model: Model, h: HtmlBuilder<Message>): Html =>
   AppRoute.match(model.route, {
-    Wiki: ({ topic, includeFleeting }) => {
+    Wiki: ({ tag, includeFleeting }) => {
       const withFleeting = includeFleetingFromQuery(includeFleeting)
       return h.section(
         [h.Class("flex flex-col gap-4")],
@@ -2405,7 +2405,7 @@ const wikiView = (model: Model, h: HtmlBuilder<Message>): Html =>
           h.div(
             [h.Class("flex flex-wrap items-center justify-between gap-3")],
             [
-              h.a([h.Href(topicsRouter()), h.Class(linkClass)], ["Back to topics"]),
+              h.a([h.Href(tagsRouter()), h.Class(linkClass)], ["Back to tags"]),
               h.button(
                 [
                   h.Type("button"),
@@ -2417,15 +2417,15 @@ const wikiView = (model: Model, h: HtmlBuilder<Message>): Html =>
             ],
           ),
           AsyncData.match(model.wiki, {
-            onIdle: () => status(`Building topic page for ${topic}...`, h),
-            onLoading: () => status(`Building topic page for ${topic}...`, h),
+            onIdle: () => status(`Building tag page for ${tag}...`, h),
+            onLoading: () => status(`Building tag page for ${tag}...`, h),
             onRefreshing: (wiki) =>
               h.div(
                 [h.Class("flex flex-col gap-3")],
                 [status("Regenerating...", h), wikiBody(wiki, withFleeting, h)],
               ),
-            onStale: ({ error }) => wikiFailure(error, topic, withFleeting, h),
-            onFailure: (error) => wikiFailure(error, topic, withFleeting, h),
+            onStale: ({ error }) => wikiFailure(error, tag, withFleeting, h),
+            onFailure: (error) => wikiFailure(error, tag, withFleeting, h),
             onSuccess: (wiki) => wikiBody(wiki, withFleeting, h),
           }),
         ],
@@ -2437,7 +2437,7 @@ const wikiView = (model: Model, h: HtmlBuilder<Message>): Html =>
     EditNote: () => h.empty,
     DeleteNote: () => h.empty,
     Search: () => h.empty,
-    Topics: () => h.empty,
+    Tags: () => h.empty,
     Review: () => h.empty,
     Health: () => h.empty,
     NotFound: () => h.empty,
