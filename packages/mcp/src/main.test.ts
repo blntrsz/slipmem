@@ -111,9 +111,15 @@ test("stdio server initializes, lists bounded tools, and exits cleanly on SIGTER
     const reader = server.stdout!.getReader()
     initialize(server)
     const handshake = JSON.parse(await readLine(reader)) as {
-      readonly result?: { readonly serverInfo?: { readonly name?: string } }
+      readonly result?: {
+        readonly serverInfo?: { readonly name?: string }
+        readonly instructions?: string
+      }
     }
     expect(handshake.result?.serverInfo?.name).toBe("slipmem")
+    expect(handshake.result?.instructions).toContain("list_tags")
+    expect(handshake.result?.instructions).toContain("search_notes")
+    expect(handshake.result?.instructions).toContain("build_tag_wiki")
 
     send(server, { jsonrpc: "2.0", method: "notifications/initialized" })
     send(server, { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })

@@ -103,7 +103,7 @@ const GetLiteratureNote = readOnlyTool(Tool.make("get_literature_note", {
 
 const SearchNotes = readOnlyTool(Tool.make("search_notes", {
   description:
-    "Ranked bounded search across note types, with optional type and tag filters. Default 10, hard maximum 50; excerpts are bounded.",
+    "Ranked bounded search across note types, with optional type and exact tag filters. Default 10, hard maximum 50; excerpts are bounded. Use list_tags first when the tag slug is unknown.",
   parameters: SearchNotesInput,
   success: SearchNotesResult,
   failure: ToolFailure,
@@ -111,7 +111,7 @@ const SearchNotes = readOnlyTool(Tool.make("search_notes", {
 
 const ListTags = readOnlyTool(Tool.make("list_tags", {
   description:
-    "List tag slugs with note counts and up to three bounded examples each. Derived from frontmatter, never a stored tag page.",
+    "List tag slugs with note counts and up to three bounded examples each; an optional query filters by substring. Default 50, hard maximum 200. Derived from frontmatter, never a stored tag page.",
   parameters: ListTagsInput,
   success: ListTagsResult,
   failure: ToolFailure,

@@ -1190,3 +1190,10 @@ test("instructions repeat the trust boundary", () => {
   expect(mcpInstructions).toContain("not an OS sandbox")
   expect(mcpInstructions).toContain("bounded")
 })
+
+test("instructions point at bounded read discovery without repository tags", () => {
+  expect(mcpInstructions).toContain("list_tags")
+  expect(mcpInstructions).toContain("search_notes")
+  expect(mcpInstructions).toContain("build_tag_wiki")
+  expect(mcpInstructions).not.toMatch(/`domain`|`architecture`|`coding-standards`/)
+})
