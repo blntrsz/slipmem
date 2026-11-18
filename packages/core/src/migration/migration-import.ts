@@ -64,6 +64,15 @@ export const MIGRATION_MANIFEST_FILENAME = "manifest.json"
 export const MIGRATION_BACKUP_FILENAME = "source-backup.db"
 export const MIGRATION_QUARANTINE_DIRECTORY = "quarantine"
 
+/**
+ * The importer rewrites its running manifest after this many note writes.
+ *
+ * A crash can therefore lose at most this many status updates; recovery also
+ * counts existing planned target files, so the reported `notesWritten` stays
+ * meaningful even before the next checkpoint.
+ */
+export const MIGRATION_MANIFEST_CHECKPOINT_NOTES = 25
+
 export type MigrationImportStatus = "dry-run" | "imported" | "failed"
 
 export type MigrationImportErrorCode =
@@ -683,6 +692,41 @@ const processIsAlive = (pid: number): boolean => {
   }
 }
 
+/**
+ * Reads the Linux process start time so a reused PID is not mistaken for the
+ * owner of an interrupted migration. Other platforms return null and keep the
+ * PID-only behavior.
+ */
+const processStartTime = (pid: number): number | null => {
+  if (process.platform !== "linux" || !Number.isInteger(pid) || pid <= 0) {
+    return null
+  }
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8")
+    const closing = stat.lastIndexOf(")")
+    if (closing === -1) return null
+    const fields = stat.slice(closing + 1).trim().split(/\s+/)
+    const raw = fields[19]
+    if (raw === undefined) return null
+    const value = Number(raw)
+    return Number.isSafeInteger(value) ? value : null
+  } catch {
+    return null
+  }
+}
+
+const sameProcess = (
+  pid: number | null,
+  recordedStart: number | null,
+): boolean => {
+  if (pid === null || !processIsAlive(pid)) return false
+  if (recordedStart === null) return true
+  const currentStart = processStartTime(pid)
+  // Without a readable start time we keep the conservative PID-only behavior
+  // and never overwrite a manifest that may belong to a live run.
+  return currentStart === null || currentStart === recordedStart
+}
+
 const manifestStatusOf = (value: unknown): string | null =>
   typeof value === "object" && value !== null && "status" in value
     ? String((value as { status: unknown }).status)
@@ -696,9 +740,56 @@ const manifestPidOf = (value: unknown): number | null => {
   return typeof pid === "number" && Number.isSafeInteger(pid) ? pid : null
 }
 
+const manifestPidStartOf = (value: unknown): number | null => {
+  if (typeof value !== "object" || value === null || !("pidStart" in value)) {
+    return null
+  }
+  const pidStart = (value as { pidStart: unknown }).pidStart
+  return typeof pidStart === "number" && Number.isSafeInteger(pidStart)
+    ? pidStart
+    : null
+}
+
 interface InterruptedRunsReport {
   readonly runs: ReadonlyArray<MigrationInterruptedRun>
   readonly warnings: ReadonlyArray<MigrationImportWarning>
+}
+
+const noteObject = (
+  value: unknown,
+): Record<string, unknown> | null =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+
+/**
+ * Estimates how many notes an interrupted run had written.
+ *
+ * A manifest is checkpointed while the run is active, but a crash can happen
+ * between checkpoints. Every planned/imported note result records its final
+ * target path, and note writes are atomic, so an existing target file is
+ * evidence that the run wrote it. The manifest's imported statuses remain the
+ * lower bound when an operator has moved or removed a file after the crash.
+ */
+const interruptedNotesWritten = (
+  notes: ReadonlyArray<unknown>,
+): number => {
+  let manifestImported = 0
+  let onDisk = 0
+  for (const value of notes) {
+    const note = noteObject(value)
+    if (note === null) continue
+    const status = note["status"]
+    if (status === "imported") {
+      manifestImported += 1
+    }
+    if (status !== "planned" && status !== "imported") continue
+    const targetPath = note["targetPath"]
+    if (typeof targetPath === "string" && existsSync(targetPath)) {
+      onDisk += 1
+    }
+  }
+  return Math.max(manifestImported, onDisk)
 }
 
 /**
@@ -756,14 +847,10 @@ const markInterruptedRuns = (
     }
 
     const pid = manifestPidOf(document)
-    const active = pid !== null && processIsAlive(pid)
+    const pidStart = manifestPidStartOf(document)
+    const active = pid !== null && sameProcess(pid, pidStart)
     const notes = Array.isArray(document["notes"]) ? document["notes"] : []
-    const notesWritten = notes.filter(
-      (note) =>
-        typeof note === "object" &&
-        note !== null &&
-        (note as { status?: unknown }).status === "imported",
-    ).length
+    const notesWritten = interruptedNotesWritten(notes)
     const runId =
       typeof document["runId"] === "string" ? document["runId"] : entry.name
 
@@ -777,7 +864,9 @@ const markInterruptedRuns = (
       })
       warnings.push({
         code: "interrupted-run-active",
-        message: `Migration run ${runId} still records a running manifest owned by live PID ${pid}; it was not marked interrupted. Inspect ${manifestPath} before retrying.`,
+        message: `Migration run ${runId} still records a running manifest owned by live PID ${pid}${
+          pidStart === null ? "" : ` (start ${pidStart})`
+        }; it was not marked interrupted. Inspect ${manifestPath} before retrying.`,
       })
       continue
     }
@@ -912,6 +1001,7 @@ const manifestDocument = (input: ManifestInput): Record<string, unknown> => ({
   kind: "slipmem-migration-manifest",
   runId: input.runId,
   pid: process.pid,
+  pidStart: processStartTime(process.pid),
   createdAt: input.createdAt,
   status: input.status,
   root: input.root,
@@ -1339,18 +1429,30 @@ export const importMigration = (
       throw new Error("unreachable")
     }
 
+    // A legacy id is only unique inside its own note table. Key the merge
+    // identity by type as well so the same id in, say, a fleeting and a
+    // permanent row stays two distinct notes instead of one appearing to
+    // conflict with itself on every rerun.
+    const legacyKey = (type: Markdown.NoteType, legacyId: string): string =>
+      `${type}\u0000${legacyId}`
     const existingByLegacyId = new Map<string, ParsedMarkdownNote>()
     for (const existing of existingScan.notes) {
       const legacyId = existing.metadata.legacyId
-      if (legacyId !== undefined && !existingByLegacyId.has(legacyId)) {
-        existingByLegacyId.set(legacyId, existing)
+      const key =
+        legacyId === undefined
+          ? undefined
+          : legacyKey(existing.metadata.type, legacyId)
+      if (key !== undefined && !existingByLegacyId.has(key)) {
+        existingByLegacyId.set(key, existing)
       }
     }
 
     noteResults = []
     for (const note of lockedPlan.notes) {
       const base = baseNote(note)
-      const existing = existingByLegacyId.get(note.legacyId)
+      const existing = existingByLegacyId.get(
+        legacyKey(note.type, note.legacyId),
+      )
       if (existing === undefined) {
         noteResults.push(
           canonicalBody(note.body) === note.body
@@ -1364,7 +1466,7 @@ export const importMigration = (
       if (conflict) {
         warnings.push({
           code: "legacy-id-conflict",
-          message: `A note with legacyId "${note.legacyId}" already exists at ${existing.path} with different content. It was not overwritten.`,
+          message: `A ${note.type} note with legacyId "${note.legacyId}" already exists at ${existing.path} with different content. It was not overwritten.`,
           legacyId: note.legacyId,
         })
       }
@@ -1575,6 +1677,7 @@ export const importMigration = (
     }
 
     const filenamesBefore = noteFilenames(root)
+    let importedSinceCheckpoint = 0
     for (const entry of prepared) {
       try {
         Effect.runSync(
@@ -1606,6 +1709,27 @@ export const importMigration = (
           `Could not write "${entry.note.filename}" atomically: ${message}`,
           cause,
         )
+      }
+
+      importedSinceCheckpoint += 1
+      if (importedSinceCheckpoint >= MIGRATION_MANIFEST_CHECKPOINT_NOTES) {
+        importedSinceCheckpoint = 0
+        context = {
+          ...context,
+          notes: noteResults,
+          counts: importCounts(lockedPlan, noteResults, warnings, quarantine),
+        }
+        try {
+          writeManifest("running", null)
+        } catch (cause) {
+          fail(
+            "state-write-failed",
+            `The notes written so far exist, but the running migration manifest could not be checkpointed: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
+            cause,
+          )
+        }
       }
     }
 

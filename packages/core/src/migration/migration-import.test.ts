@@ -473,6 +473,56 @@ describe("SQLite to Markdown importer", () => {
     })
   })
 
+  test("does not expose a rounded structured provenance copy for unsafe integers", () => {
+    const raw = '{"source":"mcp","externalId":9223372036854775807}'
+    const { directory, path } = createDatabase(`
+      CREATE TABLE permanent_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL,
+        provenance TEXT NOT NULL
+      );
+      INSERT INTO permanent_note VALUES
+        (
+          'unsafe-structured',
+          'Unsafe structured provenance',
+          'Only exact raw provenance is exposed.',
+          1794943845000,
+          1794943845000,
+          '${raw}'
+        );
+    `)
+    const target = join(directory, "notes")
+
+    const report = importMigration({
+      databasePath: path,
+      noteRoot: target,
+      now: () => FIXED_NOW,
+    })
+
+    expect(report.status).toBe("imported")
+    const note = Effect.runSync(
+      readNoteFile(target, "20261117193045-unsafe-structured-provenance"),
+    )
+    expect(note?.metadata.provenance).toEqual({ source: "mcp" })
+    expect(note?.unknown["legacyProvenance"]).toBeUndefined()
+    expect(note?.unknown["legacyColumns"]).toEqual({ provenance: raw })
+    expect(
+      report.warnings.some((warning) => warning.code === "legacy-id-conflict"),
+    ).toBe(false)
+    expect(
+      report.plan.issues.some((issue) =>
+        issue.problems.some(
+          (problem) =>
+            problem.code === "invalid-provenance" &&
+            problem.message.includes("no rounded structured copy"),
+        ),
+      ),
+    ).toBe(true)
+  })
+
   test("quarantines rows from a table with missing required columns", () => {
     const { directory, path } = createDatabase(`
       CREATE TABLE fleeting_note (
@@ -674,6 +724,89 @@ describe("SQLite to Markdown importer", () => {
     }
     expect(second.manifestPath).not.toBe(first.manifestPath)
     expect(existsSync(second.manifestPath!)).toBe(true)
+  })
+
+  test("merge keeps the same legacyId distinct across note types", () => {
+    const { directory, path } = createDatabase(`
+      CREATE TABLE fleeting_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+      );
+      CREATE TABLE permanent_note (
+        id TEXT PRIMARY KEY NOT NULL,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        updated_at REAL NOT NULL
+      );
+      INSERT INTO fleeting_note VALUES
+        ('shared-id', 'Fleeting shared', 'fleeting body', 1794943845000, 1794943902000);
+      INSERT INTO permanent_note VALUES
+        ('shared-id', 'Permanent shared', 'permanent body', 1794946500000, 1794946560000);
+    `)
+    const target = join(directory, "notes")
+
+    const first = importMigration({
+      databasePath: path,
+      noteRoot: target,
+      now: () => FIXED_NOW,
+    })
+    expect(first.status).toBe("imported")
+    expect(first.counts.writtenNotes).toBe(2)
+    expect(first.notes.map((note) => note.type).sort()).toEqual([
+      "fleeting",
+      "permanent",
+    ])
+    expect(new Set(first.notes.map((note) => note.legacyId))).toEqual(
+      new Set(["shared-id"]),
+    )
+    const firstFiles = noteFiles(target)
+    expect(new Set(firstFiles).size).toBe(2)
+    for (const note of first.notes) {
+      expect(note.filename).toBe(basename(note.targetPath))
+    }
+
+    const fleetingNote = Effect.runSync(
+      readNoteFile(target, first.notes.find((note) => note.type === "fleeting")!.filename.slice(0, -3)),
+    )
+    const permanentNote = Effect.runSync(
+      readNoteFile(target, first.notes.find((note) => note.type === "permanent")!.filename.slice(0, -3)),
+    )
+    expect(fleetingNote?.metadata.legacyId).toBe("shared-id")
+    expect(fleetingNote?.metadata.type).toBe("fleeting")
+    expect(fleetingNote?.body).toBe("fleeting body")
+    expect(permanentNote?.metadata.legacyId).toBe("shared-id")
+    expect(permanentNote?.metadata.type).toBe("permanent")
+    expect(permanentNote?.body).toBe("permanent body")
+
+    const second = importMigration({
+      databasePath: path,
+      noteRoot: target,
+      merge: true,
+      now: () => FIXED_NOW + 1000,
+    })
+
+    expect(second.status).toBe("imported")
+    expect(second.ok).toBe(true)
+    expect(second.counts).toMatchObject({
+      plannedNotes: 2,
+      writtenNotes: 0,
+      skippedNotes: 2,
+      failedNotes: 0,
+      collisions: 0,
+    })
+    expect(second.notes.map((note) => note.status)).toEqual([
+      "skipped-legacy-id",
+      "skipped-legacy-id",
+    ])
+    expect(
+      second.warnings.filter((warning) => warning.code === "legacy-id-conflict"),
+    ).toEqual([])
+    expect(second.verification.ok).toBe(true)
+    expect(noteFiles(target)).toEqual(firstFiles)
   })
 
   test("resolves same-second filename collisions without changing the prefix", () => {
@@ -937,6 +1070,98 @@ describe("SQLite to Markdown importer", () => {
     expect(
       JSON.parse(readFileSync(activeManifest, "utf8")) as Record<string, unknown>,
     ).toMatchObject({ status: "running" })
+  })
+
+  test("recovers the written count from existing target files after a crash", () => {
+    const { directory, path } = createDatabase(fixtureSql("current.sql"))
+    const target = join(directory, "notes")
+    const first = importMigration({
+      databasePath: path,
+      noteRoot: target,
+      now: () => FIXED_NOW,
+    })
+    expect(first.counts.writtenNotes).toBe(3)
+
+    const crashedRunId = "20260101000000-checkpoint-crashed"
+    const crashedDirectory = join(target, ".state", "migrations", crashedRunId)
+    mkdirSync(crashedDirectory, { recursive: true })
+    const crashedManifest = join(crashedDirectory, "manifest.json")
+    writeFileSync(
+      crashedManifest,
+      JSON.stringify({
+        schema: 1,
+        kind: "slipmem-migration-manifest",
+        runId: crashedRunId,
+        pid: 2_147_483_647,
+        status: "running",
+        notes: first.notes.map((note) => ({
+          legacyId: note.legacyId,
+          status: "planned",
+          filename: note.filename,
+          targetPath: note.targetPath,
+        })),
+      }),
+    )
+
+    const report = importMigration({
+      databasePath: path,
+      noteRoot: target,
+      merge: true,
+      now: () => FIXED_NOW + 1000,
+    })
+
+    // The manifest was never checkpointed before the crash, so its imported
+    // status count is zero. The recovery report still derives the three
+    // atomically written files from their recorded target paths.
+    expect(report.interruptedRuns).toHaveLength(1)
+    expect(report.interruptedRuns[0]).toMatchObject({
+      runId: crashedRunId,
+      marked: true,
+      notesWritten: 3,
+    })
+    expect(noteFiles(target)).toHaveLength(3)
+  })
+
+  test("marks a running manifest whose PID was reused by a different process", () => {
+    // The start-time comparison needs Linux /proc; elsewhere the conservative
+    // PID-only behavior is covered by the live-owner test above.
+    if (process.platform !== "linux") return
+
+    const { directory, path } = createDatabase(fixtureSql("current.sql"))
+    const target = join(directory, "notes")
+    importMigration({ databasePath: path, noteRoot: target, now: () => FIXED_NOW })
+
+    const reusedRunId = "20260101000000-reused-pid"
+    const reusedDirectory = join(target, ".state", "migrations", reusedRunId)
+    mkdirSync(reusedDirectory, { recursive: true })
+    const reusedManifest = join(reusedDirectory, "manifest.json")
+    writeFileSync(
+      reusedManifest,
+      JSON.stringify({
+        schema: 1,
+        kind: "slipmem-migration-manifest",
+        runId: reusedRunId,
+        pid: process.pid,
+        pidStart: 1,
+        status: "running",
+      }),
+    )
+
+    const report = importMigration({
+      databasePath: path,
+      noteRoot: target,
+      merge: true,
+      now: () => FIXED_NOW + 1000,
+    })
+
+    expect(report.interruptedRuns).toHaveLength(1)
+    expect(report.interruptedRuns[0]).toMatchObject({
+      runId: reusedRunId,
+      marked: true,
+    })
+    expect(
+      JSON.parse(readFileSync(reusedManifest, "utf8")) as Record<string, unknown>,
+    ).toMatchObject({ status: "interrupted" })
   })
 
   test("fails verification clearly while preserving the manifest and target files", () => {
