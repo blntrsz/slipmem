@@ -4,7 +4,7 @@ id: 20261118022815-service-cookbook-shape-factory-and-live-layer
 type: permanent
 title: "Service cookbook: Shape, factory, and Live layer"
 createdAt: "2026-11-18T02:28:15Z"
-updatedAt: "2026-11-18T02:55:30Z"
+updatedAt: "2026-11-18T08:10:39Z"
 tags:
   - coding-standards
   - effect
@@ -15,7 +15,7 @@ provenance:
   actor: user
 ---
 
-Core services follow one Effect v4 pattern: a narrow Shape, a `Context.Service` tag, a factory that closes over its dependency and config, and a Live layer over an ambient tag.
+Core services follow one Effect v4 pattern: a Shape, a `Context.Service` tag, a factory that closes over its dependency and config, and a Live layer over an ambient tag.
 
 ```ts
 import { Context, Data, Effect, Layer } from "effect"
@@ -69,8 +69,8 @@ export const ReaderLive = (
 
 - Depend on the exact shape; inject time and adapters through config.
 - Build `read` as a closure and return it.
-- Type expected failures as `Data.TaggedError`; do not throw.
+- Type failures as `Data.TaggedError`; do not throw.
 - `Live` yields the dependency tag and delegates to the factory; compose with `Layer.provide`.
-- Tests call the factory with a temporary root, fixed clock, and fake store, then add one Live-layer test.
+- Tests call the factory with a temporary root, fixed clock, and fake store, plus one Live-layer test.
 
-Real examples: `packages/core/src/wiki/wiki-service.ts:75-88,158-162,450-459`; repository `packages/core/src/markdown/repository.ts:159-163,517-519,797-800`.
+Examples: [wiki-service.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/wiki/wiki-service.ts), [repository.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/markdown/repository.ts).

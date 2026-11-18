@@ -4,18 +4,18 @@ id: 20261118022819-source-operator-guide-storage-and-trust-boundary
 type: literature
 title: "Source: operator guide storage and trust boundary"
 createdAt: "2026-11-18T02:28:19Z"
-updatedAt: "2026-11-18T02:55:40Z"
+updatedAt: "2026-11-18T08:10:43Z"
 tags:
   - source
   - security
   - operations
-reference: docs/operator-guide.md §2, §3, §9, §10 (repository commit 8094950)
+reference: https://github.com/blntrsz/slipmem/blob/8094950/docs/operator-guide.md §2, §3, §9, §10
 provenance:
   source: cli
   actor: user
 ---
 
-This literature note summarizes `docs/operator-guide.md` as a pinned snapshot at repository commit 8094950, sections 2, 3, 9, and 10. It describes behavior that exists in the tree, not planned commands.
+This literature note summarizes [docs/operator-guide.md](https://github.com/blntrsz/slipmem/blob/8094950/docs/operator-guide.md) as a pinned snapshot at repository commit 8094950, sections 2, 3, 9, and 10. It describes behavior that exists in the tree, not planned commands.
 
 Storage. The portable artifact is one flat directory of Markdown files, normally `.slipmem/` at the repository root. Every note is a direct child named `YYYYMMDDHHmmss-<kebab-slug>.md`; the filename stem is the ID used by `show`, `edit`, search, citations, and MCP. There are no type or date subdirectories. Type and tags are frontmatter. `.slipmem/.state/` holds locks, pending proposals, migration runs, and quarantine; the generated `.slipmem/.gitignore` contains exactly `.state/`, so notes, README, and the ignore file are tracked while state is not. Deleted notes move to the XDG state trash, not an in-place unlink. The search index lives under `$XDG_CACHE_HOME/slipmem/index/<root-key>/index.sqlite`, falling back to `~/.cache`; it is disposable and may contain note text.
 
