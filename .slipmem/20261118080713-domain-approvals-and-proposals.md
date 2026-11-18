@@ -4,7 +4,7 @@ id: 20261118080713-domain-approvals-and-proposals
 type: permanent
 title: "Domain: approvals and proposals"
 createdAt: "2026-11-18T08:07:13Z"
-updatedAt: "2026-11-18T08:07:13Z"
+updatedAt: "2026-11-18T08:23:25Z"
 tags:
   - domain
   - approval
@@ -22,4 +22,4 @@ Pending proposals are local state, never notes: one JSON file per proposal under
 
 Evidence: [policy.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/approval/policy.ts), [approval-service.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/approval/approval-service.ts), [proposal-store.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/approval/proposal-store.ts), [markdown.ts](https://github.com/blntrsz/slipmem/blob/main/packages/schemas/src/markdown.ts).
 
-Related: [.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md](20261118022816-the-local-trust-boundary-is-not-authentication.md), [.slipmem/20261118022814-architecture-one-repository-three-surfaces.md](20261118022814-architecture-one-repository-three-surfaces.md).
+Related: [trust boundary](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md), [architecture](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022814-architecture-one-repository-three-surfaces.md).

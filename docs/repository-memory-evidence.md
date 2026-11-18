@@ -91,11 +91,17 @@ The findings and per-note changes are recorded in
   literature domain notes are all `type: permanent` because they are durable
   documentation, not inbox captures or external-source summaries.
 - Every wikilink and plain source-code evidence path in `.slipmem/**` was
-  replaced with a GitHub-flavored Markdown link. Inter-note links use a
-  `.slipmem/<id>.md` label and a direct `<id>.md` destination, because `check`
-  resolves only direct children of the flat root. Source links target
+  replaced with a Markdown link. Cross-note links, including the README domain
+  map, use actual HTTPS URLs of the form
+  `https://github.com/blntrsz/slipmem/blob/main/.slipmem/<id>.md` with readable
+  labels. Source links target
   `https://github.com/blntrsz/slipmem/blob/main/...`; the two literature
   sources use the `8094950` commit pin.
+- Cross-note URLs are external to the local note graph, so `check` does not
+  resolve them and they add no backlinks. This is deliberate because the
+  request was for actual GitHub links, and app linking and backlink behavior
+  was not changed. These URLs resolve after this work is pushed; it has not
+  been pushed.
 - No wikilink syntax remains anywhere under `.slipmem/`, including the
   generated starter README.
 
@@ -153,7 +159,7 @@ overwrite.
 Observed:
 
 - Sixteen bodies are within the 2000/5000 limits: permanent bodies range from
-  1575 to 1999 characters, and the two literature bodies are 3671 and 3942.
+  1578 to 1999 characters, and the two literature bodies are 3671 and 3942.
   The code block extracted from the service note remains 1204 characters.
 - `check --rebuild-index` reported 16 notes, 18 files scanned, 0 errors,
   0 index drift, and OK. The two warnings were the expected non-note
@@ -169,9 +175,10 @@ Observed:
 - `wiki domain --mode extractive --limit 10` cited ten notes by ID and
   `.slipmem/<filename>` path, including all eight domain notes and the trust
   and plan notes.
-- A link audit counted 53 `main`-branch GitHub links, 2 commit-pinned GitHub
-  links, and 18 inter-note Markdown links. Every `main` target is a tracked
-  file, both pins exist at `8094950`, and all note destinations exist.
+- A link audit counted 79 `main`-branch GitHub links (53 evidence links plus 26
+  cross-note links), 2 commit-pinned GitHub links, and 0 local note-link
+  destinations. Every `main` target is a tracked file, both pins exist at
+  `8094950`, and every cross-note target exists under `.slipmem/`.
 
 ## Compile and runtime proof
 

@@ -26,14 +26,14 @@ file.
 
 | ID | Title | Tags | Body |
 | --- | --- | --- | --- |
-| `20261118080710-domain-fleeting-notes` | Domain: fleeting notes | `domain`, `fleeting`, `lifecycle` | 1575 |
-| `20261118080710-domain-permanent-notes` | Domain: permanent notes | `domain`, `permanent`, `lifecycle` | 1831 |
-| `20261118080711-domain-literature-notes` | Domain: literature notes | `domain`, `literature`, `source` | 1764 |
-| `20261118080712-domain-tags` | Domain: tags | `domain`, `tags` | 1745 |
-| `20261118080713-domain-approvals-and-proposals` | Domain: approvals and proposals | `domain`, `approval`, `security` | 1967 |
-| `20261118080714-domain-cited-wiki` | Domain: cited wiki | `domain`, `wiki` | 1975 |
-| `20261118080714-domain-search-and-index` | Domain: search and index | `domain`, `search`, `index` | 1825 |
-| `20261118080715-domain-note-identity-and-lifecycle` | Domain: note identity and lifecycle | `domain`, `identity`, `lifecycle`, `storage` | 1986 |
+| `20261118080710-domain-fleeting-notes` | Domain: fleeting notes | `domain`, `fleeting`, `lifecycle` | 1578 |
+| `20261118080710-domain-permanent-notes` | Domain: permanent notes | `domain`, `permanent`, `lifecycle` | 1834 |
+| `20261118080711-domain-literature-notes` | Domain: literature notes | `domain`, `literature`, `source` | 1767 |
+| `20261118080712-domain-tags` | Domain: tags | `domain`, `tags` | 1750 |
+| `20261118080713-domain-approvals-and-proposals` | Domain: approvals and proposals | `domain`, `approval`, `security` | 1959 |
+| `20261118080714-domain-cited-wiki` | Domain: cited wiki | `domain`, `wiki` | 1967 |
+| `20261118080714-domain-search-and-index` | Domain: search and index | `domain`, `search`, `index` | 1830 |
+| `20261118080715-domain-note-identity-and-lifecycle` | Domain: note identity and lifecycle | `domain`, `identity`, `lifecycle`, `storage` | 1989 |
 
 All eight are `type: permanent` with `provenance.source: cli` and
 `provenance.actor: user`. A domain's subject does not set the note type: the
@@ -108,19 +108,29 @@ The two literature notes now use commit-pinned GitHub references:
 - [docs/mvp-plan.md at 8094950](https://github.com/blntrsz/slipmem/blob/8094950/docs/mvp-plan.md)
 - [docs/operator-guide.md at 8094950](https://github.com/blntrsz/slipmem/blob/8094950/docs/operator-guide.md)
 
-Their note bodies use the same commit pin. Implementation evidence links use
-`main`, so the links become resolvable after the repository is pushed. No
-newly created note was fetched from GitHub during this work.
+Their note bodies use the same commit pin. Implementation evidence links and
+cross-note links use `main`, so the new note URLs begin resolving only after
+this work is pushed. The repository has not been pushed. No newly created note
+was fetched from GitHub during this work.
 
 ## Link convention
 
-- Inter-note links are GitHub-flavored Markdown links. The label names the
-  path, for example `.slipmem/<id>.md`, and the destination is the direct child
-  `<id>.md`. `check` resolves only direct children of the flat root, so a
-  destination such as `.slipmem/<id>.md` would be reported as unsafe.
+- Cross-note links are absolute GitHub URLs of the form
+  `https://github.com/blntrsz/slipmem/blob/main/.slipmem/<id>.md`, with a
+  readable label naming the target, for example `Markdown source of truth` or
+  `trust boundary`. The `.slipmem/README.md` domain map uses the same form with
+  full titles.
+- These links are external to the local note graph. `check` does not resolve
+  them, they produce no local backlinks, and the wiki cites notes through its
+  own generated source lines. That is the deliberate tradeoff of the explicit
+  request for actual GitHub links instead of `[[ ]]`; app linking and backlink
+  rules were not changed.
+- Every note URL was checked against an existing, Git-tracked file under
+  `.slipmem/`. The URLs begin resolving only after this work is pushed; the
+  repository has not been pushed.
 - Source-code and documentation evidence uses readable Markdown links to
-  `https://github.com/blntrsz/slipmem/blob/main/...`. No bare source path is
-  presented as the only pointer.
+  `https://github.com/blntrsz/slipmem/blob/main/...`. The two literature
+  sources keep the `8094950` commit pin.
 - No wikilink syntax remains under `.slipmem/`, including the starter README.
 - Every note remains within its type limit after the URL expansion. Permanent
   bodies stay at 2000 characters or fewer; literature bodies stay at 5000 or
@@ -156,19 +166,28 @@ Observed:
   five notes, led by the approvals note.
 - `wiki domain --mode extractive --limit 10` cited ten notes by ID and
   `.slipmem/<filename>` path, including all eight new domain notes.
-- A link audit counted 53 `main` GitHub links, 2 commit-pinned GitHub links, and
-  18 inter-note Markdown links in `.slipmem/**`. Every `main` target is tracked,
-  both `8094950` paths exist, and every note destination exists.
+- A link audit counted 79 `main` GitHub links (53 source/evidence links and 26
+  cross-note links), 2 commit-pinned GitHub links, and 0 local note-link
+  destinations in `.slipmem/**`. Every `main` target is a tracked file, both
+  `8094950` paths exist, and no `.slipmem/` link uses a relative `.md`
+  destination.
 - The service cookbook code block was re-extracted unchanged at 1204
   characters and compiled with the workspace TypeScript 7.0.2. The runtime
   harness still printed `{"direct":"p:body:a","throughLayer":"p:body:b"}`.
 
 ## Interpretations and ambiguities
 
-- "Use GitHub link instead of `[[ ]]`" was interpreted as GitHub-flavored
-  Markdown links, not remote GitHub URLs for inter-note links. Remote URLs for
-  notes would stop being local note references that `check`, backlinks, and the
-  wiki can resolve. Labels keep the requested `.slipmem/<id>.md` path visible.
+- "For .slipmem use GitHub link instead of `[[ ]]`" means actual HTTPS GitHub
+  URLs for cross-note links, not GitHub-flavored Markdown links to direct-child
+  note files. A previous revision of this evidence interpreted it as the
+  latter and was wrong. Every cross-note link, including the README domain map,
+  now targets
+  `https://github.com/blntrsz/slipmem/blob/main/.slipmem/<id>.md` with a
+  readable label.
+- Losing local link resolution is a deliberate, accepted tradeoff: remote note
+  URLs are not checked by `check`, do not appear as backlinks, and are not
+  rewritten by the wiki. The application's linking and backlink rules were not
+  changed, and the wiki keeps its app-default citation form.
 - "Each domain should have a separate file" was interpreted as one permanent
   documentation note per cohesive implemented domain. The note type remains
   independent of the subject domain, so a fleeting-notes document is permanent.
@@ -176,9 +195,10 @@ Observed:
   strings to commit-pinned GitHub URLs. This preserves the snapshot while
   making provenance directly readable; the commit pin, not the live branch,
   remains authoritative.
-- The new files' `main` links will not resolve on GitHub until this work is
-  pushed. Pushing was not part of this task. Verification used local tracked
-  paths and the existing remote base, not a fetch of new files.
+- All new `main` links, including the cross-note URLs, will not resolve on
+  GitHub until this work is pushed. Pushing was not part of this task.
+  Verification used local tracked paths and the existing remote base, not a
+  fetch of new files.
 - Storage, architecture, service, UI, and trust-boundary details were not
   repeated in new domain notes because the existing six permanent notes already
   own them. The domain set adds focused coverage rather than a second copy.

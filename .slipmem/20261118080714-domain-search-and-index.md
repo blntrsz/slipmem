@@ -4,7 +4,7 @@ id: 20261118080714-domain-search-and-index
 type: permanent
 title: "Domain: search and index"
 createdAt: "2026-11-18T08:07:14Z"
-updatedAt: "2026-11-18T08:07:14Z"
+updatedAt: "2026-11-18T08:23:27Z"
 tags:
   - domain
   - search
@@ -22,4 +22,4 @@ Tag counts come from the same index: default 50, maximum 200, sorted by count th
 
 Evidence: [search-index.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/markdown/search-index.ts), [search.ts](https://github.com/blntrsz/slipmem/blob/main/packages/cli/src/commands/search.ts), [tags.ts](https://github.com/blntrsz/slipmem/blob/main/packages/cli/src/commands/tags.ts), [README.md](https://github.com/blntrsz/slipmem/blob/main/README.md).
 
-Related: [.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md](20261118022814-markdown-files-are-the-only-source-of-truth.md), [.slipmem/20261118022814-architecture-one-repository-three-surfaces.md](20261118022814-architecture-one-repository-three-surfaces.md).
+Related: [Markdown source of truth](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md), [architecture](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022814-architecture-one-repository-three-surfaces.md).

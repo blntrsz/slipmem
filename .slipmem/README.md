@@ -14,11 +14,11 @@ Read and edit these files with any tool. Git can version and back them up.
 Each implemented domain has its own permanent documentation note. These are
 subject files, not notes of the type they describe.
 
-- [Domain: fleeting notes](20261118080710-domain-fleeting-notes.md)
-- [Domain: permanent notes](20261118080710-domain-permanent-notes.md)
-- [Domain: literature notes](20261118080711-domain-literature-notes.md)
-- [Domain: tags](20261118080712-domain-tags.md)
-- [Domain: approvals and proposals](20261118080713-domain-approvals-and-proposals.md)
-- [Domain: cited wiki](20261118080714-domain-cited-wiki.md)
-- [Domain: search and index](20261118080714-domain-search-and-index.md)
-- [Domain: note identity and lifecycle](20261118080715-domain-note-identity-and-lifecycle.md)
+- [Domain: fleeting notes](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118080710-domain-fleeting-notes.md)
+- [Domain: permanent notes](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118080710-domain-permanent-notes.md)
+- [Domain: literature notes](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118080711-domain-literature-notes.md)
+- [Domain: tags](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118080712-domain-tags.md)
+- [Domain: approvals and proposals](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118080713-domain-approvals-and-proposals.md)
+- [Domain: cited wiki](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118080714-domain-cited-wiki.md)
+- [Domain: search and index](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118080714-domain-search-and-index.md)
+- [Domain: note identity and lifecycle](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118080715-domain-note-identity-and-lifecycle.md)

@@ -4,7 +4,7 @@ id: 20261118080710-domain-fleeting-notes
 type: permanent
 title: "Domain: fleeting notes"
 createdAt: "2026-11-18T08:07:10Z"
-updatedAt: "2026-11-18T08:07:10Z"
+updatedAt: "2026-11-18T08:23:22Z"
 tags:
   - domain
   - fleeting
@@ -22,4 +22,4 @@ Identity and recall are shared with every type: the filename stem is the stable 
 
 Evidence: [markdown.ts](https://github.com/blntrsz/slipmem/blob/main/packages/schemas/src/markdown.ts), [fleeting-note.ts](https://github.com/blntrsz/slipmem/blob/main/packages/schemas/src/fleeting-note.ts), [policy.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/approval/policy.ts), [selection.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/wiki/selection.ts).
 
-Related: [.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md](20261118022814-markdown-files-are-the-only-source-of-truth.md), [.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md](20261118022816-the-local-trust-boundary-is-not-authentication.md).
+Related: [Markdown source of truth](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md), [trust boundary](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md).

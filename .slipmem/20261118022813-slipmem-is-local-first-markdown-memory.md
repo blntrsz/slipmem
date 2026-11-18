@@ -4,7 +4,7 @@ id: 20261118022813-slipmem-is-local-first-markdown-memory
 type: permanent
 title: slipmem is local-first Markdown memory
 createdAt: "2026-11-18T02:28:13Z"
-updatedAt: "2026-11-18T08:10:36Z"
+updatedAt: "2026-11-18T08:23:22Z"
 tags:
   - domain
   - architecture
@@ -29,4 +29,4 @@ Human CLI and web writes are direct after validation; MCP writes use the approva
 
 Evidence: [README.md](https://github.com/blntrsz/slipmem/blob/main/README.md), [markdown.ts](https://github.com/blntrsz/slipmem/blob/main/packages/schemas/src/markdown.ts), [mvp-plan.md](https://github.com/blntrsz/slipmem/blob/main/docs/mvp-plan.md).
 
-Related: [.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md](20261118022814-markdown-files-are-the-only-source-of-truth.md), [.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md](20261118022816-the-local-trust-boundary-is-not-authentication.md).
+Related: [Markdown source of truth](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md), [trust boundary](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md).

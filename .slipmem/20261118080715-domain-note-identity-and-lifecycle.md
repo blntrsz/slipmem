@@ -4,7 +4,7 @@ id: 20261118080715-domain-note-identity-and-lifecycle
 type: permanent
 title: "Domain: note identity and lifecycle"
 createdAt: "2026-11-18T08:07:15Z"
-updatedAt: "2026-11-18T08:07:15Z"
+updatedAt: "2026-11-18T08:23:28Z"
 tags:
   - domain
   - identity
@@ -23,4 +23,4 @@ Deleting moves the file to a per-root trash backup outside the note root, prefer
 
 Evidence: [markdown.ts](https://github.com/blntrsz/slipmem/blob/main/packages/schemas/src/markdown.ts), [repository.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/markdown/repository.ts), [check.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/markdown/check.ts), [edit.ts](https://github.com/blntrsz/slipmem/blob/main/packages/cli/src/commands/edit.ts), [delete.ts](https://github.com/blntrsz/slipmem/blob/main/packages/cli/src/commands/delete.ts).
 
-Related: [.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md](20261118022814-markdown-files-are-the-only-source-of-truth.md), [.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md](20261118022816-the-local-trust-boundary-is-not-authentication.md).
+Related: [Markdown source of truth](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md), [trust boundary](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md).

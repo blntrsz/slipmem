@@ -4,7 +4,7 @@ id: 20261118080714-domain-cited-wiki
 type: permanent
 title: "Domain: cited wiki"
 createdAt: "2026-11-18T08:07:14Z"
-updatedAt: "2026-11-18T08:07:14Z"
+updatedAt: "2026-11-18T08:23:26Z"
 tags:
   - domain
   - wiki
@@ -21,4 +21,4 @@ Synthesized mode is opt-in and needs a configured local model adapter for the ex
 
 Evidence: [selection.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/wiki/selection.ts), [render.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/wiki/render.ts), [wiki-service.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/wiki/wiki-service.ts), [synthesis.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/wiki/synthesis.ts), [wiki command](https://github.com/blntrsz/slipmem/blob/main/packages/cli/src/commands/wiki.ts).
 
-Related: [.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md](20261118022816-the-local-trust-boundary-is-not-authentication.md), [.slipmem/20261118022814-architecture-one-repository-three-surfaces.md](20261118022814-architecture-one-repository-three-surfaces.md).
+Related: [trust boundary](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md), [architecture](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022814-architecture-one-repository-three-surfaces.md).

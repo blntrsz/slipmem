@@ -4,7 +4,7 @@ id: 20261118080711-domain-literature-notes
 type: permanent
 title: "Domain: literature notes"
 createdAt: "2026-11-18T08:07:11Z"
-updatedAt: "2026-11-18T08:07:11Z"
+updatedAt: "2026-11-18T08:23:24Z"
 tags:
   - domain
   - literature
@@ -24,4 +24,4 @@ Literature notes are cited by the wiki by default. Wiki selection ranks an exact
 
 Evidence: [markdown.ts](https://github.com/blntrsz/slipmem/blob/main/packages/schemas/src/markdown.ts), [literature-note.ts](https://github.com/blntrsz/slipmem/blob/main/packages/schemas/src/literature-note.ts), [policy.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/approval/policy.ts), [selection.ts](https://github.com/blntrsz/slipmem/blob/main/packages/core/src/wiki/selection.ts).
 
-Related: [.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md](20261118022814-markdown-files-are-the-only-source-of-truth.md), [.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md](20261118022816-the-local-trust-boundary-is-not-authentication.md).
+Related: [Markdown source of truth](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022814-markdown-files-are-the-only-source-of-truth.md), [trust boundary](https://github.com/blntrsz/slipmem/blob/main/.slipmem/20261118022816-the-local-trust-boundary-is-not-authentication.md).
