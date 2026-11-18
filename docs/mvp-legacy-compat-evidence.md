@@ -67,7 +67,7 @@ Command:
 
 ```text
 $ bun test packages/core/src/migration
-41 pass, 0 fail, 546 expect() calls, 4 files
+41 pass, 0 fail, 547 expect() calls, 4 files
 ```
 
 ## 2. Read-only legacy database API (G4)
@@ -261,7 +261,7 @@ conservative PID-only behavior remains.
 
 ```text
 $ bun test packages/core/src/migration
-41 pass, 0 fail, 546 expect() calls, 4 files
+41 pass, 0 fail, 547 expect() calls, 4 files
 
 $ bunx tsc --noEmit
 clean

@@ -401,7 +401,11 @@ export const listLegacyNotes = (
 
     for (const candidateType of types) {
       const state = inspectTable(database, candidateType)
-      warnings.push(...tableWarnings(state, { missingTable: "silent" }))
+      warnings.push(
+        ...tableWarnings(state, {
+          missingTable: type === null ? "silent" : "warn",
+        }),
+      )
       total += state.rowCount
 
       const skipHere = Math.max(0, skip)

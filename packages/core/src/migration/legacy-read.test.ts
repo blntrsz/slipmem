@@ -367,6 +367,11 @@ describe("read-only legacy compatibility reader", () => {
       "read-only-one-release",
     ])
     expect(
+      listLegacyNotes({ databasePath: path, type: "literature" }).warnings.map(
+        (warning) => warning.code,
+      ),
+    ).toEqual(["read-only-one-release", "missing-note-table"])
+    expect(
       getLegacyNote({
         databasePath: path,
         type: "fleeting",
