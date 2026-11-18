@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs"
-import { join, resolve, basename } from "node:path"
+import { join, resolve, basename, dirname } from "node:path"
 import { makeTempBase, parseJson, runCliProcess } from "./test-support.js"
 
 interface MigrationEnvelope {
@@ -45,6 +45,7 @@ interface MigrationReport {
     readonly collisions: number
   }
   readonly backup: { readonly path: string; readonly verified: boolean } | null
+  readonly sourceCheck: { readonly path: string; readonly unchanged: boolean }
   readonly verification: {
     readonly ok: boolean
     readonly verified: boolean
@@ -98,6 +99,20 @@ const makeDatabase = (fixture: "current.sql" | "invalid-rows.sql" | "empty.sql")
   }
   const sha256 = createHash("sha256").update(readFileSync(dbPath)).digest("hex")
   return { base, dbPath, sha256 }
+}
+
+const writeFixtureAt = (
+  dbPath: string,
+  fixture: "current.sql" | "invalid-rows.sql" | "empty.sql" = "current.sql",
+): string => {
+  mkdirSync(dirname(dbPath), { recursive: true })
+  const database = new Database(dbPath)
+  try {
+    database.exec(readFileSync(join(FIXTURES, fixture), "utf8"))
+  } finally {
+    database.close()
+  }
+  return dbPath
 }
 
 const makeExtendedDatabase = (): { base: string; dbPath: string } => {
@@ -184,6 +199,89 @@ describe("slipmem migrate sqlite", () => {
     expect(
       createHash("sha256").update(readFileSync(dbPath)).digest("hex"),
     ).toBe(sha256)
+  })
+
+  test("resolves the migration source from --db, SLIPMEM_DB_PATH, then XDG data", async () => {
+    const base = makeTempBase()
+    cleanup.push(base)
+    const envPath = join(base, "env", "slipmem.db")
+    const xdgPath = join(base, "xdg", "slipmem", "slipmem.db")
+    const explicitPath = writeFixtureAt(join(base, "explicit", "slipmem.db"))
+    writeFixtureAt(envPath)
+    writeFixtureAt(xdgPath)
+    const xdgSha = createHash("sha256").update(readFileSync(xdgPath)).digest("hex")
+
+    const env = {
+      XDG_DATA_HOME: join(base, "xdg"),
+      XDG_CACHE_HOME: join(base, "cache"),
+      XDG_STATE_HOME: join(base, "state"),
+      SLIPMEM_DB_PATH: envPath,
+    }
+
+    const fromExplicit = await run(
+      base,
+      [
+        "migrate",
+        "sqlite",
+        "--db",
+        explicitPath,
+        "--dir",
+        join(base, "explicit-root"),
+        "--json",
+      ],
+      env,
+    )
+    expect(fromExplicit.code).toBe(0)
+    expect(parseJson<MigrationEnvelope>(fromExplicit.stdout).report.sourceCheck.path).toBe(
+      explicitPath,
+    )
+
+    const fromEnv = await run(
+      base,
+      ["migrate", "sqlite", "--dir", join(base, "env-root"), "--json"],
+      env,
+    )
+    expect(fromEnv.code).toBe(0)
+    expect(parseJson<MigrationEnvelope>(fromEnv.stdout).report.sourceCheck.path).toBe(
+      envPath,
+    )
+
+    const fromXdg = await run(
+      base,
+      ["migrate", "sqlite", "--dir", join(base, "xdg-root"), "--json"],
+      { XDG_DATA_HOME: join(base, "xdg"), XDG_CACHE_HOME: join(base, "cache"), XDG_STATE_HOME: join(base, "state") },
+    )
+    expect(fromXdg.code).toBe(0)
+    expect(parseJson<MigrationEnvelope>(fromXdg.stdout).report.sourceCheck.path).toBe(
+      xdgPath,
+    )
+    expect(
+      createHash("sha256").update(readFileSync(xdgPath)).digest("hex"),
+    ).toBe(xdgSha)
+
+    const missing = await run(
+      base,
+      ["migrate", "sqlite", "--dir", join(base, "missing-root"), "--json"],
+      {
+        XDG_DATA_HOME: join(base, "no-data"),
+        XDG_CACHE_HOME: join(base, "cache"),
+        XDG_STATE_HOME: join(base, "state"),
+      },
+    )
+    expect(missing.code).toBe(1)
+    expect(existsSync(join(base, "missing-root", ".slipmem"))).toBe(false)
+
+    const memory = await run(
+      base,
+      ["migrate", "sqlite", "--dir", join(base, "memory-root"), "--json"],
+      {
+        SLIPMEM_DB_PATH: ":memory:",
+        XDG_CACHE_HOME: join(base, "cache"),
+        XDG_STATE_HOME: join(base, "state"),
+      },
+    )
+    expect(memory.code).toBe(2)
+    expect(memory.stderr).toContain("file-backed")
   })
 
   test("imports atomically with a verified backup and then skips duplicates in merge mode", async () => {
