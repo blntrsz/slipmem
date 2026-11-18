@@ -1,0 +1,114 @@
+{
+  "url": "http://127.0.0.1:3317/",
+  "output": "slipmem-product-tour.webm",
+  "width": 1440,
+  "height": 900,
+  "steps": [
+    { "goto": "/", "waitUntil": "networkidle" },
+    { "waitFor": "h1:has-text(\"Notes\")" },
+    { "wait": 1200 },
+    {
+      "caption": "This is a disposable demo repository. Every slipmem note is one plain Markdown file.",
+      "hold": 5500
+    },
+
+    { "click": "a:has-text(\"Demo capture: question about agent memory\")" },
+    { "waitFor": "article h1" },
+    { "wait": 800 },
+    {
+      "caption": "Fleeting notes are a low-trust inbox: capture the thought now, distill it later.",
+      "hold": 6000
+    },
+
+    { "click": "a:has-text(\"Back to notes\")" },
+    { "waitFor": "h1:has-text(\"Notes\")" },
+    { "wait": 500 },
+    { "click": "a:has-text(\"Demo: Bounded recall keeps memory inspectable\")" },
+    { "waitFor": "article h1" },
+    { "wait": 900 },
+    {
+      "caption": "The detail names the flat .md file, its stable ID, and a content hash.",
+      "hold": 6000
+    },
+    {
+      "caption": "No type folders: type and topics are portable metadata, editable in any tool.",
+      "hold": 6000
+    },
+
+    { "click": "nav[aria-label=\"Primary\"] a:has-text(\"Search\")" },
+    { "waitFor": "h1:has-text(\"Search\")" },
+    { "wait": 500 },
+    { "fill": { "selector": "input[aria-label=\"Search query\"]", "value": "recall" } },
+    { "click": "main section form button:has-text(\"Search\")" },
+    { "waitFor": "main section ul li" },
+    { "wait": 700 },
+    {
+      "caption": "Search is bounded and returns the note ID and file behind every hit.",
+      "hold": 6000
+    },
+
+    { "click": "nav[aria-label=\"Primary\"] a:has-text(\"Topics\")" },
+    { "waitFor": "h1:has-text(\"Topics\")" },
+    { "wait": 700 },
+    {
+      "caption": "Topics are frontmatter metadata, not folders. Each can assemble a page on demand.",
+      "hold": 5000
+    },
+    { "click": "a[href=\"/wiki/agent-memory\"]" },
+    { "waitFor": "h1:has-text(\"Topic: agent-memory\")" },
+    { "wait": 700 },
+    {
+      "caption": "Every wiki section quotes its source and cites the note ID and file path.",
+      "hold": 6500
+    },
+
+    { "click": "nav[aria-label=\"Primary\"] a:has-text(\"Review\")" },
+    { "waitFor": "h1:has-text(\"Review\")" },
+    { "waitFor": "summary:has-text(\"Inspect diff\")" },
+    { "wait": 700 },
+    {
+      "caption": "An MCP agent proposed a permanent note. No file exists yet — this is pending review.",
+      "hold": 6000
+    },
+    { "click": "summary:has-text(\"Inspect diff\")" },
+    { "waitFor": "main pre" },
+    { "wait": 900 },
+    {
+      "caption": "Inspect the real diff. The proposal carries source: mcp and waits for a human.",
+      "hold": 6500
+    },
+    {
+      "caption": "Approve or reject. An agent cannot approve its own permanent write.",
+      "hold": 5000
+    },
+    { "click": "button:has-text(\"Approve\")" },
+    { "waitFor": "text=No pending proposals" },
+    { "wait": 500 },
+    {
+      "caption": "Approved: the proposal became an ordinary Markdown note, visible everywhere.",
+      "hold": 4500
+    },
+
+    { "click": "nav[aria-label=\"Primary\"] a:has-text(\"Notes\")" },
+    { "waitFor": "h1:has-text(\"Notes\")" },
+    { "waitFor": "a:has-text(\"Demo proposal: Recall should cite its sources\")" },
+    { "wait": 700 },
+    {
+      "caption": "The new note is already visible here, to the CLI, and to MCP.",
+      "hold": 4500
+    },
+
+    { "click": "nav[aria-label=\"Primary\"] a:has-text(\"Notes\")" },
+    { "waitFor": "h1:has-text(\"Notes\")" },
+    { "wait": 500 },
+    {
+      "caption": "No auto-commit and no hidden store. The index is disposable; the files are the product.",
+      "hold": 7000
+    },
+    {
+      "caption": "Local-first memory for you and your agents.",
+      "hold": 4500
+    },
+    { "caption": null }
+  ]
+}

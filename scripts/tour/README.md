@@ -1,13 +1,16 @@
 # Product tour recorder
 
-A small, app-agnostic scaffold for the final silent product tour. It records a
+A small, app-agnostic recorder for the final silent product tour. It records a
 Playwright-driven browser session at 1440x900, renders narrative captions as an
 in-page overlay while recording, and writes a WebM plus stills and an action
 log. Captions are therefore burned into the video at exactly the moment they
 are shown; no separate SRT timing pass is required.
 
-This is tooling only. It contains no slipmem selectors or claims about the UI.
-The final tour script must be written against the implemented interface.
+The recorder itself contains no slipmem selectors. The committed
+`product-tour.script.json` is written against the implemented UI, and
+`scenario.mjs` prepares the disposable real-data state it records. The final
+video is recorded as a separate release-gate job; a rehearsal recording is not
+acceptance.
 
 ## Requirements
 
@@ -15,8 +18,9 @@ The final tour script must be written against the implemented interface.
 - Playwright 1.64.1 and its Chromium build. `bun install` in this directory
   installs Playwright from `scripts/tour/package.json`. If the browser is
   missing, run `bunx playwright install chromium`.
-- A running slipmem web instance to record. This scaffold does not start, seed,
-  or reset the app or its storage.
+- A built slipmem web bundle and a disposable Markdown note root. The product
+  scenario below builds, seeds, serves, proposes, and records that state for
+  you.
 
 ## Tooling in this environment
 
@@ -38,28 +42,83 @@ Checked on 2026-11-17:
 
 ## Start the web app
 
-For the current SQLite-based app, the development host was verified with:
+The product scenario uses the production bundle. From a clean checkout:
 
 ```sh
-SLIPMEM_DB_PATH=/tmp/slipmem-tour.db \
-  bun run web -- --port 3317 --strictPort
+bun run web:build
+SLIPMEM_DIR=/tmp/opencode/slipmem-tour/.slipmem \
+HOME=/tmp/opencode/slipmem-tour/home \
+XDG_CACHE_HOME=/tmp/opencode/slipmem-tour/cache \
+XDG_STATE_HOME=/tmp/opencode/slipmem-tour/state \
+XDG_DATA_HOME=/tmp/opencode/slipmem-tour/data \
+XDG_CONFIG_HOME=/tmp/opencode/slipmem-tour/config \
+PORT=3317 HOST=127.0.0.1 bun run web:serve
 ```
 
-Vite binds to `localhost` (`::1`) in development, so use
-`http://localhost:3317/`. `http://127.0.0.1:3317/` is refused unless the host is
-passed explicitly. Readiness was verified with:
+The production server binds `127.0.0.1` by default and exposes
+`http://127.0.0.1:3317/`. Readiness is verified with:
 
 ```sh
-curl -fsS http://localhost:3317/api/health
-# {"ok":true,"service":"slipmem"}
+curl -fsS http://127.0.0.1:3317/api/health
+# {"ok":true,"service":"slipmem",...}
 ```
 
-The production path is `bun run web:build` followed by
-`PORT=3000 bun run web:serve`; that binds `127.0.0.1` by default. When the MVP
-implementation changes storage or startup, follow its README and record against
-a disposable data root, not real notes.
+For development iteration, `bun run web -- --port 3317 --strictPort` also works;
+Vite binds to `localhost` (`::1`), so use `http://localhost:3317/`. Do not
+record against real notes: set `SLIPMEM_DIR` and the XDG roots to a disposable
+directory.
+
+## Product tour scenario
+
+`run-product-tour.sh` is the reproducible end-to-end path. It builds the bundle,
+resets only its managed work root, seeds demo notes through the real CLI, starts
+the real server with isolated XDG/`HOME`/`SLIPMEM_DIR`, submits the permanent
+proposal through the real HTTP MCP endpoint, records
+`product-tour.script.json`, and verifies the post-tour files.
+
+```sh
+# From the repository root. This is the command for the final release-gate
+# recording too; it is not run automatically.
+bash scripts/tour/run-product-tour.sh
+
+# Reuse the current build while iterating on selectors or captions.
+TOUR_SKIP_BUILD=1 bash scripts/tour/run-product-tour.sh
+```
+
+Defaults:
+
+- Work root: `/tmp/opencode/slipmem-tour`. Override with `TOUR_WORK_ROOT`; the
+  basename must contain `slipmem-tour`, and the path must be inside the OS temp
+  directory or `scripts/tour/output`.
+- Note root: `<work-root>/.slipmem`.
+- Server: production bundle on `http://127.0.0.1:3317/`.
+- Media: `scripts/tour/output/slipmem-product-tour.webm` plus
+  `slipmem-product-tour.actions.json` and `stills/`. The output root is
+  gitignored.
+
+The scenario has three independent commands when debugging:
+
+```sh
+bun scripts/tour/scenario.mjs prepare   # reset + seed with the real CLI
+bun scripts/tour/scenario.mjs propose --base-url http://127.0.0.1:3317
+bun scripts/tour/scenario.mjs verify    # approved note + flat invariants
+```
+
+`propose` refuses to run if `/api/health` reports a different note root. It
+asserts that the MCP call returned `pending_approval`, that the pending diff
+contains `source: mcp`, and that no note file exists before recording. Nothing
+is injected into `.state/pending/` by hand.
+
+All seeded notes are explicitly titled `Demo...`. The fleeting note exercises
+capture; the permanent and literature notes supply search and topic citations;
+the MCP proposal becomes the reviewed permanent note. `verify` checks that the
+approved note exists with `source: mcp`, the queue is empty, and there are no
+type directories.
 
 ## Record
+
+The committed product tour script is recorded by `run-product-tour.sh` above.
+For a generic recording against an already-running instance:
 
 ```sh
 cd scripts/tour
@@ -67,6 +126,14 @@ bun install
 cp example.script.json tour.script.json
 # Edit tour.script.json with selectors from the implemented UI.
 bun record.mjs tour.script.json
+```
+
+To re-record the committed product tour without the scenario orchestration
+(server already running against the same seeded root):
+
+```sh
+cd scripts/tour
+bun record.mjs product-tour.script.json
 ```
 
 The recorder opens `url`, waits 500 ms, then runs the steps. `output` is
@@ -117,7 +184,8 @@ overrides. Keep the default output root and redaction for normal runs.
 
 ```sh
 cd scripts/tour
-FFMPEG=/path/to/ffmpeg ./encode.sh output/slipmem-tour.webm output/slipmem-tour.mp4
+FFMPEG=/path/to/ffmpeg ./encode.sh \
+  output/slipmem-product-tour.webm output/slipmem-product-tour.mp4
 ```
 
 `encode.sh` only transcodes to H.264/yuv420p with `+faststart`; it drops audio
@@ -191,6 +259,22 @@ available, the recorder test also serves a local fixture page, records a short
 WebM, and checks the still, video, and redacted log end to end. It skips only
 the browser-backed test when Chromium cannot launch.
 
+After a scenario run, the script's own postconditions are checked by:
+
+```sh
+bun scripts/tour/scenario.mjs verify
+```
+
+This checks the approved MCP note, an empty proposal queue, and the flat
+repository invariants. It does not claim the video is accepted. For a rehearsal,
+inspect the burned-in captions at several timestamps before encoding:
+
+```sh
+FFMPEG=/path/to/ffmpeg
+"$FFMPEG" -ss 4 -i scripts/tour/output/slipmem-product-tour.webm \
+  -frames:v 1 /tmp/opencode/tour-caption-check.png
+```
+
 ## Practical notes
 
 - The tour is silent by design. There is no audio track to remove later.
@@ -201,6 +285,7 @@ the browser-backed test when Chromium cannot launch.
 - The overlay is inserted under `<html>` with inline styles so application
   re-renders do not remove it. A future strict Content-Security-Policy that
   forbids inline styles would require adjusting `overlay.js`.
-- Record the actual implemented flow only. The recorder is verified against the
-  synthetic fixture in `record.test.mjs`; no current slipmem UI has been
-  recorded.
+- Record the actual implemented flow only. `product-tour.script.json` runs
+  against the scenario's real CLI seed, real HTTP MCP proposal, and real
+  approve action. A local rehearsal has been recorded; final acceptance is
+  separate and depends on the release gate.
