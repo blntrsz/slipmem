@@ -20,7 +20,7 @@ Added:
   store, human review/apply/reject, diffs, expiry cleanup, base-hash checks.
 - `packages/core/src/wiki/**` - bounded topic selection, extractive page
   assembly, structured/Markdown rendering, opt-in synthesized mode, safe local
-  agent process, exact-support-span citation validator.
+  agent process, complete-sentence support citation validator.
 - `packages/core/src/index.ts` - additive exports for both modules.
 - `packages/core/src/markdown/repository.ts` and `errors.ts` - an optional
   `expectedContentHash` compare-and-swap guard on update and delete, checked
@@ -290,16 +290,28 @@ Citation validator:
 - Top-level output must be JSON shaped as `{"sentences":[...]}`.
 - Each item must have a bounded single-sentence `text`, a selected `noteId`,
   and a `quote` of at least 12 characters.
-- The quote must be an exact substring of that note's body after collapsing
-  whitespace.
-- The `text` must be **extractive**: after conservative normalization (whitespace,
-  wrapping quotation marks, terminal punctuation) it must equal the supplied
-  quote or be an exact fragment of it. The validator verifies extraction, not
+- The `quote` must be a **complete source sentence**, or a conservative full
+  source paragraph, from that note body after collapsing whitespace. Its start
+  and end must coincide with complete body sentence/paragraph boundaries.
+  Markdown heading, list, blockquote, and task markers are removed before
+  segmenting; fenced code is excluded; wrapped source lines are joined. A quote
+  that is a real substring but clips a sentence (for example
+  `"dangerous for this workload."` from
+  `"Caching is not dangerous for this workload."`, or
+  `"Deleting is safe"` from `"Deleting is safe only after a verified backup."`)
+  is rejected even when the supplied `text` is clipped identically.
+- The `text` must equal the **full supplied quote** after conservative
+  normalization (whitespace, wrapping quotation marks, terminal punctuation).
+  Exact-fragment support is no longer accepted; there is no arbitrary-substring
+  path that can pair a clipped claim with a clipped quote.
+- The validator verifies extraction and complete-sentence provenance, not
   semantic entailment. A paraphrase, negation, or opposite claim is omitted even
-  when a nearby real source span exists.
-- Unknown IDs, unsupported quotes, non-extractive text, non-sentences,
-  duplicates, and sentences beyond the 60-sentence cap are omitted, counted, and
-  reported in the page footer. They are never rendered as claims.
+  when a nearby real source span exists. Accepted output displays the verbatim
+  complete source sentence, never a synthesized sentence or clipped excerpt.
+- Unknown IDs, unsupported or clipped quotes, non-extractive text,
+  non-sentences, duplicates, and sentences beyond the 60-sentence cap are
+  omitted, counted, and reported in the page footer. They are never rendered as
+  claims.
 - Every accepted sentence is followed by its own adjacent note ID and path.
 - An empty synthesizer result says that no supported synthesized output was
   produced; it never claims that no notes matched when notes did match.
@@ -341,8 +353,9 @@ Commands:
 
 ```text
 bun test packages/core/src/approval   # 17 pass, 0 fail, 119 assertions
-bun test packages/core/src/wiki       # 19 pass, 0 fail, 151 assertions
-bun test packages/core/src             # 178 pass, 0 fail, 1403 assertions
+bun test packages/core/src/wiki       # 29 pass, 0 fail, 186 assertions
+bun test packages/core/src             # 198 pass, 0 fail, 1534 assertions
+bun test packages/cli/src/wiki.test.ts packages/server/src
 bunx tsc --noEmit                     # no approval/wiki/repository errors
 bun run lint                          # no approval/wiki/repository warnings or errors
 ```
@@ -388,8 +401,18 @@ Wiki tests cover:
   omitted;
 - **opposite-claim regression:** `"Caching is dangerous"` paired with the real
   span `"Caching is not dangerous"` is omitted and never rendered;
-- conservative normalization accepts a quoted exact sentence; a paraphrase
-  with the same source span is omitted;
+- **clipped-negation regression:** `text` and `quote` both set to
+  `"dangerous for this workload."` are omitted for the body sentence
+  `"Caching is not dangerous for this workload."`, because the quote is not a
+  complete source sentence;
+- **clipped-qualifier regression:** `"Deleting is safe."` / `"Deleting is safe"`
+  are omitted for `"Deleting is safe only after a verified backup."`, while both
+  complete source sentences in the same Markdown heading/list body are accepted
+  and cited;
+- Markdown-aware segmentation accepts complete source sentences after headings,
+  list markers, and wrapped lines, and does not split on abbreviation periods;
+- conservative normalization accepts a complete quoted exact sentence; a
+  paraphrase with the same source span is omitted;
 - empty synthesizer output says no supported synthesized output was produced,
   not that no notes matched;
 - argv/stdin separation proving note text never enters process arguments;
@@ -419,7 +442,7 @@ Wiki tests cover:
 | WIKI-04 | done | conflicting notes in separate cited sections |
 | WIKI-05 | done | wiki tests assert an unchanged root |
 | WIKI-06 | done | injection note quoted as data; agent receives stdin JSON only |
-| WIKI-07 | done | fixture process + strict extractive validator omits paraphrases and opposite claims; unsandboxed agents fail closed |
+| WIKI-07 | done | fixture process + strict extractive validator rejects paraphrases, opposite claims, and matched text+quote fragments clipped from negated or qualified sentences; unsandboxed agents fail closed |
 
 ## 10. Known limitations and integration notes
 
@@ -442,11 +465,23 @@ Wiki tests cover:
   cut.
 - Synthesized mode is opt-in and local. The core does not ship a hosted model
   adapter and does not claim that any model ID works without registration.
-- Validation is extractive-support checking, not semantic entailment. It cannot
-  prove that an arbitrary paraphrase means the same thing as a note, so it does
-  not accept paraphrases. Operators who want prose synthesis must accept that
-  unsupported sentences are omitted; extractive mode remains the fully cited
-  fallback.
+- Validation is complete-sentence extractive-support checking, not semantic
+  entailment or factual verification. It cannot prove that a source sentence is
+  true, current, representative, or relevant, and it rejects paraphrases. A
+  passing sentence means only that `text` is a complete verbatim sentence from
+  the cited body with exact sentence/paragraph boundaries. Operators who want
+  prose synthesis must accept that unsupported sentences are omitted; extractive
+  mode remains the fully cited fallback.
+- Sentence segmentation is deliberately conservative. Markdown headings, lists,
+  blockquotes, and task markers are handled, wrapped lines are joined, and code
+  fences are excluded. Ambiguous boundaries are omitted rather than guessed. If
+  a note's structure hides a complete sentence from segmentation, the citation is
+  refused; the fallback is to quote a normal sentence or read the note directly.
+- CLI, server, MCP, and web surfaces must describe synthesized output as
+  extractive citation validation ("verify sources"), never as semantic
+  verification or truth. No UI may promise that a passing sentence is correct or
+  that the synthesizer understood the note; the guarantee is only complete
+  verbatim citation.
 - A bubbling sandbox that passes the probe still leaves world-readable host
   files visible through the read-only root. This is an integrity, network, and
   environment boundary, not a full confidentiality sandbox. When no sandbox
@@ -471,6 +506,7 @@ Wiki tests cover:
 - `packages/core/src/wiki/render.ts`
 - `packages/core/src/wiki/sandbox.ts`
 - `packages/core/src/wiki/synthesis.ts`
+- `packages/core/src/wiki/synthesis.test.ts`
 - `packages/core/src/wiki/wiki-service.ts`
 - `packages/core/src/wiki/wiki.test.ts`
 - `packages/core/src/wiki/fixtures/synthesis-agent.mjs`

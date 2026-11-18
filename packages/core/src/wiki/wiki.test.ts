@@ -519,6 +519,128 @@ describe("synthesized topic wiki", () => {
     }
   })
 
+  test("rejects text and quote both clipped from a negated source sentence", async () => {
+    const fixture = await createFixture()
+    try {
+      const note = await createNote(fixture, {
+        title: "Caching boundary",
+        content:
+          "## Caching\n\n- Caching is not dangerous for this workload.\n- Deleting is safe only after a verified backup.",
+        topics: ["clipped-citation"],
+      })
+      const service = await wiki(fixture, {
+        synthesis: { kind: "model", modelId: "clipped-citation-model" },
+        modelAdapters: [
+          {
+            modelId: "clipped-citation-model",
+            synthesize: () =>
+              Effect.succeed({
+                sentences: [
+                  {
+                    // The clipped claim and its clipped quote agree with each
+                    // other but reverse the negated source sentence.
+                    text: "dangerous for this workload.",
+                    noteId: note.id,
+                    quote: "dangerous for this workload.",
+                  },
+                  {
+                    // A qualifier cut: the fragment is real but the sentence
+                    // continues with a necessary condition.
+                    text: "Deleting is safe.",
+                    noteId: note.id,
+                    quote: "Deleting is safe",
+                  },
+                  {
+                    text: "Caching is not dangerous for this workload.",
+                    noteId: note.id,
+                    quote: "Caching is not dangerous for this workload.",
+                  },
+                  {
+                    text: "Deleting is safe only after a verified backup.",
+                    noteId: note.id,
+                    quote: "Deleting is safe only after a verified backup.",
+                  },
+                ],
+              }),
+          },
+        ],
+      })
+
+      const page = await Effect.runPromise(
+        service.build({ topic: "clipped-citation", mode: "synthesized" }),
+      )
+      expect(page.sections).toHaveLength(1)
+      expect(page.markdown).toContain(
+        "Caching is not dangerous for this workload.",
+      )
+      expect(page.markdown).toContain(
+        "Deleting is safe only after a verified backup.",
+      )
+      expect(page.markdown).not.toContain(
+        "\n\ndangerous for this workload.\n\nSource:",
+      )
+      expect(page.markdown).not.toContain("\n\nDeleting is safe.\n\nSource:")
+      expect(page.sections[0]!.citations.map((citation) => citation.excerpt)).toEqual([
+        "Caching is not dangerous for this workload.",
+        "Deleting is safe only after a verified backup.",
+      ])
+      expect(page.markdown).toContain(
+        "2 synthesized sentences did not pass citation validation",
+      )
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("accepts a complete sentence wrapped across Markdown lines", async () => {
+    const fixture = await createFixture()
+    try {
+      const note = await createNote(fixture, {
+        title: "Wrapped sentence",
+        content:
+          "Caching is not dangerous for\nthis workload. Deleting is safe only after a verified backup.",
+        topics: ["wrapped-citation"],
+      })
+      const service = await wiki(fixture, {
+        synthesis: { kind: "model", modelId: "wrapped-citation-model" },
+        modelAdapters: [
+          {
+            modelId: "wrapped-citation-model",
+            synthesize: () =>
+              Effect.succeed({
+                sentences: [
+                  {
+                    text: "Caching is not dangerous for this workload.",
+                    noteId: note.id,
+                    quote: "Caching is not dangerous for this workload.",
+                  },
+                  {
+                    text: "Deleting is safe.",
+                    noteId: note.id,
+                    quote: "Deleting is safe",
+                  },
+                ],
+              }),
+          },
+        ],
+      })
+
+      const page = await Effect.runPromise(
+        service.build({ topic: "wrapped-citation", mode: "synthesized" }),
+      )
+      expect(page.sections).toHaveLength(1)
+      expect(page.markdown).toContain(
+        "Caching is not dangerous for this workload.",
+      )
+      expect(page.markdown).not.toContain("\n\nDeleting is safe.\n\nSource:")
+      expect(page.markdown).toContain(
+        "1 synthesized sentence did not pass citation validation",
+      )
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("accepts only conservative extractive normalization, not paraphrase", async () => {
     const fixture = await createFixture()
     try {
