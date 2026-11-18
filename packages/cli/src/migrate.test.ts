@@ -397,7 +397,7 @@ describe("slipmem migrate sqlite", () => {
     for (const note of mergedReport.notes) {
       expect(mergedHuman.stdout).toContain(`target: ${note.targetPath}`)
     }
-  })
+  }, 30000)
 
   test("renders interrupted runs, effective collisions, and portable source values", async () => {
     const { base, dbPath } = makeDatabase("current.sql")

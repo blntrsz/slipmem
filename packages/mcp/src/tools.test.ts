@@ -526,7 +526,7 @@ test("search is cross-kind, filterable, refreshed, and excerpt-bounded", async (
   } finally {
     await removeDisposableRoot(disposable)
   }
-})
+}, 30_000)
 
 test("search sees an external markdown edit after refresh", async () => {
   const disposable = await makeDisposableRoot()

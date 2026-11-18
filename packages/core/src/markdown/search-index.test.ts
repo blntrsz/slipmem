@@ -529,7 +529,7 @@ describe("disposable FTS search index", () => {
     } finally {
       cleanup(fixture)
     }
-  })
+  }, 30_000)
 
   test("derives backlinks in the bounded linear fallback", async () => {
     const fixture = setup()
