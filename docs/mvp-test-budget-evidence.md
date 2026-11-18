@@ -1,7 +1,8 @@
 # Integration test budget evidence
 
 Date: 2026-11-18
-Snapshot: `b88f612` plus the test-budget patch in this change
+Snapshot: verified code head `e01daa3` (budget commits plus the concurrent
+approval refresh); later commits for this note are documentation-only.
 Status: **bounded per-test budgets raised for three load-sensitive integration
 tests.** No test was skipped, retried, or weakened. No global timeout change was
 made.
@@ -112,6 +113,15 @@ vite client build                                497 modules, 915 ms
 vite SSR build                                   451 modules, 816 ms
 ```
 
+After the concurrent approval-refresh commit `8af9e27` landed, the same gate was
+rerun in a second isolated clone at combined head `e01daa3` (the two budget
+commits plus the approval refresh). Result: oxlint and both typechecks clean;
+`382 pass, 1 skip, 0 fail, 3287 expect() calls, 383 tests across 45 files`,
+114.24 s; Vite client 497 modules and SSR 451 modules. The three budgeted tests
+remained green with their assertions unchanged. The checkout used for that
+recheck is `/tmp/opencode/test-budget/final-snapshot`; its log is
+`/tmp/opencode/test-budget/fullcheck-head.log`.
+
 Host load during the focused and full runs was approximately 3-4, not the 8.26
 of the independent failing run. No synthetic load was added during verification
 to avoid disturbing the concurrent workstream. The observed timeout values above
@@ -122,7 +132,9 @@ Artifacts:
 
 - `/tmp/opencode/test-budget/targeted.log`
 - `/tmp/opencode/test-budget/fullcheck.log`
+- `/tmp/opencode/test-budget/fullcheck-head.log`
 - `/tmp/opencode/test-budget/repo` (patched snapshot)
+- `/tmp/opencode/test-budget/final-snapshot` (combined-head checkout)
 - `/tmp/opencode/release-check/logs/check.log`,
   `/tmp/opencode/release-check/logs/check-rerun.log`
 - `/tmp/opencode/portable-acceptance/evidence/110-focused-tests.log`,
