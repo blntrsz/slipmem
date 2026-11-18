@@ -1,14 +1,17 @@
 # MVP migration legacy-compatibility evidence
 
 Date: 2026-11-18
-Scope: `packages/core/src/migration/**` only. This note closes the G4/G5/G8
-gaps in [`docs/mvp-acceptance-matrix.md`](./mvp-acceptance-matrix.md) as far as
-core can close them without changing startup, CLI, MCP, web, or shared docs.
+Scope: `packages/core/src/migration/**`, plus the follow-up CLI wiring in
+`packages/cli/src/commands/legacy.ts`. This note covers the G4/G5/G8 gaps in
+[`docs/mvp-acceptance-matrix.md`](./mvp-acceptance-matrix.md). The core section
+was written before the CLI commands landed; the follow-up is marked where it
+belongs and does not change normal startup behavior.
 
 Status summary:
 
 - **Read-only legacy compatibility path:** implemented as an explicit opt-in
-  core API. It is not normal startup and not a second source of truth.
+  core API and, since `56d009c`, as bounded `slipmem legacy list/show` CLI
+  commands. Neither is normal startup and neither is a second source of truth.
 - **Real migration-shape import:** committed test creates the source with the
   real server startup layer (`makeDatabaseLayer` -> `runMigrations`), seeds rows
   through the real SQLite note services, then imports and verifies every field.
@@ -170,18 +173,30 @@ beside it. No note root, manifest, quarantine, or source row is written. Tests
 assert the source directory is unchanged and a copied WAL database stays
 exactly `db + wal` with identical hashes.
 
-### Optional CLI wiring (not done here)
+### CLI wiring (landed in `56d009c`)
 
-The CLI worker can expose this without making it startup behavior, for example:
+The core section above was written first; the CLI commands landed later in
+`56d009c` and are the user-facing opt-in:
 
 ```text
-slipmem legacy list --db <path> [--type fleeting|permanent|literature]
-                    [--limit 20] [--offset 0] [--json]
-slipmem legacy show --db <path> --type <type> --id <legacyId> [--json]
+slipmem legacy list [--db <path>] [--type fleeting|permanent|literature]
+                    [--limit 25] [--offset 0] [--json]
+slipmem legacy show [--db <path>] --type <type> --id <legacyId> [--json]
 ```
 
-Both commands should print the one-release/read-only warning and must not call
-`importMigration`, repair rows, or write into `.slipmem/`.
+- Source resolution matches migration: explicit `--db`, then
+  `SLIPMEM_DB_PATH`, then `$XDG_DATA_HOME/slipmem/slipmem.db` (falling back to
+  `~/.local/share/slipmem/slipmem.db`).
+- Both commands print the one-release/read-only warning on every response, do
+  not resolve a note root, reject `--dir`, never import or repair rows, and
+  never write into `.slipmem/`.
+- List defaults to 25 rows and is hard-bounded at 100; `show` is a single-row
+  read; JSON tags bigints and blobs the way the migration manifest does.
+- Tests: `packages/cli/src/legacy.test.ts`, **3 pass, 0 fail, 35 expect()
+  calls** (`bun test packages/cli/src/legacy.test.ts`).
+
+This does not make the legacy database a startup dependency or a source of
+truth. It remains an explicit read-only inspection path for one release.
 
 ## 3. Duplicate legacy ID across note types (G8)
 
@@ -273,22 +288,27 @@ clean
 
 $ bun test packages/cli/src/migrate.test.ts
 6 pass, 0 fail, 91 expect() calls
+
+$ bun test packages/cli/src/legacy.test.ts
+3 pass, 0 fail, 35 expect() calls
 ```
 
 One combined run with the CLI suite hit the known 5-second `migrate` test
-timeout while other workers were editing; the focused rerun passed. Treat the
-full gate as provisional until repeated on the landed tree.
+timeout while other workers were editing; the focused rerun passed. That
+provisional state is superseded: the clean-clone `bun run check` at `d1f3565`
+passed 382 tests with one conditional Playwright skip, 0 fail
+([`docs/mvp-final-check-evidence.md`](./mvp-final-check-evidence.md)).
 
 Still not claimed:
 
-- No committed sanitized production database fixture; MIGRATE-01 is now proven
-  against a real-startup-created source and the frozen bootstrap fixture, not a
-  real user's data.
-- The compatibility reader is a core API only. No CLI/MCP/web command is wired
-  here; the CLI owner can add the optional `legacy list/show` commands above.
+- No committed sanitized production database fixture; MIGRATE-01 is proven
+  against a real-startup-created source, the frozen bootstrap fixture, and the
+  actual local three-row database migrated by the final check, not a real
+  user's corpus.
+- The compatibility path is opt-in read-only: core
+  `getLegacyNote`/`listLegacyNotes` plus the bounded `slipmem legacy list/show`
+  commands (`56d009c`). No MCP/web/server startup path reads the old database.
 - The reader copies the source per call. That is deliberate for WAL safety and
   source preservation; it is not a high-throughput reporting API.
 - Lock mtime heartbeat still cannot run during the synchronous import
   (section 4.3); ownership checks, not heartbeat age, protect the lock.
-- The full `bun run check` gate must be repeated on the landed tree after
-  concurrent web/CLI work settles.

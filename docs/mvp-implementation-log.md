@@ -1,14 +1,13 @@
 # MVP implementation log
 
-Status: **Phases 0-5 implemented on `main`; the tracked hardening gaps are
-closed or narrowed, and release verification is in progress.** The
-criterion-by-criterion record is now
+Status: **Phases 0-5 implemented on `main`; release verification is closed on
+`d1f3565`.** The criterion-by-criterion record is
 [`docs/mvp-acceptance-matrix.md`](./mvp-acceptance-matrix.md).
 Date: 2026-11-18
-Evidence snapshots: `29b7dd1` through `e408e47` (code and test runs at
-`56d009c`; the later commit is documentation); other workers committed
-concurrently, so the final release gate must be rerun on the landed tree.
-The last recorded full gate predates the final follow-up commits.
+Evidence snapshots: `29b7dd1` through `2cdf077`. The full gate ran in a clean
+clone of `d1f3565`; later commits, including `2cdf077`, are documentation only.
+The last source-bearing commits are `8af9e27` (approval index refresh) and
+`24a5c39` (bounded integration test timeouts).
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md). This log records decisions,
 baseline evidence, commit boundaries, and acceptance status. It does not replace
 the plan, and it does not turn an evidence note into a passing test.
@@ -325,7 +324,9 @@ Status legend: **pass** = a committed test or named independent run exercises
 the clause at the matrix snapshot; **conservative** = the literal clause is met
 by a documented narrower behavior; **partial** = some clauses are proven and
 some are not; **pending** = implementation exists but the gate is not green or
-the end-to-end path has not been rerun; **missing** = the requirement is absent.
+the end-to-end path has not been rerun; **verified** = the named release gate
+or evidence has been recorded at the release head; **missing** = the
+requirement is absent.
 
 The detailed criterion-by-criterion record, exact test names, commits, browser
 run, migration adversarial run, and open gaps live in
@@ -343,8 +344,8 @@ keeps only the phase-level summary.
 | WIKI-01..07 | Bounded selection, citations, empty/conflict handling, no persisted page, injection-safe synthesis | pass, conservative synthesis | `packages/core/src/wiki/wiki.test.ts`; CLI wiki tests; `docs/mvp-approval-wiki-evidence.md`; exact complete-paragraph support only, not entailment |
 | MIGRATE-01..06 | Lossless import, untouched source, dry run, idempotency, check, malformed reporting | pass, narrowed evidence | Real-startup-created and legacy bootstrap sources (`migration-current-database.test.ts`); CLI migrate tests; `docs/mvp-migration-evidence.md`; `docs/mvp-legacy-compat-evidence.md`; independent `/tmp/opencode/mig/EVIDENCE.md` and `/tmp/opencode/mig2/RESULTS.md`; no sanitized production dump (matrix G5) |
 | SEC-01..05 | Paths, size bounds, loopback, untrusted text, no Git actions | pass | Storage, CLI, server, web, and browser evidence |
-| SEC-06 | `bun run check` passes | pending | Last recorded full gate: lint clean, root/web typecheck clean, 370 pass / 0 fail / 3140 expect calls, Vite client and SSR builds successful (`docs/mvp-backlink-index-evidence.md`). It predates follow-up commits `043de62` through `e408e47`; rerun on the landed head and in a clean checkout. |
-| Definition of done | Full local loop and migration in section 13.8 | partial | Local loop and migration are exercised; clean-clone quickstart, a full gate on the landed head, and the product video remain |
+| SEC-06 | `bun run check` passes | verified | Clean clone of `d1f3565`: `bun install --frozen-lockfile` exit 0 (61 packages); oxlint clean; root and web typecheck clean; `bun test` 382 pass, 1 skip, 0 fail, 3287 expect() calls across 45 files in 138.58 s; Vite client and SSR build successful; `bun run check` exit 0 in 148.83 s. See `docs/mvp-final-check-evidence.md`. |
+| Definition of done | Full local loop and migration in section 13.8 | verified | Clean-clone install and full gate, new-user CLI loop with cache recovery, read-only legacy view, migration of the actual local three-row database without source mutation, web API and MCP checks, and the final product tour recording. Remaining limits are evidence scope: no production corpus, no semantic truth claim, no enforced network namespace, and a video recorded at `e408e47` (two source commits before the gate). |
 
 ### 5.1 Phase 2-6 landing record
 
@@ -421,11 +422,11 @@ draft now reads:
 | G4, read-only old-DB path | closed | Core `getLegacyNote`/`listLegacyNotes` reader (`f6627a4`, `e1b7192`) plus `slipmem legacy list/show` (`56d009c`); bounded, warning-first, no write path. See `docs/mvp-legacy-compat-evidence.md`. |
 | G5, real migration fixture parity | closed, narrowed | Source created through `makeDatabaseLayer`/`runMigrations` plus real note services (`c4e7aff`); legacy bootstrap adopts through the same path. No sanitized production dump. |
 | G6, synthesized semantic validity | conservative | Exact complete-paragraph extraction is required in both `text` and `quote` (`05d5191`); this is not entailment or factual verification. |
-| G7, browser D1-D4 | closed | `b6f3cfe`; final-polish report 21/21 checks and 36 focused tests; web/API files unchanged through `e408e47`. |
+| G7, browser D1-D4 | closed | `b6f3cfe`; final-polish report 21/21 checks and 36 focused tests; web/API sources were unchanged through `e408e47`, and the later `8af9e27` approval/index change was re-exercised at the `d1f3565` gate. |
 | G8, duplicate `legacyId` reporting | closed | Merge identity keyed by `(type, legacyId)` plus crash/report fixes (`c1f3bf1`); regression asserts idempotent cross-type merge. |
-| SEC-06, full gate | pending | Last green full gate is `370 pass` in `docs/mvp-backlink-index-evidence.md`, before follow-ups `043de62` through `e408e47`. Rerun on the landed head and in a clean checkout. |
-| Clean-clone quickstart | pending | A separate agent is verifying install/init/local loop; no result recorded here. |
-| Product video | pending | The tour scaffold is committed; the final recording is not part of this log's evidence. |
+| SEC-06, full gate | verified | Clean clone of `d1f3565`: `bun run check` exit 0; 382 pass, 1 conditional Playwright skip, 0 fail, 3287 expect() calls, 45 files; lint and both typechecks clean; Vite client and SSR build successful. See `docs/mvp-final-check-evidence.md`. |
+| Clean-clone quickstart | verified | `d1f3565` clone, frozen install (61 packages), init/create/list/show/search/topics/wiki/check/cache recovery, legacy view, migration, web API, and MCP checks. See `docs/mvp-final-check-evidence.md` sections 1-5. |
+| Product video | verified | Recorded at `e408e47`; final MP4 `scripts/tour/output/slipmem-product-tour.mp4`, SHA-256 `a429e44b...cb96a0`, 3,018,971 bytes, 107.96 s, no audio, captions burned in; tour suite 20 pass / 0 fail / 66 expect() calls. Media is generated and gitignored. See `docs/mvp-product-tour-evidence.md`. |
 
 ## 6. Architectural pointers
 
@@ -462,22 +463,27 @@ draft now reads:
   and a message. Fixture manifest codes are preserved; new repository, path, and
   index codes are additive and not yet a public API promise.
 
-## 8. Recommended next bounded tasks
+## 8. Release status and remaining limits
 
 The Phase 1 surface-wiring task is complete; CLI, MCP, web, approval, wiki, and
-migration all consume the Markdown services. The remaining work is release
-hardening, not a source-of-truth cutover.
+migration all consume the Markdown services. The release gate is now closed on
+`d1f3565` (clean clone: 382 pass, 1 conditional Playwright skip, 0 fail), and
+the product tour was recorded at `e408e47`.
 
-1. **Record a full `bun run check` on the landed head** and repeat it in a clean
-   checkout. The last full gate predates `043de62` through `e408e47`; focused
-   suites are not a substitute. This is the SEC-06 release gate.
-2. **Finish the clean-clone quickstart verification** (clone, install, init,
-   create/read/search, MCP, web) and record the result.
-3. **Do not broaden claims.** There is no sanitized production database import
-   (G5), no semantic entailment guarantee (G6), and no full gate yet (SEC-06).
-   Keep those limits in the README and release notes.
-4. **Record the final product video/tour** if it remains a release deliverable;
-   the scenario is scaffolded, but the recording is pending.
+1. **Full gate recorded.** `bun run check` in a clean clone of `d1f3565` passed
+   lint, both typechecks, 382 tests with 1 conditional Playwright skip, and the
+   Vite client/SSR build. Details and caveats are in
+   [`docs/mvp-final-check-evidence.md`](./mvp-final-check-evidence.md).
+2. **Clean-clone quickstart recorded.** Frozen install, local loop, cache
+   recovery, legacy view, migration, web API, and MCP checks ran at `d1f3565`.
+3. **Product video recorded.** Final silent MP4 at
+   `scripts/tour/output/slipmem-product-tour.mp4` (generated, gitignored); the
+   recording commit is `e408e47`, and later source commits `8af9e27` and
+   `24a5c39` are not reflected in the media.
+4. **Still not claimed.** No sanitized production database import (G5), no
+   semantic entailment/factual truth for synthesized prose (G6), no enforced
+   offline network namespace, and no "383 passed" result. Keep those limits in
+   the README and release notes.
 
 Do not duplicate the parser, path, locking, ranking, approval, or wiki rules in
-a surface. The acceptance matrix is the source of truth for what is still open.
+a surface. The acceptance matrix is the source of truth for what is proven.

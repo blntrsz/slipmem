@@ -1,6 +1,7 @@
 # Internal link and backlink check evidence
 
-Status: **implemented and tested in the core check path.**
+Status: **implemented and tested in the core check path; persisted backlink
+lookup landed later in `77f4175`.**
 Date: 2026-11-18
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md) sections 5.2, 5.6, 7.1, 12,
 13.1, 13.7; [`docs/mvp-implementation-log.md`](./mvp-implementation-log.md).
@@ -78,22 +79,32 @@ and after `check`.
 
 ## 4. Backlink derived data boundary
 
-The existing search index has no link or backlink API, and this workstream does
-not edit `packages/core/src/markdown/search-index.ts`. To avoid a blocking
-dependency, `check` computes backlinks from the same in-memory scan and returns
-them in `NoteCheckReport.links.backlinks`.
+This slice originally added no search-index code: the index had no link or
+backlink API, so `check` computed backlinks from the same in-memory scan and
+returned them in `NoteCheckReport.links.backlinks`. That check-time report
+remains, and it is still recomputed rather than persisted.
 
-Remaining work for the orchestrator: if persisted backlink lookup is required by
-MCP, search, or web surfaces, add a disposable backlink table/API to the search
-index and feed it through `extractInternalMarkdownLinks` or an equivalent shared
-extractor. Until then, backlinks are check-time derived data only, matching the
-plan's rule that the index is disposable.
+Persisted lookup landed later in `77f4175`
+([`docs/mvp-backlink-index-evidence.md`](./mvp-backlink-index-evidence.md)):
 
-The top-level `packages/core/src/index.ts` barrel was outside this workstream's
-ownership, so `extractInternalMarkdownLinks`, `MarkdownLinkReference`, and
+- the disposable index schema is version 2 and stores derived `links` rows
+  beside the derived `notes` rows;
+- `refresh`/`rebuild` re-derive the rows from note files, and a version 1 cache
+  rebuilds automatically;
+- `MarkdownSearchIndexShape.backlinks(noteId, limit)` returns bounded source
+  IDs, paths, link counts, and line numbers; default limit 20, hard maximum
+  100; self, dangling, unsafe, malformed, and external references are excluded;
+- `search-index.ts` imports the same `extractInternalMarkdownLinks` parser from
+  `check.ts`, so check-time and index-time backlinks share one extractor.
+
+The index remains disposable derived data; note files stay authoritative. No
+CLI/MCP/web surface is required by the plan contract, and none was added for
+backlinks.
+
+Export boundary: `extractInternalMarkdownLinks`, `MarkdownLinkReference`, and
 `NoteBacklink` are exported from `check.ts` and the Markdown module index, but
-are not yet listed in the package barrel. Add them there if a surface needs the
-extractor directly.
+still are not listed in the package-root `packages/core/src/index.ts` barrel.
+Add them there if a package-root consumer needs the extractor directly.
 
 ## 5. Tests
 
