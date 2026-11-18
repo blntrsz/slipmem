@@ -1,6 +1,7 @@
 import { Markdown } from "@slipmem/schemas/markdown"
 import { Context, Effect, Layer, Option } from "effect"
 import { randomBytes } from "node:crypto"
+import type { MarkdownError } from "../markdown/errors.js"
 import { parseMarkdownNote, type ParsedMarkdownNote } from "../markdown/note-document.js"
 import { renderNoteDocument } from "../markdown/frontmatter.js"
 import { notePath } from "../markdown/paths.js"
@@ -44,6 +45,12 @@ export interface ApprovalServiceConfig {
   readonly maxPending?: number
   /** Injectable for tests; otherwise a filesystem store is created. */
   readonly store?: ProposalStoreShape
+  /**
+   * Refreshes the disposable search index after a durable approval. Failures
+   * never roll back or hide the note change; they are reported on the applied
+   * result as an actionable recovery warning.
+   */
+  readonly refreshIndex?: () => Effect.Effect<void, MarkdownError>
 }
 
 export interface McpCreateInput {
@@ -108,6 +115,18 @@ export interface ApprovalReviewReport {
   readonly quarantined: ReadonlyArray<string>
 }
 
+/**
+ * Outcome of the post-approval derived-index refresh.
+ *
+ * `skipped` means the service was built without a refresh dependency. The note
+ * change is already durable in every case; `failed` only describes the
+ * disposable cache and carries a recovery instruction.
+ */
+export interface ApprovalIndexRefresh {
+  readonly status: "refreshed" | "failed" | "skipped"
+  readonly warning?: string
+}
+
 export type ApprovalApplication =
   | {
       readonly status: "applied"
@@ -115,6 +134,7 @@ export type ApprovalApplication =
       readonly operation: "create" | "update" | "reclassify"
       readonly noteId: string
       readonly note: ParsedMarkdownNote
+      readonly index: ApprovalIndexRefresh
     }
   | {
       readonly status: "applied"
@@ -122,6 +142,7 @@ export type ApprovalApplication =
       readonly operation: "delete"
       readonly noteId: string
       readonly backupPath: string
+      readonly index: ApprovalIndexRefresh
     }
 
 export interface ApprovalRejection {
@@ -318,7 +339,9 @@ const buildDocument = (input: {
  * update/delete methods; all note writes keep the repository's atomic write and
  * lock behavior. Applying a proposal stamps a fresh `updatedAt` through the
  * repository, so the applied file is not byte-identical to the proposed preview,
- * but every proposed field is revalidated first.
+ * but every proposed field is revalidated first. A configured `refreshIndex`
+ * runs after each durable create/update/delete; its failure is reported as a
+ * warning on the applied result rather than undoing the note.
  */
 export const makeApprovalService = (
   repository: ApprovalRepository,
@@ -351,6 +374,28 @@ export const makeApprovalService = (
         Effect.map(Option.getOrNull),
         Effect.mapError((error) => repositoryFailure(`read note '${id}'`, error)),
       )
+
+    /**
+     * Runs only after the repository has durably written or deleted the note.
+     * A cache failure is mapped to a warning instead of a typed failure so the
+     * approval result and the proposal cleanup still reflect the real note
+     * state. The index is disposable; the Markdown file remains the truth.
+     */
+    const refreshDerivedIndex = (): Effect.Effect<ApprovalIndexRefresh> => {
+      const refresh = config.refreshIndex
+      if (refresh === undefined) {
+        return Effect.succeed({ status: "skipped" })
+      }
+      return refresh().pipe(
+        Effect.as({ status: "refreshed" } as const),
+        Effect.catch((error) =>
+          Effect.succeed({
+            status: "failed" as const,
+            warning: `The note is durable, but the derived search index could not be refreshed: ${error.message} Run 'slipmem check --rebuild-index' to recover the cache.`,
+          }),
+        ),
+      )
+    }
 
     const putProposal = (
       build: (proposalId: string, nowMs: number) => Effect.Effect<
@@ -814,6 +859,7 @@ export const makeApprovalService = (
             )
           }
 
+          const index = yield* refreshDerivedIndex()
           yield* store.remove(proposalId)
           return {
             status: "applied",
@@ -821,6 +867,7 @@ export const makeApprovalService = (
             operation: "create",
             noteId: created.id,
             note: created,
+            index,
           }
         }
 
@@ -860,6 +907,7 @@ export const makeApprovalService = (
                 applyRepositoryFailure("apply the delete proposal", proposal, error),
               ),
             )
+          const index = yield* refreshDerivedIndex()
           yield* store.remove(proposalId)
           return {
             status: "applied",
@@ -867,6 +915,7 @@ export const makeApprovalService = (
             operation: "delete",
             noteId: deleted.id,
             backupPath: deleted.backupPath,
+            index,
           }
         }
 
@@ -935,6 +984,7 @@ export const makeApprovalService = (
             ),
           )
 
+        const index = yield* refreshDerivedIndex()
         yield* store.remove(proposalId)
         return {
           status: "applied",
@@ -942,6 +992,7 @@ export const makeApprovalService = (
           operation: proposal.operation,
           noteId: updated.id,
           note: updated,
+          index,
         }
       })
 

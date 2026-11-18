@@ -879,6 +879,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
                   operation: applied.operation,
                   noteId: applied.noteId,
                   backupPath: applied.backupPath,
+                  index: applied.index,
                 }
               : {
                   status: applied.status,
@@ -886,6 +887,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
                   operation: applied.operation,
                   noteId: applied.noteId,
                   note: toApiNote(applied.note),
+                  index: applied.index,
                 },
           )
         }),

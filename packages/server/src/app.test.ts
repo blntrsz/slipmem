@@ -1,8 +1,10 @@
 import { expect, test } from "bun:test"
 import {
+  checkNoteRoot,
   initializeNoteRoot,
   makeApprovalService,
   makeMarkdownNoteRepository,
+  makeMarkdownSearchIndex,
 } from "@slipmem/core"
 import { Effect } from "effect"
 import { existsSync } from "node:fs"
@@ -671,6 +673,111 @@ test("pending human review exposes a diff and approves or rejects without MCP ap
       }),
     )
     expect(crossOriginApprove.status).toBe(403)
+  })
+})
+
+test("HTTP approval refreshes the derived index before the next check", async () => {
+  await withApi(async (api, root) => {
+    const repository = await Effect.runPromise(
+      makeMarkdownNoteRepository({ root: root.root }),
+    )
+    const approval = await Effect.runPromise(
+      makeApprovalService(repository),
+    )
+
+    const checkDrift = async (): Promise<void> => {
+      const index = await Effect.runPromise(
+        makeMarkdownSearchIndex({
+          root: root.root,
+          cacheDir: root.cacheDir,
+        }),
+      )
+      try {
+        const snapshot = await Effect.runPromise(index.snapshot())
+        const report = await Effect.runPromise(
+          checkNoteRoot(root.root, {
+            index: snapshot.map((entry) => ({
+              id: entry.id,
+              contentHash: entry.contentHash,
+            })),
+          }),
+        )
+        expect(report.index.drift).toBe(0)
+        const codes = report.warnings.map((warning) => warning.code)
+        expect(codes).not.toContain("index-missing")
+        expect(codes).not.toContain("index-stale")
+        expect(codes).not.toContain("index-extra")
+      } finally {
+        await Effect.runPromise(index.close())
+      }
+    }
+
+    const createProposal = await Effect.runPromise(
+      approval.submitMcp({
+        operation: "create",
+        type: "permanent",
+        title: "HTTP approved create",
+        content: "Created over HTTP, then checked without a search.",
+      }),
+    )
+    if (createProposal.status !== "pending_approval") {
+      throw new Error("expected pending create")
+    }
+    const createdResponse = await api.handler(
+      request(`/api/pending/${createProposal.proposalId}/approve`, "POST"),
+    )
+    expect(createdResponse.status).toBe(200)
+    const created = (await createdResponse.json()) as {
+      readonly index: { readonly status: string }
+    }
+    expect(created.index.status).toBe("refreshed")
+    await checkDrift()
+
+    const base = await Effect.runPromise(
+      repository.create({
+        type: "permanent",
+        title: "HTTP approved update base",
+        content: "Base body before approval.",
+      }),
+    )
+    const updateProposal = await Effect.runPromise(
+      approval.submitMcp({
+        operation: "update",
+        id: base.id,
+        content: "Updated body through HTTP approval.",
+      }),
+    )
+    if (updateProposal.status !== "pending_approval") {
+      throw new Error("expected pending update")
+    }
+    const updatedResponse = await api.handler(
+      request(`/api/pending/${updateProposal.proposalId}/approve`, "POST"),
+    )
+    expect(updatedResponse.status).toBe(200)
+    const updated = (await updatedResponse.json()) as {
+      readonly index: { readonly status: string }
+    }
+    expect(updated.index.status).toBe("refreshed")
+    await checkDrift()
+
+    const deleteProposal = await Effect.runPromise(
+      approval.submitMcp({
+        operation: "delete",
+        id: base.id,
+      }),
+    )
+    if (deleteProposal.status !== "pending_approval") {
+      throw new Error("expected pending delete")
+    }
+    const deletedResponse = await api.handler(
+      request(`/api/pending/${deleteProposal.proposalId}/approve`, "POST"),
+    )
+    expect(deletedResponse.status).toBe(200)
+    const deleted = (await deletedResponse.json()) as {
+      readonly index: { readonly status: string }
+    }
+    expect(deleted.index.status).toBe("refreshed")
+    await checkDrift()
   })
 })
 

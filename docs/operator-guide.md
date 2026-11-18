@@ -707,6 +707,11 @@ expiration, the base content hash, the target path, and all note rules before
 writing. `reject` removes only the proposal record and changes no note. A stale
 proposal fails without overwriting the current note or deleting anything.
 
+After writing or deleting the note, `approve` refreshes the disposable index, so
+an immediate `check` does not report drift. If the cache cannot be refreshed,
+the note change still stands and the result warns you to run
+`check --rebuild-index`; the index is never allowed to undo a durable approval.
+
 The local web UI exposes the same review queue, and the Markdown API exposes the
 same human operations:
 

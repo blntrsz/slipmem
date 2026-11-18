@@ -6,7 +6,7 @@ import {
   type MarkdownNoteRepositoryShape,
 } from "@slipmem/core"
 import { Effect } from "effect"
-import { existsSync, rmSync } from "node:fs"
+import { existsSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { makeTempBase, parseJson, runCliProcess } from "./test-support.js"
 
@@ -147,6 +147,111 @@ describe("slipmem review, approve, and reject", () => {
 
     const after = await run(setupValue, ["review", "--json"])
     expect(parseJson<ReviewResult>(after.stdout).pending).toBe(0)
+  }, 30000)
+
+  test("approval refreshes the derived index before check without a search", async () => {
+    const setupValue = await setup()
+
+    const checkDrift = async (): Promise<void> => {
+      const checked = await run(setupValue, ["check", "--json"])
+      expect(checked.code).toBe(0)
+      const report = parseJson<{
+        ok: boolean
+        report: {
+          index: { drift: number }
+          warnings: ReadonlyArray<{ code: string }>
+        }
+      }>(checked.stdout)
+      expect(report.ok).toBe(true)
+      expect(report.report.index.drift).toBe(0)
+      const codes = report.report.warnings.map((warning) => warning.code)
+      expect(codes).not.toContain("index-missing")
+      expect(codes).not.toContain("index-stale")
+      expect(codes).not.toContain("index-extra")
+    }
+
+    const createId = await proposalId(setupValue, {
+      operation: "create",
+      type: "permanent",
+      title: "Approved create",
+      content: "This note must be indexed on approval.",
+      actor: "test-agent",
+    })
+    const created = await run(setupValue, ["approve", createId, "--json"])
+    expect(created.code).toBe(0)
+    expect(
+      parseJson<ApprovalResult>(created.stdout).application,
+    ).toMatchObject({ index: { status: "refreshed" } })
+    await checkDrift()
+
+    const base = await run(setupValue, [
+      "new",
+      "--type",
+      "permanent",
+      "--title",
+      "Approved update base",
+      "--content",
+      "Base body before the agent proposal.",
+      "--json",
+    ])
+    const noteId = parseJson<{ note: { id: string } }>(base.stdout).note.id
+    const updateId = await proposalId(setupValue, {
+      operation: "update",
+      id: noteId,
+      content: "Updated through human approval.",
+      actor: "test-agent",
+    })
+    const updated = await run(setupValue, ["approve", updateId, "--json"])
+    expect(updated.code).toBe(0)
+    expect(
+      parseJson<ApprovalResult>(updated.stdout).application,
+    ).toMatchObject({ operation: "update", index: { status: "refreshed" } })
+    await checkDrift()
+
+    const deleteId = await proposalId(setupValue, {
+      operation: "delete",
+      id: noteId,
+      actor: "test-agent",
+    })
+    const deleted = await run(setupValue, ["approve", deleteId, "--json"])
+    expect(deleted.code).toBe(0)
+    expect(
+      parseJson<ApprovalResult>(deleted.stdout).application,
+    ).toMatchObject({ operation: "delete", index: { status: "refreshed" } })
+    await checkDrift()
+  }, 30000)
+
+  test("keeps an approved note and warns when the index cache is unavailable", async () => {
+    const setupValue = await setup()
+    const id = await proposalId(setupValue, {
+      operation: "create",
+      type: "permanent",
+      title: "Durable approval",
+      content: "The cache may fail; the note must remain.",
+      actor: "test-agent",
+    })
+    const unavailableCache = join(setupValue.base, "not-a-directory")
+    writeFileSync(unavailableCache, "cache path is a file\n")
+
+    const approved = await runCliProcess(
+      ["approve", id, "--dir", setupValue.root, "--json"],
+      { env: { ...setupValue.env, XDG_CACHE_HOME: unavailableCache } },
+    )
+    expect(approved.code).toBe(0)
+    const application = parseJson<{
+      application: {
+        readonly noteId: string
+        readonly index: { readonly status: string; readonly warning?: string }
+      }
+    }>(approved.stdout).application
+    expect(application.index.status).toBe("failed")
+    expect(application.index.warning).toContain("check --rebuild-index")
+
+    const shown = await run(setupValue, ["show", application.noteId, "--json"])
+    expect(shown.code).toBe(0)
+    expect(
+      parseJson<{ note: { content: string } }>(shown.stdout).note.content,
+    ).toBe("The cache may fail; the note must remain.")
   }, 30000)
 
   test("reject removes the proposal without creating or changing a note", async () => {

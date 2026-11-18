@@ -3,7 +3,7 @@ import { stringOption } from "../args.js"
 import { withApprovalService } from "../approval-access.js"
 import { resolveRoot } from "../context.js"
 import { noteToJson } from "../note-values.js"
-import { writeJson, writeLine } from "../output.js"
+import { writeErrorLine, writeJson, writeLine } from "../output.js"
 import type { CommandDefinition } from "./command.js"
 
 export const approveCommand: CommandDefinition = {
@@ -26,6 +26,7 @@ export const approveCommand: CommandDefinition = {
         context,
         resolved.root,
         (service) => service.apply(proposalId),
+        { refreshIndex: true },
       )
 
       if (parsed.options.json === true) {
@@ -40,6 +41,7 @@ export const approveCommand: CommandDefinition = {
                   operation: application.operation,
                   noteId: application.noteId,
                   backupPath: application.backupPath,
+                  index: application.index,
                 }
               : {
                   status: application.status,
@@ -47,6 +49,7 @@ export const approveCommand: CommandDefinition = {
                   operation: application.operation,
                   noteId: application.noteId,
                   note: noteToJson(resolved.root, application.note),
+                  index: application.index,
                 },
         })
         return 0
@@ -63,6 +66,9 @@ export const approveCommand: CommandDefinition = {
           `Approved ${proposalId}: ${application.operation} ${application.noteId}`,
         )
         writeLine(context.io, `  ${application.note.path}`)
+      }
+      if (application.index.warning !== undefined) {
+        writeErrorLine(context.io, `Warning: ${application.index.warning}`)
       }
       return 0
     }),

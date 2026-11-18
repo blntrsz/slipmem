@@ -1,12 +1,13 @@
 import {
   ApprovalServiceLive,
   MarkdownNoteRepositoryLive,
+  MarkdownSearchIndex,
   MarkdownSearchIndexFromRepository,
   WikiServiceLive,
   type ParsedMarkdownNote,
 } from "@slipmem/core"
 import type { Note } from "@slipmem/schemas/note"
-import { Layer } from "effect"
+import { Effect, Layer } from "effect"
 
 /**
  * Configuration shared by every Markdown-backed HTTP surface.
@@ -31,16 +32,27 @@ export const makeMarkdownLayer = (options: MarkdownLayerOptions) => {
     root: options.root,
     ...(options.now === undefined ? {} : { now: options.now }),
   })
+  const index = MarkdownSearchIndexFromRepository(
+    options.cacheDir === undefined ? {} : { cacheDir: options.cacheDir },
+  )
+  // Approval refreshes the same index instance the API reads, so a successful
+  // human approval is immediately drifted-free for the next `check` or health
+  // response. The service treats a cache failure as a warning, not a rollback.
+  const approval = Layer.unwrap(
+    Effect.gen(function* () {
+      const searchIndex = yield* MarkdownSearchIndex
+      return ApprovalServiceLive({
+        ...(options.now === undefined ? {} : { now: options.now }),
+        refreshIndex: () => searchIndex.refresh().pipe(Effect.asVoid),
+      })
+    }),
+  ).pipe(Layer.provide(index))
   const services = Layer.mergeAll(
-    MarkdownSearchIndexFromRepository(
-      options.cacheDir === undefined ? {} : { cacheDir: options.cacheDir },
-    ),
+    index,
     WikiServiceLive(
       options.now === undefined ? {} : { now: options.now },
     ),
-    ApprovalServiceLive(
-      options.now === undefined ? {} : { now: options.now },
-    ),
+    approval,
   ).pipe(Layer.provide(repository))
 
   return Layer.merge(repository, services)

@@ -11,7 +11,7 @@ import {
   writeFileSync,
 } from "node:fs"
 import { join } from "node:path"
-import { MarkdownError } from "../markdown/errors.js"
+import { MarkdownError, markdownError } from "../markdown/errors.js"
 import {
   makeMarkdownNoteRepository,
   type MarkdownNoteRepositoryShape,
@@ -45,6 +45,7 @@ const createFixture = async (
     readonly policy?: "approval" | "direct-unsafe"
     readonly ttlMs?: number
     readonly maxPending?: number
+    readonly refreshIndex?: () => Effect.Effect<void, MarkdownError>
   } = {},
 ): Promise<Fixture> => {
   const base = mkdtempSync("/tmp/opencode/slipmem-approval-")
@@ -71,6 +72,9 @@ const createFixture = async (
       ...(options.maxPending === undefined
         ? {}
         : { maxPending: options.maxPending }),
+      ...(options.refreshIndex === undefined
+        ? {}
+        : { refreshIndex: options.refreshIndex }),
     }),
   )
   return {
@@ -895,6 +899,102 @@ describe("approval lifecycle", () => {
       expect(raw.source).toBe("mcp")
       expect(raw.operation).toBe("create")
       expect(noteFiles(fixture.root)).toEqual([])
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("refreshes the derived index after each durable approval", async () => {
+    let refreshes = 0
+    const fixture = await createFixture({
+      refreshIndex: () => {
+        refreshes++
+        return Effect.void
+      },
+    })
+    try {
+      const note = await Effect.runPromise(
+        fixture.repository.create({
+          type: "permanent",
+          title: "Refresh target",
+          content: "Base body.",
+        }),
+      )
+
+      const create = await submit(fixture, {
+        operation: "create",
+        type: "permanent",
+        title: "Indexed on approval",
+        content: "No search should be needed to index this note.",
+      })
+      if (create.status !== "pending_approval") {
+        throw new Error("expected pending")
+      }
+      const created = await Effect.runPromise(fixture.service.apply(create.proposalId))
+      expect(created.index).toEqual({ status: "refreshed" })
+      expect(refreshes).toBe(1)
+
+      const update = await submit(fixture, {
+        operation: "update",
+        id: note.id,
+        content: "Updated body.",
+      })
+      if (update.status !== "pending_approval") {
+        throw new Error("expected pending")
+      }
+      const updated = await Effect.runPromise(fixture.service.apply(update.proposalId))
+      expect(updated.index).toEqual({ status: "refreshed" })
+      expect(refreshes).toBe(2)
+
+      const deletion = await submit(fixture, {
+        operation: "delete",
+        id: note.id,
+      })
+      if (deletion.status !== "pending_approval") {
+        throw new Error("expected pending")
+      }
+      const deleted = await Effect.runPromise(fixture.service.apply(deletion.proposalId))
+      expect(deleted.index).toEqual({ status: "refreshed" })
+      expect(refreshes).toBe(3)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("keeps a durable note and warns when the index cache cannot refresh", async () => {
+    const fixture = await createFixture({
+      refreshIndex: () =>
+        Effect.fail(
+          markdownError({
+            area: "index",
+            code: "index-error",
+            path: "/tmp/unavailable-index",
+            message: "The index cache directory is unavailable.",
+          }),
+        ),
+    })
+    try {
+      const result = await submit(fixture, {
+        operation: "create",
+        type: "permanent",
+        title: "Durable despite cache",
+        content: "The note must survive a failed cache refresh.",
+      })
+      if (result.status !== "pending_approval") {
+        throw new Error("expected pending")
+      }
+
+      const applied = await Effect.runPromise(fixture.service.apply(result.proposalId))
+      expect(applied.status).toBe("applied")
+      expect(applied.index.status).toBe("failed")
+      expect(applied.index.warning).toContain("index cache directory is unavailable")
+      expect(applied.index.warning).toContain("check --rebuild-index")
+
+      const visible = await Effect.runPromise(fixture.repository.list())
+      expect(visible.map((note) => note.title)).toEqual([
+        "Durable despite cache",
+      ])
+      expect(pendingFiles(fixture.pending)).toHaveLength(0)
     } finally {
       cleanup(fixture)
     }
