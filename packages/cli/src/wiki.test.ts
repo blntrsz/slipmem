@@ -266,8 +266,8 @@ const writeAgent = (base: string): string => {
       '  process.exit(3)',
       '}',
       'const note = payload.untrustedNotes[0]!',
-      'const quote = note.body.split(/[.!?]/)[0]!.trim()',
-      'console.log(JSON.stringify({ sentences: [{ text: `${quote}.`, noteId: note.id, quote }] }))',
+      'const quote = note.body.trim()',
+      'console.log(JSON.stringify({ sentences: [{ text: quote, noteId: note.id, quote }] }))',
     ].join("\n"),
   )
   return path
