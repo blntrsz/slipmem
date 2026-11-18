@@ -295,7 +295,9 @@ const parseTags = (
   legacyValue: unknown,
 ): Effect.Effect<ReadonlyArray<string> | undefined, MarkdownError> =>
   Effect.gen(function* () {
-    if (value !== undefined && legacyValue !== undefined) {
+    const canonicalPresent = value !== undefined && value !== null
+    const legacyPresent = legacyValue !== undefined && legacyValue !== null
+    if (canonicalPresent && legacyPresent) {
       return yield* Effect.fail(
         noteError(
           path,
@@ -307,7 +309,7 @@ const parseTags = (
       )
     }
 
-    const raw = value === undefined ? legacyValue : value
+    const raw = canonicalPresent ? value : legacyValue
     if (raw === undefined || raw === null) {
       return undefined
     }
