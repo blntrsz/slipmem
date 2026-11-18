@@ -7,6 +7,11 @@ implementation is implied until the phases below are accepted.
 
 Date: 2026-11-17
 
+Terminology update (2026-11-18): the canonical metadata field and every public
+surface name is `tags`. The former `topics` name remains only as a read alias
+for existing frontmatter and is rewritten as `tags` on the next save. This plan
+and its examples use the current CLI, MCP, JSON API, web route, and wiki names.
+
 Related context:
 
 - Current implementation: `@slipmem/schemas`, `@slipmem/core`,
@@ -32,19 +37,19 @@ The MVP makes five commitments:
 
 1. **Files are the product.** Every note is one Markdown file in a flat
    `.slipmem/` directory. There are no type folders and no required service.
-2. **Every note is portable.** Type, topics, timestamps, and provenance live in
+2. **Every note is portable.** Type, tags, timestamps, and provenance live in
    Markdown metadata, so the repository works with Git, an editor, a static
    site, or another tool.
 3. **Agent writes are governed.** An agent may capture fleeting and literature
    notes directly, but only permanent note creation or changes require explicit
    human approval.
-4. **Recall is bounded and cited.** Search and topic pages return a limited,
+4. **Recall is bounded and cited.** Search and tag pages return a limited,
    inspectable set of notes with stable file citations.
 5. **The local loop is complete.** `slipmem` can initialize a repository,
    capture and curate notes, serve MCP, and run the web UI on one machine with
    no external database or hosted account.
 
-Topic pages are synthesized on demand. The MVP supports both extractive assembly
+Tag pages are synthesized on demand. The MVP supports both extractive assembly
 (selected notes quoted verbatim) and synthesized prose from a configurable model
 or agent. Every mode passes through a citation validator, so each claim remains
 traceable to a note file.
@@ -64,7 +69,7 @@ slipmem should be the smallest useful bridge:
   its context.
 - An agent can propose durable knowledge, but a human decides what becomes
   permanent memory.
-- A topic page is assembled from cited notes when it is needed, rather than
+- A tag page is assembled from cited notes when it is needed, rather than
   maintained as a second, drifting source of truth.
 - The same repository works locally through the CLI, MCP, and web UI, with no
   sync service required for the MVP.
@@ -83,11 +88,11 @@ under a normal Git merge.
 - A working CLI for init, capture, curation, search, review, wiki, and
   migration.
 - An MCP stdio server and HTTP MCP endpoint with the same behavior.
-- A locally runnable Foldkit web UI for list, read, edit, search, topics,
-  review, and topic pages.
+- A locally runnable Foldkit web UI for list, read, edit, search, tags,
+  review, and tag pages.
 - Direct agent capture of fleeting and literature notes; explicit approval
   before an agent creates or changes a permanent note, or deletes any note.
-- On-demand, topic-based wiki pages for humans and agents, synthesized from
+- On-demand, tag-based wiki pages for humans and agents, synthesized from
   notes by a configurable model or agent, with citations.
 - Migration from the current SQLite store without data loss.
 - Practical security limits for a local, unauthenticated-by-default tool.
@@ -98,9 +103,9 @@ under a normal Git merge.
 - Real-time multi-user editing or CRDT conflict resolution.
 - Vector search, embeddings, or an external search service.
 - Automatic conversation ingestion or background memory writes.
-- A persisted wiki. Topic pages are generated on demand and never stored as a
+- A persisted wiki. Tag pages are generated on demand and never stored as a
   second source of truth.
-- A graph database. Links and topics are metadata, not a separate graph store.
+- A graph database. Links and tags are metadata, not a separate graph store.
 - Replacing Git as the collaboration and backup mechanism.
 - Encrypting the note repository. The MVP must warn that local files are
   plaintext.
@@ -215,7 +220,7 @@ type: permanent
 title: Agent memory is bounded
 createdAt: "2026-11-17T19:30:45Z"
 updatedAt: "2026-11-17T19:35:02Z"
-topics:
+tags:
   - agent-memory
   - retrieval
 provenance:
@@ -237,7 +242,7 @@ Required fields:
 | `title` | Non-whitespace string. Display title; not the path. |
 | `createdAt` | ISO 8601 UTC timestamp with seconds. Must agree with the filename prefix. |
 | `updatedAt` | ISO 8601 UTC timestamp with seconds, at least `createdAt`. |
-| `topics` | Optional array of lowercase kebab-case topic slugs. |
+| `tags` | Optional array of lowercase kebab-case tag slugs. |
 
 Type-specific fields:
 
@@ -291,7 +296,7 @@ Type is metadata and never changes implicitly.
 
 - Use a local SQLite database with FTS5 for ranked full-text search.
 - Store only derived fields needed for search and listing: path, ID, type,
-  title, topics, reference, body text, timestamps, and content hash.
+  title, tags, reference, body text, timestamps, and content hash.
 - Refresh entries when a file's mtime or size changes, and rebuild entirely
   when the schema version or note root changes.
 - On any inconsistency, rebuild from files. The index never repairs a note and
@@ -302,11 +307,11 @@ Type is metadata and never changes implicitly.
 - If FTS5 is unavailable in a supported runtime, fall back to a bounded linear
   scan for the MVP and report the degraded mode. Do not fail note access.
 
-### 5.6 Links, topics, and Git
+### 5.6 Links, tags, and Git
 
 - Internal links use Markdown links to note files or `[[filename-stem]]`
   wikilinks. The index records backlinks as derived data.
-- `topics` live in frontmatter. A topic is not a folder. Topic listings are
+- `tags` live in frontmatter. A tag is not a folder. Tag listings are
   derived from metadata and optional title/body matching.
 - Notes are ordinary Git-tracked files. The CLI and web app must not run
   `git commit`, `git push`, `git reset`, or history-rewriting commands
@@ -340,7 +345,7 @@ Markdown files in .slipmem/
 MarkdownNoteRepository (parse, validate, write)
         |
         +--> NoteService (CRUD, list, get, search)
-        +--> WikiService (topic selection, synthesis, citations)
+        +--> WikiService (tag selection, synthesis, citations)
         +--> MigrationService (SQLite -> Markdown)
         |
         v
@@ -381,12 +386,12 @@ human interface and must work without the web server or MCP.
 | --- | --- |
 | `slipmem init` | Create `.slipmem/`, local state, and a starter README. Idempotent. |
 | `slipmem new --type <type> --title <title>` | Create a note. Content comes from `--content`, stdin, or `$EDITOR`. Validates type rules. |
-| `slipmem list [--type <type>] [--topic <topic>] [--limit <n>]` | Bounded list with IDs, types, titles, and updated times. |
+| `slipmem list [--type <type>] [--tag <tag>] [--limit <n>]` | Bounded list with IDs, types, titles, and updated times. |
 | `slipmem show <id>` | Print one note, including metadata and file path. |
 | `slipmem edit <id>` | Open `$EDITOR`, validate on save, write atomically. |
-| `slipmem search <query> [--type <type>] [--topic <topic>] [--limit <n>]` | Bounded ranked search with IDs and excerpts. |
-| `slipmem topics` | List topics and note counts. |
-| `slipmem wiki <topic> [--limit <n>] [--mode extractive\|synthesized] [--model <id> \| --agent <command>] [--out <path>]` | Generate a cited topic page, extractive or synthesized by a configured model or agent. Stdout by default. |
+| `slipmem search <query> [--type <type>] [--tag <tag>] [--limit <n>]` | Bounded ranked search with IDs and excerpts. |
+| `slipmem tags` | List tags and note counts. |
+| `slipmem wiki <tag> [--limit <n>] [--mode extractive\|synthesized] [--model <id> \| --agent <command>] [--out <path>]` | Generate a cited tag page, extractive or synthesized by a configured model or agent. Stdout by default. |
 | `slipmem review` | List pending approval proposals with summaries and diffs. |
 | `slipmem approve <proposal-id>` | Apply a proposal if its base version still matches. |
 | `slipmem reject <proposal-id>` | Discard a proposal without touching notes. |
@@ -410,9 +415,9 @@ a full rewrite. Add bounded read tools.
 | `create_permanent_note`, `update_permanent_note` | Create a pending proposal by default; no note file changes until human approval. |
 | `create_literature_note`, `update_literature_note` | Direct write with provenance `source: mcp`; the literature `reference` requirement still applies. |
 | `delete_*_note` | Create a pending proposal. No MCP self-approval. |
-| `search_notes` (new) | Bounded ranked search across types, with optional type and topic filters. |
-| `list_topics` (new) | Topic names with counts and bounded examples. |
-| `build_topic_wiki` (new) | On-demand topic page with citations, extractive or synthesized by the configured model or agent. Read-only. |
+| `search_notes` (new) | Bounded ranked search across types, with optional type and tag filters. |
+| `list_tags` (new) | Tag names with counts and bounded examples. |
+| `build_tag_wiki` (new) | On-demand tag page with citations, extractive or synthesized by the configured model or agent. Read-only. |
 
 MCP requirements:
 
@@ -435,11 +440,11 @@ The Foldkit app remains a local, single-process interface.
 
 Pages:
 
-- `/` - note list, filterable by type and topic.
+- `/` - note list, filterable by type and tag.
 - `/notes/:id` - note detail and edit form.
 - `/new` - create form with type selector.
-- `/topics` - topic index.
-- `/wiki/:topic` - on-demand cited topic page, extractive or synthesized.
+- `/tags` - tag index.
+- `/wiki/:tag` - on-demand cited tag page, extractive or synthesized.
 - `/review` - pending proposals with diff and approve/reject actions.
 - `/health` or an equivalent local status view.
 
@@ -448,14 +453,14 @@ Canonical API:
 | Method | Path | Result |
 | --- | --- | --- |
 | `GET` | `/api/health` | Service status and note root. |
-| `GET` | `/api/notes` | Bounded list, optional type/topic filters. |
+| `GET` | `/api/notes` | Bounded list, optional type/tag filters. |
 | `POST` | `/api/notes` | Create a note with `type` in the body. |
 | `GET` | `/api/notes/:id` | One note or not found. |
 | `PUT` | `/api/notes/:id` | Update a note; type changes follow the approval policy. |
 | `DELETE` | `/api/notes/:id` | Delete a note; human UI action. |
 | `GET` | `/api/search?q=...` | Bounded ranked search. |
-| `GET` | `/api/topics` | Topic inventory. |
-| `GET` | `/api/wiki/:topic` | Cited topic page as Markdown or structured sections; `mode` selects extractive or synthesized. |
+| `GET` | `/api/tags` | Tag inventory. |
+| `GET` | `/api/wiki/:tag` | Cited tag page as Markdown or structured sections; `mode` selects extractive or synthesized. |
 | `GET` | `/api/pending` | Pending proposals. |
 | `POST` | `/api/pending/:proposalId/approve` | Apply an approval. |
 | `POST` | `/api/pending/:proposalId/reject` | Reject an approval. |
@@ -514,23 +519,23 @@ updates need approval too, tighten the matrix without changing the mechanism.
 Approval records are local state, not notes. They must never appear in the note
 index or in `.slipmem/*.md`.
 
-## 9. Topic-based, on-demand cited wiki
+## 9. Tag-based, on-demand cited wiki
 
 ### 9.1 Behavior
 
-`slipmem wiki <topic>` and `build_topic_wiki` assemble a page only when asked.
+`slipmem wiki <tag>` and `build_tag_wiki` assemble a page only when asked.
 They do not write a permanent wiki into the note repository.
 
 Selection:
 
-1. Normalize the requested topic to a slug.
-2. Prefer notes whose `topics` include the slug.
+1. Normalize the requested tag to a slug.
+2. Prefer notes whose `tags` include the slug.
 3. Add bounded matches from title, body, and literature reference, with exact
-   topic matches ranked first.
+   tag matches ranked first.
 4. Use permanent and literature notes by default. Exclude fleeting notes unless
    `--include-fleeting` is explicit.
 5. Apply a default limit of 10 notes and a hard maximum of 25.
-6. If no notes match, return an empty result with topic suggestions. Do not
+6. If no notes match, return an empty result with tag suggestions. Do not
    invent content.
 
 ### 9.2 Output contract
@@ -548,7 +553,7 @@ The page may be generated in either mode, selected by configuration:
 Example extractive output:
 
 ```markdown
-# Topic: agent memory
+# Tag: agent memory
 
 _Generated on 2026-11-17T20:10:00Z from 3 notes. Extractive; verify sources._
 
@@ -640,7 +645,7 @@ Exit criteria:
 Deliverables:
 
 - New `packages/cli` with `init`, `new`, `list`, `show`, `edit`, `search`,
-  `topics`, `check`, and `wiki` (basic form).
+  `tags`, `check`, and `wiki` (basic form).
 - `review`, `approve`, and `reject` over the proposal store.
 - `migrate sqlite --dry-run` that maps old rows to proposed Markdown files and
   prints a report without writing the note root.
@@ -676,11 +681,11 @@ Exit criteria:
 - stdio and HTTP return the same shapes and enforce the same limits.
 - Approval cannot be triggered through MCP.
 
-### Phase 4 - Web UI, topic pages, and review queue (5-7 days)
+### Phase 4 - Web UI, tag pages, and review queue (5-7 days)
 
 Deliverables:
 
-- Foldkit list, detail, create, edit, delete, search, topics, and wiki views.
+- Foldkit list, detail, create, edit, delete, search, tags, and wiki views.
 - `/review` page for proposals with an inspectable diff.
 - Canonical ID-based JSON API and compatibility adapters for old type routes.
 - Loopback default and explicit warning for non-loopback binds.
@@ -689,7 +694,7 @@ Deliverables:
 Exit criteria:
 
 - A user can complete the full local loop in the browser: create, recall,
-  search, propose-to-review (using MCP), approve, and open a topic page.
+  search, propose-to-review (using MCP), approve, and open a tag page.
 - The UI never stores notes in browser-only state as the source of truth.
 - The web and MCP surfaces see the same files immediately after writes.
 
@@ -857,7 +862,7 @@ unauthenticated.
   the web app from the same root.
 - **SURFACE-02:** stdio and HTTP MCP expose the same tool names, input schemas,
   limits, and result shapes.
-- **SURFACE-03:** Web list, search, and topic views show notes from all three
+- **SURFACE-03:** Web list, search, and tag views show notes from all three
   types without type folders.
 - **SURFACE-04:** The web API uses stable note IDs and does not rely on array
   positions or SQLite ids.
@@ -880,12 +885,12 @@ unauthenticated.
 - **APPROVE-07:** No MCP tool can approve or reject a proposal.
 - **APPROVE-08:** Fleeting creates and updates through MCP work directly and
   carry `source: mcp` provenance.
-- **APPROVE-09:** Pending proposals never appear in note lists, search, topic
+- **APPROVE-09:** Pending proposals never appear in note lists, search, tag
   pages, or `.slipmem/*.md`.
 
-### 13.5 Topic wiki
+### 13.5 Tag wiki
 
-- **WIKI-01:** `slipmem wiki <topic>` returns only notes matching the topic
+- **WIKI-01:** `slipmem wiki <tag>` returns only notes matching the tag
   filters, within the default and maximum bounds.
 - **WIKI-02:** Every factual excerpt or synthesized sentence has an adjacent
   note ID and file citation.
@@ -940,7 +945,7 @@ The MVP is complete when a new user can:
 4. Start the MCP server and have an agent capture a fleeting note, write a
    literature note, and propose a permanent note.
 5. Approve the permanent proposal from the CLI or web review page.
-6. Open a cited topic page generated on demand.
+6. Open a cited tag page generated on demand.
 7. Delete the cache, rebuild it, and see identical content.
 8. Migrate an existing SQLite database with no data loss and no source
    modification.
@@ -967,7 +972,7 @@ Open decisions to resolve in Phase 0:
 
 - Which default synthesizer to ship (local model, hosted model, or agent
   command) and how operators configure it.
-- The exact topic normalization rules shared by CLI, MCP, and web.
+- The exact tag normalization rules shared by CLI, MCP, and web.
 - Whether the web API returns wiki output as rendered Markdown or structured
   sections; the default should be structured sections with a Markdown rendering
   option.
@@ -984,7 +989,7 @@ The implementation phases must update:
   provenance, and stdio setup.
 - `packages/server/README.md`: ID-based API, compatibility routes, loopback
   warnings.
-- `packages/web/README.md`: UI routes, review flow, topic pages, and local
+- `packages/web/README.md`: UI routes, review flow, tag pages, and local
   server behavior.
 - A new operator guide covering backup, index rebuild, migration, and recovery.
 - `opencode.json`: keep the stdio MCP registration working with the new entry
