@@ -14,9 +14,9 @@ and are not written as if they work.
 | Surface | State | What that means |
 | --- | --- | --- |
 | CLI notes | **available** | `init`, `new`, `list`, `show`, `edit`, `delete` |
-| CLI recall | **available** | `search`, `topics`, `check`, including `check --rebuild-index` |
+| CLI recall | **available** | `search`, `topics`, `check` including `check --rebuild-index`, and `cache clear` |
 | CLI wiki | **available** | `wiki` writes a cited extractive page to stdout or `--out`; opt-in synthesized pages use a sandboxed local agent or a registered model adapter |
-| CLI migration | **available** | `migrate sqlite --db <path> [--dry-run] [--merge]` |
+| CLI migration | **available** | `migrate sqlite [--db <path>] [--dry-run] [--merge]`, defaulting to `SLIPMEM_DB_PATH` then the XDG data database |
 | CLI approvals | **available** | `review`, `approve`, `reject` over the shared approval service |
 | stdio MCP | **available** | bounded read tools plus policy-enforced write tools over `.slipmem/` |
 | MCP approvals | **proposal side available** | permanent writes and all deletes create pending proposals; no MCP tool can approve them |
@@ -24,7 +24,7 @@ and are not written as if they work.
 | Browser UI | **available locally** | list, detail, new, edit, search, topics, wiki, review, and health routes load from the local server |
 | HTTP MCP endpoint | **mounted by the web server** | `/mcp` shares the stdio registrations when the web build is served; stdio remains the simplest local setup |
 | `slipmem mcp` / `slipmem web` wrappers | **available** | they resolve the note root in the caller's context and start the same MCP stdio or Vite development entry point |
-| Clear-cache CLI | **not shipped** | use `check --rebuild-index` or the documented manual cache removal |
+| Clear-cache CLI | **available** | `cache clear` empties only the derived index through the core index API; `check --rebuild-index` is the full rebuild path |
 
 When in doubt, run `bun run slipmem -- --help`. The command list is the
 authoritative list of what the binary accepts.
@@ -244,6 +244,7 @@ data and is never followed as instructions.
 ```sh
 bun run slipmem -- check
 bun run slipmem -- check --rebuild-index
+bun run slipmem -- cache clear
 ```
 
 `check` is read-only with respect to notes. It reports errors and warnings for
@@ -256,7 +257,9 @@ resolves anything.
 
 `--rebuild-index` rebuilds the disposable index first and then checks drift.
 This is the normal recovery command after an external edit, a manual note move,
-or a deleted cache.
+or a deleted cache. `cache clear` deletes only index rows through the shared
+core API; it never deletes note files, `.state`, or the cache directory itself.
+The next `search`, `topics`, or `check --rebuild-index` repopulates it.
 
 ### Deleting and retiring notes
 
@@ -309,11 +312,18 @@ The cache contains note text and is not part of Git backup or sync.
 Preferred recovery:
 
 ```sh
+bun run slipmem -- cache clear
 bun run slipmem -- check --rebuild-index
 ```
 
-There is no `slipmem cache clear` command. Manual removal is the documented
-fallback, with no slipmem CLI or web/MCP process running:
+`cache clear` uses the shared core index API to delete only the derived rows. It
+does not remove note files, `.state/`, or the cache directory, and it is safe to
+run before an index exists. The next `search`, `topics`, or
+`check --rebuild-index` repopulates the index from notes. `check --rebuild-index`
+is the full rebuild-and-check path.
+
+Manual removal is still documented as an emergency fallback, with no slipmem CLI
+or web/MCP process running:
 
 ```sh
 root=$(realpath .slipmem)
@@ -426,11 +436,27 @@ the metadata.
 source database is opened read-only, hashed before and after, and never
 rewritten.
 
+Source resolution order:
+
+1. Explicit `--db <path>`.
+2. `SLIPMEM_DB_PATH`, resolved relative to the current directory when not
+   absolute.
+3. `$XDG_DATA_HOME/slipmem/slipmem.db`, falling back to
+   `~/.local/share/slipmem/slipmem.db`.
+
+The CLI never creates the source directory or database. `:memory:` is rejected
+because it is not a migratable file-backed source. An explicit `--db` always
+wins over the environment and the XDG default.
+
 ### Dry run first
 
 ```sh
+# Explicit source
 bun run slipmem -- migrate sqlite --db /path/to/slipmem.db --dry-run \
   --dir /path/to/notes
+
+# Default source from SLIPMEM_DB_PATH or the XDG data directory
+bun run slipmem -- migrate sqlite --dry-run --dir /path/to/notes
 ```
 
 A dry run reports source shape, per-type counts, filename collisions, malformed
@@ -445,6 +471,7 @@ bun run slipmem -- migrate sqlite --db /path/to/slipmem.db \
   --dir /path/to/notes
 ```
 
+Omit `--db` to migrate the `SLIPMEM_DB_PATH` or XDG default described above.
 A real import:
 
 - Refuses a non-empty target root unless `--merge` is given.
@@ -794,17 +821,16 @@ to a network you do not fully trust, even if the UI loads successfully.
 | `--limit` rejected | Limit outside 1..50 (or 1..200 for topics) | Use a bounded value |
 | `--out` rejected before writing | Output parent missing, or a symlink resolves into the note root | Create the parent directory and choose a regular path outside `.slipmem/` |
 | `root-not-empty` from migration | Target already has notes | Add `--merge` after reviewing the dry run |
+| Migration source file not found | `--db` omitted and neither `SLIPMEM_DB_PATH` nor the XDG default exists | Pass `--db <path>` or set `SLIPMEM_DB_PATH`; migration never creates a source |
+| Index seems empty after `cache clear` | The clear command intentionally deletes only derived rows | Run `search` or `check --rebuild-index` to repopulate from notes |
 | `source-changed` before notes | A writer changed the database before the backup or writes | Stop writers, verify the source, rerun; no notes were written |
 | `source-changed` after notes | The final source fingerprint changed after writes | Inspect the manifest; valid notes, backup, and quarantine remain; stop writers before any retry |
 | `interrupted-run` / `interrupted-run-active` | An earlier import left a `running` manifest, or its owner is still alive | Review "Interrupted runs"; merge imports missing rows, and never stop a live owner by deleting its manifest |
 
-## 11. Planned commands and documentation gaps
+## 11. Documentation gaps
 
-These are not available in this tree. They are listed so the cutover can update
-this guide without pretending they work:
-
-- A `slipmem cache clear` command. Use `check --rebuild-index` or the manual
-  removal steps in section 5.
+There is no remaining planned command in this workstream. `cache clear` and the
+default migration source resolution are available and covered by CLI tests.
 
 Known documentation gaps to resolve at final update:
 

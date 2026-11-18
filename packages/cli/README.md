@@ -39,6 +39,7 @@ SLIPMEM_DIR=/tmp/slipmem-demo bun run slipmem -- new --type permanent \
 | `search <query> [--type <type>] [--topic <topic>] [--limit <n>]` | Refresh the disposable index, then run bounded ranked search. |
 | `topics [--query <topic>] [--limit <n>]` | List derived topic slugs and note counts. |
 | `check [--rebuild-index]` | Validate filenames, metadata, limits, duplicate IDs, conflict markers, internal link targets, non-note files, and index drift. |
+| `cache clear` | Clear only the derived search index through the core index API; notes and local state are untouched. |
 | `wiki <topic> [--mode extractive\|synthesized] [--model <id> \| --agent <command>] [--agent-arg <arg>...] [--include-fleeting] [--out <path>]` | Build an on-demand cited topic page through the shared wiki service. |
 | `review` | List pending agent proposals with summaries, diffs, and stale/expired flags. |
 | `approve <proposal-id>` | Apply a proposal after revalidating its base hash, expiry, and note rules. |
@@ -77,8 +78,14 @@ fleeting notes, 2000 for permanent notes, and 5000 for literature notes.
 The search index lives outside the note root under
 `$XDG_CACHE_HOME/slipmem/index/<root-hash>/` and is disposable. `search` and
 `topics` refresh it before reading, so an editor change is visible without a
-manual import. `check --rebuild-index` is the recovery path when the index is
-missing or stale.
+manual import. `check --rebuild-index` is the full recovery path when the index
+is missing or stale.
+
+`cache clear` deletes only the derived rows through the shared core index API.
+It never removes note files, `.state/`, or the cache directory. It is safe
+before an index exists, and the next `search`, `topics`, or
+`check --rebuild-index` repopulates it. Manual cache-directory removal remains
+an emergency fallback when no slipmem process is running.
 
 `check` never renames, repairs, or resolves anything. Errors make it exit `1`;
 warnings such as non-note files or slug drift do not.
@@ -141,10 +148,20 @@ touch the note. `reject` removes only the proposal.
 ## Migration
 
 ```sh
+# Explicit source
 bun run slipmem -- migrate sqlite --db ./legacy.db --dry-run
 bun run slipmem -- migrate sqlite --db ./legacy.db
 bun run slipmem -- migrate sqlite --db ./legacy.db --merge
+
+# Default source: SLIPMEM_DB_PATH, then $XDG_DATA_HOME/slipmem/slipmem.db
+bun run slipmem -- migrate sqlite --dry-run
 ```
+
+Without `--db`, the CLI resolves `SLIPMEM_DB_PATH` relative to the current
+directory, then `$XDG_DATA_HOME/slipmem/slipmem.db` (falling back to
+`~/.local/share/slipmem/slipmem.db`). An explicit `--db` always wins. It never
+creates the source directory or database, and `:memory:` is rejected because it
+is not a file-backed migratable source.
 
 The source database is opened read-only and hashed before and after the run. A
 real import copies the source to `.slipmem/.state/migrations/<run>/source-backup.db`,

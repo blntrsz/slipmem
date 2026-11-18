@@ -134,9 +134,11 @@ Observed:
   exited 2 before writing.
 - Cache path was `~/.cache/slipmem/index/<root-key>/index.sqlite`, directory
   mode `0700`, file mode `0600`.
-- Deleting the cache directory and rerunning `search` recreated the index and
-  returned the same result. There is no `cache clear` command; the guide
-  documents `check --rebuild-index` and manual removal with no process running.
+- `cache clear` deleted only the derived index rows, left the note files and
+  cache database in place, and the next `search` rebuilt and returned the same
+  result. The command is safe before an index exists.
+- Manual cache-directory removal remains documented as an emergency fallback
+  with no process running, not as the primary path.
 
 ## 5. Git conflict recovery
 
@@ -165,6 +167,13 @@ Observed:
 Built disposable SQLite databases from the Phase 0 fixtures:
 `packages/core/fixtures/phase0/migration/current.sql` and
 `invalid-rows.sql`. Source SHA-256 values were recorded before and after.
+
+Source resolution was verified in this order: explicit `--db`, then
+`SLIPMEM_DB_PATH`, then `<XDG_DATA_HOME>/slipmem/slipmem.db`. Explicit `--db`
+won when all three existed; `SLIPMEM_DB_PATH` won when it was set without
+`--db`; the XDG database was used when neither was set. The default path was not
+created when missing, and `SLIPMEM_DB_PATH=:memory:` exited 2 as non-migratable.
+Source bytes stayed unchanged in each import.
 
 ```sh
 bun run slipmem -- migrate sqlite --db "$BASE/current.db" --dry-run --dir "$BASE/notes"
@@ -308,8 +317,6 @@ Verified in the current implementation, not only from prose:
 
 The guide intentionally marks these gaps:
 
-- `slipmem cache clear` does not exist; use `check --rebuild-index` or manually
-  remove the cache with no process running.
 - The CLI ships no model adapter registry. A `--model` request is forwarded to
   the core and fails closed with `synthesis-adapter-unsupported` unless the
   embedding application registered that exact ID. The agent path is verified.
@@ -337,6 +344,7 @@ bun run slipmem -- search <query> --dir <disposable>
 bun run slipmem -- topics --dir <disposable>
 bun run slipmem -- check --dir <disposable>
 bun run slipmem -- check --rebuild-index --dir <disposable>
+bun run slipmem -- cache clear --dir <disposable>
 bun run slipmem -- wiki <topic> --dir <disposable>
 bun run slipmem -- wiki <topic> --mode synthesized --agent "<bun> <fixture-agent>" \
   --agent-arg=--fixture-flag --dir <disposable>
@@ -362,10 +370,10 @@ documented gaps:
 
 ```text
 $ bun test packages/cli
- 45 pass
+ 49 pass
  0 fail
- 383 expect() calls
-Ran 45 tests across 12 files.
+ 416 expect() calls
+Ran 49 tests across 13 files.
 ```
 
 The added launch coverage runs from a disposable directory outside the
@@ -373,10 +381,9 @@ repository:
 
 - `slipmem mcp` starts the real stdio server and completes an MCP `initialize`
   handshake with `--dir` pointing at the disposable root.
-- `slipmem web` launches the real Vite entry point with forwarded argv from the
-  same disposable cwd and exits successfully without a `packages/packages`
-  path error. The operator guide's separate HTTP section covers the serving
-  surface.
+- `slipmem web` launches the real Vite entry point with forwarded argv and
+  serves `/api/health` with `ok: true` and the disposable root from the same cwd
+  outside the repository.
 - Synthesized wiki fixtures cover argv-only agent execution, environment
   selection, the extractive override, missing synthesizer, unregistered model,
   mutually exclusive flags, and the sandbox/unsafe opt-in boundary.

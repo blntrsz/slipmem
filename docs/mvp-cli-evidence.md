@@ -37,8 +37,9 @@ rejects unknown, duplicate, and malformed options before any core call.
 | `search` | `makeMarkdownSearchIndex` refresh + search | Bounded ranked results, excerpt window, type/topic filters. |
 | `topics` | `MarkdownSearchIndex.listTopics` | Counts and optional query. |
 | `check` | `checkNoteRoot`, index snapshot/rebuild | Errors exit 1; warnings do not. `--rebuild-index` is the recovery path. |
+| `cache` | `makeMarkdownSearchIndex.clear` | `cache clear` deletes only derived index rows; notes and local state are untouched. |
 | `wiki` | `makeWikiService` extractive or synthesized | Cited sections; excludes fleeting unless `--include-fleeting`; `--agent` runs an argv array without a shell; `--model` needs a core adapter; `--out` is real-path guarded outside the root. |
-| `migrate` | `importMigration` (planner + importer) | Dry run writes nothing; real import backs up, verifies, writes manifest, refuses non-empty root without `--merge`. |
+| `migrate` | `importMigration` (planner + importer) | `--db`, then `SLIPMEM_DB_PATH`, then the XDG data default. Dry run writes nothing; real import backs up, verifies, writes manifest, refuses non-empty root without `--merge`. |
 | `review` | `makeApprovalService.review` | Human-only; summaries, diffs, stale/expired flags. |
 | `approve` | `makeApprovalService.apply` | Revalidates base hash/expiry; stale proposals fail without writing. |
 | `reject` | `makeApprovalService.reject` | Removes only the proposal. |
@@ -60,6 +61,20 @@ explicitly unavailable feature.
 - New notes from an editor use a temporary body draft and the same repository
   validation/atomic create path.
 - The CLI does not implement a second serializer, parser, lock, or index.
+
+## Cache and migration source defaults
+
+`slipmem cache clear` is the required clear-cache command from plan section 12.
+It calls `MarkdownSearchIndex.clear` and never removes note files, `.state/`, or
+the cache directory with a broad filesystem delete. It is safe before an index
+exists, and the next `search`, `topics`, or `check --rebuild-index` repopulates
+the index from notes.
+
+`migrate sqlite` resolves its read-only source in Phase 5 order: explicit
+`--db <path>`, then `SLIPMEM_DB_PATH` relative to the caller's cwd, then
+`$XDG_DATA_HOME/slipmem/slipmem.db` (`~/.local/share/slipmem/slipmem.db` when
+XDG is unset). The CLI never creates the source directory or database, and
+rejects `:memory:` because it is not file-backed. Explicit `--db` always wins.
 
 ## Synthesized wiki
 
@@ -91,9 +106,9 @@ contract; it does not contain a second synthesizer.
 
 - **MCP/web wrappers are thin but verified.** Launch tests start the real MCP
   stdio server from a disposable cwd outside the repository, complete an MCP
-  initialize handshake with `--dir`, and launch the real Vite entry point with
-  forwarded argv. The web wrapper is the Vite development host, not the
-  production `web:serve` process.
+  initialize handshake with `--dir`, launch the real Vite entry point with
+  forwarded argv, and read `/api/health` from that same disposable root. The web
+  wrapper is the Vite development host, not the production `web:serve` process.
 - **No CLI approval bypass.** `review`, `approve`, and `reject` use only the
   human approval service; no MCP tool is added or changed.
 - **No Git automation.** No command commits, pushes, resets, or resolves
@@ -116,10 +131,10 @@ CLI suite:
 
 ```text
 $ bun test packages/cli
- 45 pass
+ 49 pass
  0 fail
- 383 expect() calls
-Ran 45 tests across 12 files.
+ 416 expect() calls
+Ran 49 tests across 13 files.
 ```
 
 Full repository gate:
@@ -132,13 +147,13 @@ $ bunx tsc --noEmit
 (no errors)
 
 $ bun test
- 341 pass
+ 370 pass
  0 fail
- 2859 expect() calls
-Ran 341 tests across 40 files.
+ 3140 expect() calls
+Ran 370 tests across 44 files.
 
 $ bun run check
-(lint, typecheck, 341 tests, and web client/SSR build all pass)
+(lint, typecheck, 370 tests, and web client/SSR build all pass)
 ```
 
 Root script smoke test:
@@ -164,6 +179,9 @@ Acceptance coverage in `packages/cli/src/*.test.ts`:
   atomicity, no-op edits, managed timestamps, no editor configured.
 - `search.test.ts`: refreshed FTS5 search, type/topic/limit filters, excerpts,
   topics counts/query, check clean/error/rebuild, external edit visibility.
+- `cache.test.ts`: safe clear only the derived rows, note readability after
+  clear, rebuild on the next search, clear before an index exists, human output,
+  and unknown action rejection.
 - `wiki.test.ts`: cited extractive page, fleeting opt-in, limit, empty result,
   `--out` outside root, refusal inside root (including symlinked parents and
   missing parents), configured agent synthesis over argv, environment-selected
@@ -173,14 +191,16 @@ Acceptance coverage in `packages/cli/src/*.test.ts`:
   import with backup/manifest/verification, non-empty refusal with `verification:
   not run`, merge idempotency with actual skipped target paths and zero effective
   collisions, interrupted-run reporting, tagged unsafe integers/blobs in JSON,
+  `--db`/`SLIPMEM_DB_PATH`/XDG source priority with read-only source bytes,
   malformed-row preservation, missing source, unknown kind.
 - `portable-json.test.ts`: `$bigint`, `$base64`, and `$number` tags with no
   rounding or loss.
 - `approval.test.ts`: review diff, approve permanent create, reject, stale-base
   refusal, delete-through-proposal backup, missing proposal, `delete --yes`
   confirmation.
-- `wrappers.test.ts`: real MCP initialize handshake with `--dir` and a real Vite
-  entry-point launch with forwarded argv, both from a cwd outside the repository.
+- `wrappers.test.ts`: real MCP initialize handshake with `--dir`, a real Vite
+  entry-point launch with forwarded argv, and `/api/health` from the disposable
+  root, all from a cwd outside the repository.
 - `workflow.test.ts`: the clean-root local loop through the root script.
 
 ## Commit boundaries
@@ -200,7 +220,11 @@ Acceptance coverage in `packages/cli/src/*.test.ts`:
 | `df90921` | Synthesized wiki through the shared service; `--out` real-path guard |
 | `ee6705a` | Truthful migration verification status before any write |
 | `84d02ab` | Effective collisions, actual skipped paths, interrupted-run report, portable JSON tags |
-| `598e14f` | CLI README and operator/evidence documentation refresh |
+| `866aae9` | CLI README and operator/evidence documentation refresh |
+| `9694dc9` | Safe `cache clear` through the core index API |
+| `043de62` | Migration source defaults: `--db`, `SLIPMEM_DB_PATH`, XDG data |
+| `057c83f` | Web health launch test and approval-test time budgets |
+| `b794d03` | Operator and CLI docs for cache clear and migration defaults |
 
 ## API blockers / follow-ups
 
@@ -214,6 +238,3 @@ Optional follow-ups outside this phase:
   Today `--model` is correctly forwarded but fails closed without an adapter.
 - Allow editing unknown frontmatter keys through `edit` once the repository has
   a supported unknown-key write input; today they are preserved but read-only.
-- Add a `cache clear` command if operators find the manual cache removal too
-  error-prone; the current documented path is `check --rebuild-index` or manual
-  removal.
