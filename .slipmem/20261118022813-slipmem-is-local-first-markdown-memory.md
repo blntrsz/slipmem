@@ -4,7 +4,7 @@ id: 20261118022813-slipmem-is-local-first-markdown-memory
 type: permanent
 title: slipmem is local-first Markdown memory
 createdAt: "2026-11-18T02:28:13Z"
-updatedAt: "2026-11-18T02:28:29Z"
+updatedAt: "2026-11-18T02:55:37Z"
 tags:
   - domain
   - architecture
@@ -18,7 +18,7 @@ slipmem is local-first memory for one person and the coding agents that work wit
 
 Three types encode trust and lifecycle:
 - `fleeting` is a low-trust inbox: cheap capture, 1000-character body.
-- `permanent` is durable memory: 2000-character body, and agent creates, updates, and reclassification wait for human approval by default.
+- `permanent` is durable memory: 2000-character body; agent creates, updates, and reclassification to or from permanent are pending by default. Reclassification between fleeting and literature is direct.
 - `literature` records an external source: 5000-character body plus a required non-blank `reference`.
 
 Type is frontmatter metadata, not a folder. Tags are lowercase kebab-case metadata; they are not directories and do not change a note's path. A note's identity is its filename stem `YYYYMMDDHHmmss-<slug>`, stable across title edits.

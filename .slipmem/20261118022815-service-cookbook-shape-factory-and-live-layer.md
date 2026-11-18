@@ -4,7 +4,7 @@ id: 20261118022815-service-cookbook-shape-factory-and-live-layer
 type: permanent
 title: "Service cookbook: Shape, factory, and Live layer"
 createdAt: "2026-11-18T02:28:15Z"
-updatedAt: "2026-11-18T02:28:15Z"
+updatedAt: "2026-11-18T02:55:30Z"
 tags:
   - coding-standards
   - effect
@@ -15,44 +15,62 @@ provenance:
   actor: user
 ---
 
-Core services follow one repeatable Effect v4 shape: a narrow `Shape`, a `Context.Service` tag, a pure factory for tests, and a `Live` Layer over ambient dependencies.
+Core services follow one Effect v4 pattern: a narrow Shape, a `Context.Service` tag, a factory that closes over its dependency and config, and a Live layer over an ambient tag.
 
 ```ts
-export interface ThingShape {
-  readonly root: string
-  readonly read: (id: string) => Effect.Effect<string, ThingError>
+import { Context, Data, Effect, Layer } from "effect"
+
+export class NoteError extends Data.TaggedError("NoteError")<{
+  readonly id: string
+  readonly message: string
+}> {}
+
+export interface StoreShape {
+  readonly read: (id: string) => Effect.Effect<string, NoteError>
 }
 
-export class ThingService extends Context.Service<ThingService, ThingShape>()(
-  "@slipmem/core/ThingService",
+export class Store extends Context.Service<Store, StoreShape>()(
+  "@slipmem/core/Store",
 ) {}
 
-export const makeThingService = (
-  repository: ThingRepository,
-  config: ThingConfig = {},
-): Effect.Effect<ThingShape, ThingError> =>
-  Effect.gen(function* () {
-    const now = config.now ?? Date.now
-    return { root: repository.root, read }
-  })
+export interface ReaderConfig {
+  readonly prefix?: string
+}
 
-export const ThingServiceLive = (
-  config: ThingConfig = {},
-): Layer.Layer<ThingService, ThingError, MarkdownNoteRepository> =>
+export interface ReaderShape {
+  readonly read: (id: string) => Effect.Effect<string, NoteError>
+}
+
+export class Reader extends Context.Service<Reader, ReaderShape>()(
+  "@slipmem/core/Reader",
+) {}
+
+export const makeReader = (
+  store: StoreShape,
+  config: ReaderConfig = {},
+): Effect.Effect<ReaderShape, NoteError> => {
+  const prefix = config.prefix ?? ""
+  const read = (id: string): Effect.Effect<string, NoteError> =>
+    store.read(id).pipe(Effect.map((body) => prefix + body))
+  return Effect.succeed({ read })
+}
+
+export const ReaderLive = (
+  config: ReaderConfig = {},
+): Layer.Layer<Reader, NoteError, Store> =>
   Layer.effect(
-    ThingService,
+    Reader,
     Effect.gen(function* () {
-      const repository = yield* MarkdownNoteRepository
-      return yield* makeThingService(repository, config)
+      const store = yield* Store
+      return yield* makeReader(store, config)
     }),
   )
 ```
 
-Rules that keep this testable:
-- Depend on a `Pick` of the repository shape the service uses. `WikiService` uses `root` and `scan`; `ApprovalService` adds `get/create/update/delete`.
-- Inject time, environment, stores, and adapters through config. Production uses `Date.now`; tests use a fixed clock.
-- Return typed `Data.TaggedError` values with `code`, `path`, and optional `field`; do not throw for expected failures.
-- For SQLite, use `Layer.effect` plus `Effect.acquireRelease` so the handle closes with the scope.
-- Compose once per note root with `Layer.provide`; expose siblings with `Layer.mergeAll`. Surface code stays an adapter.
-- A derived-index refresh after a durable write is a warning, not a rollback.
-Tests build `makeXService` with a temporary root, fixed clock, and injected store, assert exact error codes and real files, then add one Live-layer test. Examples: `packages/core/src/wiki/wiki-service.ts:75-88,450-459`, `packages/core/src/approval/approval-service.ts:1046-1056`.
+- Depend on the exact shape; inject time and adapters through config.
+- Build `read` as a closure and return it.
+- Type expected failures as `Data.TaggedError`; do not throw.
+- `Live` yields the dependency tag and delegates to the factory; compose with `Layer.provide`.
+- Tests call the factory with a temporary root, fixed clock, and fake store, then add one Live-layer test.
+
+Real examples: `packages/core/src/wiki/wiki-service.ts:75-88,158-162,450-459`; repository `packages/core/src/markdown/repository.ts:159-163,517-519,797-800`.
