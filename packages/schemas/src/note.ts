@@ -57,8 +57,15 @@ export interface ListTitlesInput extends Schema.Schema.Type<typeof ListTitlesInp
 export const ListTitlesInput = Schema.Struct({}).annotate({ identifier: "Note.ListTitlesInput" })
 
 // A search can match any text field a note has. Literature notes add
-// `reference`; kinds without one simply never match that field.
-export const SearchField = Schema.Literals(["title", "content", "reference"])
+// `reference`; kinds without one simply never match that field. Tags are note
+// metadata rather than body text, so they are a searchable field in their own
+// right.
+export const SearchField = Schema.Literals([
+  "title",
+  "content",
+  "reference",
+  "tags",
+])
 export type SearchField = typeof SearchField.Type
 
 // Search is cross-kind by default. `fields`, `kinds`, and `limit` are optional

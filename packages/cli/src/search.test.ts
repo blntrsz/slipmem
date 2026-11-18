@@ -160,6 +160,29 @@ describe("slipmem search, tags, and check", () => {
       true,
     )
 
+    const tagOnly = await run(setupValue, ["search", "retrieval", "--json"])
+    const tagOnlyResult = parseJson<SearchResult>(tagOnly.stdout)
+    expect(tagOnlyResult.count).toBe(1)
+    expect(tagOnlyResult.results[0]!.title).toBe("Cited recall paper")
+
+    const matchingTagFilter = await run(setupValue, [
+      "search",
+      "retrieval",
+      "--tag",
+      "retrieval",
+      "--json",
+    ])
+    expect(parseJson<SearchResult>(matchingTagFilter.stdout).count).toBe(1)
+
+    const mismatchedTagFilter = await run(setupValue, [
+      "search",
+      "retrieval",
+      "--tag",
+      "agent-memory",
+      "--json",
+    ])
+    expect(parseJson<SearchResult>(mismatchedTagFilter.stdout).count).toBe(0)
+
     const limited = await run(setupValue, [
       "search",
       "bounded",

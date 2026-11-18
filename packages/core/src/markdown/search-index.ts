@@ -44,6 +44,7 @@ const SEARCH_FIELDS: ReadonlyArray<Note.SearchField> = [
   "title",
   "content",
   "reference",
+  "tags",
 ]
 const NOTE_KINDS: ReadonlyArray<Note.Kind> = [
   "fleeting",
@@ -563,6 +564,7 @@ const MATCH_WEIGHTS = {
   title: 5,
   content: 1,
   reference: 3,
+  tags: 2,
 } as const
 
 const linearScore = (
@@ -585,6 +587,9 @@ const linearScore = (
     ) {
       score += MATCH_WEIGHTS.reference
     }
+    if (fields.has("tags") && parseTags(row.tags).some((tag) => matches(tag, token))) {
+      score += MATCH_WEIGHTS.tags
+    }
   }
   return score
 }
@@ -602,6 +607,9 @@ const ftsMatchExpression = (
   }
   if (fields.has("reference")) {
     columns.push("reference")
+  }
+  if (fields.has("tags")) {
+    columns.push("tags")
   }
 
   return tokens

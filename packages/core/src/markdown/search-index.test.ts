@@ -163,15 +163,42 @@ describe("disposable FTS search index", () => {
       )
       expect(referenceOnly.map((hit) => hit.id)).toEqual([index.ids.literature])
 
+      const tagOnly = await Effect.runPromise(
+        index.index.search({ query: "retrieval" }),
+      )
+      expect(tagOnly.map((hit) => hit.id)).toEqual([index.ids.permanent])
+
+      const tagsField = await Effect.runPromise(
+        index.index.search({ query: "retrieval", fields: ["tags"] }),
+      )
+      expect(tagsField.map((hit) => hit.id)).toEqual([index.ids.permanent])
+
+      const titleDoesNotSearchTags = await Effect.runPromise(
+        index.index.search({ query: "retrieval", fields: ["title"] }),
+      )
+      expect(titleDoesNotSearchTags).toEqual([])
+
+      const matchingTagFilter = await Effect.runPromise(
+        index.index.search({ query: "retrieval", tag: "retrieval" }),
+      )
+      expect(matchingTagFilter.map((hit) => hit.id)).toEqual([
+        index.ids.permanent,
+      ])
+
+      const mismatchedTagFilter = await Effect.runPromise(
+        index.index.search({ query: "retrieval", tag: "mcp" }),
+      )
+      expect(mismatchedTagFilter).toEqual([])
+
       const literatureOnly = await Effect.runPromise(
         index.index.search({ query: "recall", kinds: ["literature"] }),
       )
       expect(literatureOnly.map((hit) => hit.id)).toEqual([index.ids.literature])
 
-      const tagOnly = await Effect.runPromise(
+      const filteredByTag = await Effect.runPromise(
         index.index.search({ query: "recall", tag: "MCP" }),
       )
-      expect(tagOnly.map((hit) => hit.id)).toEqual([index.ids.literature])
+      expect(filteredByTag.map((hit) => hit.id)).toEqual([index.ids.literature])
 
       const notes = await Effect.runPromise(
         index.index.searchNotes({ query: "cite", kinds: ["literature"] }),
@@ -728,6 +755,21 @@ describe("disposable FTS search index", () => {
         fallback.search({ query: "example", fields: ["reference"] }),
       )
       expect(literature.map((hit) => hit.id)).toEqual([seeded.ids.literature])
+
+      const tagOnly = await Effect.runPromise(
+        fallback.search({ query: "retrieval" }),
+      )
+      expect(tagOnly.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
+
+      const tagsField = await Effect.runPromise(
+        fallback.search({ query: "retrieval", fields: ["tags"] }),
+      )
+      expect(tagsField.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
+
+      const mismatchedTagFilter = await Effect.runPromise(
+        fallback.search({ query: "retrieval", tag: "mcp" }),
+      )
+      expect(mismatchedTagFilter).toEqual([])
 
       const tags = await Effect.runPromise(fallback.listTags())
       expect(tags).toEqual(
