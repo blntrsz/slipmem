@@ -290,6 +290,7 @@ describe("slipmem note commands", () => {
     const human = await runCliProcess(["show", id, "--dir", root])
     expect(human.code).toBe(0)
     expect(human.stdout).toContain(`  path:      .slipmem/${id}.md`)
+    expect(human.stdout).toContain("  tags:      agent-memory")
     expect(human.stdout).toContain("Body for Agent memory.")
 
     const missing = await runCliProcess([
