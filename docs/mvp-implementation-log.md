@@ -4,9 +4,9 @@ Status: **Phases 0-5 implemented on `main`; hardening and release verification
 are in progress.** The criterion-by-criterion record is now
 [`docs/mvp-acceptance-matrix.md`](./mvp-acceptance-matrix.md).
 Date: 2026-11-18
-Evidence snapshot: `29b7dd1` plus the in-flight work called out in the matrix;
-other workers committed concurrently, so the final release gate must be rerun on
-the landed tree.
+Evidence snapshots: `29b7dd1` through `84d02ab` plus the in-flight web work
+called out in the matrix; other workers committed concurrently, so the final
+release gate must be rerun on the landed tree.
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md). This log records decisions,
 baseline evidence, commit boundaries, and acceptance status. It does not replace
 the plan, and it does not turn an evidence note into a passing test.
@@ -341,7 +341,7 @@ keeps only the phase-level summary.
 | WIKI-01..07 | Bounded selection, citations, empty/conflict handling, no persisted page, injection-safe synthesis | pass, conservative synthesis | `packages/core/src/wiki/wiki.test.ts`; CLI wiki tests; `docs/mvp-approval-wiki-evidence.md`; exact extractive support only |
 | MIGRATE-01..06 | Lossless import, untouched source, dry run, idempotency, check, malformed reporting | partial | `migration-*.test.ts`; CLI migrate tests; `docs/mvp-migration-evidence.md`; independent `/tmp/opencode/mig/EVIDENCE.md`; real-DB fixture parity still open (matrix G5) |
 | SEC-01..05 | Paths, size bounds, loopback, untrusted text, no Git actions | pass | Storage, CLI, server, web, and browser evidence |
-| SEC-06 | `bun run check` passes | pending | Two full attempts at this snapshot were red: a web-wrapper HTTP 500 during in-flight web edits, then a 5 s CLI migration timeout during in-flight migration edits. Focused reruns resolved the web failure but the migration failure still reproduced. Rerun after both land. |
+| SEC-06 | `bun run check` passes | pass (provisional) | Run 3: lint clean, root/web typecheck clean, 341 pass / 0 fail / 2859 expect calls, Vite client and SSR builds successful. The green run includes uncommitted `packages/web/**` edits; repeat on the landed tree. |
 | Definition of done | Full local loop and migration in section 13.8 | partial | Local loop is exercised; clean clone, real representative DB import, and final gates remain |
 
 ### 5.1 Phase 2-6 landing record
@@ -401,8 +401,9 @@ mistaken for done:
 8. **G8, residual low migration reporting item.** Verify the
    duplicate-`legacyId`-across-tables merge warning still described by the
    independent migration log.
-9. **SEC-06/final gate.** Do not claim a release until a clean `bun run check`
-   and a clean-clone smoke run are recorded after the in-flight edits land.
+9. **SEC-06/final gate.** The current working tree passes `bun run check`
+   (provisional, because web edits are uncommitted). Repeat it after those edits
+   land and add a clean-clone smoke run before a release claim.
 
 ## 6. Architectural pointers
 
@@ -446,8 +447,9 @@ hardening, not a source-of-truth cutover.
 
 1. **Finish the in-flight web UX fixes** for browser findings D1-D4, then rerun
    the independent browser acceptance and record a fresh report.
-2. **Run a clean full gate** (`bun run check`) and a clean-clone quickstart after
-   the web and migration edits land. SEC-06 is currently pending, not passing.
+2. **Repeat the clean full gate** (`bun run check`) and run a clean-clone
+   quickstart after the web edits land. The current working tree passes, but that
+   run includes uncommitted files.
 3. **Decide and implement the explicit plan gaps:** clear-cache command (G1),
    index-recorded backlinks (G2), migration default source (G3), and the
    read-only legacy DB compatibility path (G4). Each needs either a narrow

@@ -2,10 +2,11 @@
 
 Date: 2026-11-18
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md) section 13.
-Evidence snapshot: `29b7dd1` plus the uncommitted work described below. Other
-workers committed concurrently while this note was written, so this is the run
-boundary for the quoted test counts, not a frozen tree hash. Re-run the gate on
-the final tree before release.
+Evidence snapshots: `29b7dd1` through `84d02ab` plus the uncommitted web work
+described below. Other workers committed concurrently while this note was
+written, so the quoted test counts are run boundaries, not a frozen tree hash.
+The green run is provisional and must be repeated on the landed tree before
+release.
 
 This matrix records what the repository can actually prove, criterion by
 criterion. It is deliberately not a release checklist with optimistic ticks.
@@ -23,6 +24,8 @@ Legend:
 - **Partial** - some clauses are proven, some are not.
 - **Pending** - code or evidence exists, but the named gate is not green or the
   end-to-end path has not been rerun at this snapshot.
+- **Pass (provisional)** - the gate is green on the current working tree, but
+  the run includes uncommitted changes and must be repeated after they land.
 - **Missing** - the requirement is absent, not merely conservative.
 
 ## 0. Verification snapshot
@@ -52,19 +55,23 @@ packages/cli/src/migrate.test.ts
 "imports atomically with a verified backup and then skips duplicates in merge mode"
 timed out at 5 s; the follow-up merge invocation was killed with status 143.
 
-focused reruns:
+focused reruns after the relevant fixes landed:
 bun test packages/cli/src/wrappers.test.ts  -> 2 pass, 0 fail
-bun test packages/cli/src/migrate.test.ts   -> 4 pass, 1 fail, 1 unhandled error
+bun test packages/cli/src/migrate.test.ts   -> 5 pass, 0 fail, 80 expect calls
+
+$ bun run check        # run 3, green
+oxlint: clean
+tsc --noEmit (root and packages/web): clean
+bun test: 341 pass, 0 fail, 2859 expect() calls, 40 files
+vite build: client and SSR bundles written successfully
 ```
 
-Both runs overlapped active edits in `packages/web/**` and
-`packages/cli/src/{migrate.test.ts,commands/migrate.ts}`. Run 1's web failure no
-longer reproduces in a focused rerun. Run 2's migration failure still reproduces
-in isolation at the time of writing and belongs to the in-flight migration
-change, not to this documentation commit. That explains the failures but does
-not make them pass: **SEC-06 and the final release gate are Pending until a clean
-full check runs after the in-flight work lands.** No earlier green claim in an
-evidence document is repeated here as a current result.
+Runs 1 and 2 overlapped active web and migration edits and are retained here as
+the honest history. The fixes landed, focused reruns passed, and run 3 gives a
+clean full gate. Run 3 still includes **uncommitted** web edits
+(`packages/web/**`, plus the corresponding uncommitted docs/README edits), so
+SEC-06 is a provisional pass: repeat `bun run check` on the landed tree before a
+release claim.
 
 Independent runs incorporated:
 
@@ -162,7 +169,7 @@ Independent runs incorporated:
 | SEC-03 Loopback default and documented non-loopback risk | Pass | `packages/server/src/config.test.ts` loopback/non-loopback/invalid-port tests; `packages/web/scripts/serve.ts`; README and operator guide | Non-loopback bind prints the unauthenticated/plaintext warning. |
 | SEC-04 Note content not executed; web escapes untrusted HTML | Pass | `packages/web/src/main.test.ts` escaped-content and wiki-UI tests; browser XSS check 10 and review-diff XSS supplement; `wiki.test.ts` injection test; `check-links.test.ts` | The web UI uses text nodes, not trusted HTML. Wiki output treats notes as quoted data. |
 | SEC-05 No automatic Git actions; conflict markers reported, not resolved | Pass | `checkNoteRoot` conflict-marker tests (`check-links.test.ts` "reports conflict markers and preserves every note byte-for-byte"); CLI check tests; operator guide recovery section; code search finds no `git commit`/`push`/`reset` execution | The browser and CLI probes left Git untouched. |
-| SEC-06 `bun run check` passes (lint, typecheck, tests, web build) | Pending | Last recorded green gates are in the evidence docs, but **not reproducible at this snapshot**: two full runs were red (web wrapper HTTP 500 in run 1; 5 s CLI migration timeout in run 2), web build not reached | Run 1's web failure passed in a focused rerun; run 2's migration failure still reproduced in a focused rerun while that file was being edited. Do not claim this criterion until a clean full check is recorded after the in-flight web and migration edits land. |
+| SEC-06 `bun run check` passes (lint, typecheck, tests, web build) | Pass (provisional) | Run 3: `oxlint` clean, root/web typecheck clean, **341 pass / 0 fail / 2859 expect() calls**, Vite client and SSR build successful. Earlier red runs and focused reruns are recorded in section 0. | The green run includes uncommitted `packages/web/**` edits. Repeat the gate after those land; do not treat this as a frozen-tree release result. |
 
 ## 8. Definition of done (13.8)
 
@@ -213,12 +220,14 @@ Supported by committed tests or named independent runs:
 - Migration source preservation, backup, dry run, merge idempotence, malformed
   row quarantine, exact bigints/blobs, WAL handling, symlink-safe state, and
   interrupted-run recovery on the committed fixtures.
+- A clean full gate on the current working tree: lint, typecheck, 341 tests,
+  and the client/SSR web build.
 
 Not claimable yet:
 
-- A clean `bun run check` at this snapshot (SEC-06).
-- A real representative SQLite database import (MIGRATE-01) or a clean-clone
-  release run.
+- A final gate on the landed tree (the green run included uncommitted web
+  edits) or a clean-clone release run.
+- A real representative SQLite database import (MIGRATE-01).
 - A `clear-cache` command (G1), index-recorded backlinks (G2), migration default
   source resolution (G3), or a read-only old-DB compatibility path (G4).
 - Semantic validation of synthesized prose (G6); only exact extractive support
@@ -227,4 +236,5 @@ Not claimable yet:
 
 The outstanding items are bounded. None of the committed evidence shows note
 data loss or a broken approval boundary. The release decision should wait for
-the web edit to land, a clean full check, and an explicit decision on G1/G3/G4.
+the web edit to land, a repeat full check on that landed tree, a clean-clone run,
+and an explicit decision on G1/G3/G4.
