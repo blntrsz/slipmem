@@ -1,10 +1,15 @@
 # MVP implementation log
 
-Status: **Phase 1 started; safe parser and fixture replay landed.**
-Date: 2026-11-17
+Status: **Phases 0-5 implemented on `main`; hardening and release verification
+are in progress.** The criterion-by-criterion record is now
+[`docs/mvp-acceptance-matrix.md`](./mvp-acceptance-matrix.md).
+Date: 2026-11-18
+Evidence snapshot: `29b7dd1` plus the in-flight work called out in the matrix;
+other workers committed concurrently, so the final release gate must be rerun on
+the landed tree.
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md). This log records decisions,
 baseline evidence, commit boundaries, and acceptance status. It does not replace
-the plan.
+the plan, and it does not turn an evidence note into a passing test.
 
 ## 1. Baseline before implementation
 
@@ -312,29 +317,92 @@ Suggested commit sequence:
 | 5 | Real SQLite import, verification, cutover | no data loss; source untouched; Markdown-only start |
 | 6 | Security/limits/docs/release | full acceptance matrix; fresh and migrated clones |
 
-## 5. Acceptance tracking
+## 5. Acceptance tracking and current status
 
-Status legend: **done** = implemented and tested against the real surface;
-**partial** = contract/fixtures only; **not started**.
+Status legend: **pass** = a committed test or named independent run exercises
+the clause at the matrix snapshot; **conservative** = the literal clause is met
+by a documented narrower behavior; **partial** = some clauses are proven and
+some are not; **pending** = implementation exists but the gate is not green or
+the end-to-end path has not been rerun; **missing** = the requirement is absent.
+
+The detailed criterion-by-criterion record, exact test names, commits, browser
+run, migration adversarial run, and open gaps live in
+[`docs/mvp-acceptance-matrix.md`](./mvp-acceptance-matrix.md). This section
+keeps only the phase-level summary.
 
 | Area | Criteria | Status | Evidence or next gate |
 | --- | --- | --- | --- |
-| Phase 0 contract | Filename, metadata, topic, approval, wiki rules frozen | done | `packages/schemas/src/markdown.ts`; hardened in `8b4d463` with real timestamps, operation-specific proposals, and cited wiki sections |
-| Phase 0 note fixtures | Valid/invalid corpus, Unicode, collisions, long titles, every type, malformed YAML, conflicts | done | `fixtures/phase0/notes`, manifest tests |
-| Phase 0 migration fixtures | Current, legacy, empty, invalid rows | done | executable SQL + row/column tests |
-| Phase 0 examples | CLI, API, MCP payloads | done | `acceptance/examples.json` tests |
-| STOR-01..08 | Flat `.slipmem/`, filenames, frontmatter, limits, collisions, unknown keys, atomic failure | done | Parser + `MarkdownNoteRepository` + `check`; `repository.test.ts` covers 01-08 |
-| TRUTH-01..04 | Disposable index, files-only recovery, external edits, no SQLite runtime | partial | Index rebuild identity and external-edit refresh tested; repository restart tested; cutover remains Phase 5 |
-| SURFACE-01..05 | CLI/MCP/web parity, same tool schemas, ID routes, adapters | not started | Phases 2-4 |
-| APPROVE-01..09 | Pending permanent/delete, direct fleeting/literature, stale hash, no MCP approval | partial | Proposal/wiki schemas only; Phase 3 |
-| WIKI-01..07 | Bounded selection, citations, empty/conflict handling, no persisted page, injection-safe synthesis | partial | Wiki schemas only; Phases 4a-4b |
-| MIGRATE-01..06 | Lossless import, untouched source, dry run, idempotency, check, malformed reporting | partial | Fixtures only; Phases 2c and 5 |
-| SEC-01..06 | Paths, size bounds, loopback, untrusted text, no Git actions, full check | partial | Bounds and patterns only; Phase 6 |
-| Definition of done | Full local loop and migration in section 13.8 | not started | Final acceptance run |
+| Phase 0 contract | Filename, metadata, topic, approval, wiki rules frozen | pass | `packages/schemas/src/markdown.ts`; hardened in `8b4d463`; contract evidence in `docs/mvp-contract-verification.md` |
+| Phase 0 fixtures | Notes, Unicode, collisions, every type, malformed YAML, migration shapes, payloads | pass | `packages/core/fixtures/phase0/`; `phase0-fixtures.test.ts`; migration fixture parity guard is still missing (matrix G5) |
+| STOR-01..08 | Flat `.slipmem/`, filenames, frontmatter, limits, collisions, unknown keys, atomic failure | pass | Parser, `MarkdownNoteRepository`, `check`; `repository.test.ts`; `docs/mvp-storage-review-fixes.md` |
+| TRUTH-01..04 | Disposable index, files-only recovery, external edits, no SQLite runtime | pass | `search-index.test.ts`; surface startup paths; copy-only smoke in the matrix |
+| SURFACE-01..05 | CLI/MCP/web parity, same tool schemas, ID routes, adapters | pass | CLI, MCP, server, and web suites; `docs/mvp-cli-evidence.md`, `docs/mvp-mcp-evidence.md`, `docs/mvp-web-evidence.md` |
+| APPROVE-01..09 | Pending permanent/delete, direct fleeting/literature, stale hash, no MCP approval | pass | `packages/core/src/approval/approval.test.ts`; CLI/server approval tests; `docs/mvp-approval-wiki-evidence.md`; CAS commits `f6641c5`, `cef9d19` |
+| WIKI-01..07 | Bounded selection, citations, empty/conflict handling, no persisted page, injection-safe synthesis | pass, conservative synthesis | `packages/core/src/wiki/wiki.test.ts`; CLI wiki tests; `docs/mvp-approval-wiki-evidence.md`; exact extractive support only |
+| MIGRATE-01..06 | Lossless import, untouched source, dry run, idempotency, check, malformed reporting | partial | `migration-*.test.ts`; CLI migrate tests; `docs/mvp-migration-evidence.md`; independent `/tmp/opencode/mig/EVIDENCE.md`; real-DB fixture parity still open (matrix G5) |
+| SEC-01..05 | Paths, size bounds, loopback, untrusted text, no Git actions | pass | Storage, CLI, server, web, and browser evidence |
+| SEC-06 | `bun run check` passes | pending | Two full attempts at this snapshot were red: a web-wrapper HTTP 500 during in-flight web edits, then a 5 s CLI migration timeout during in-flight migration edits. Focused reruns resolved the web failure but the migration failure still reproduced. Rerun after both land. |
+| Definition of done | Full local loop and migration in section 13.8 | partial | Local loop is exercised; clean clone, real representative DB import, and final gates remain |
 
-This Phase 1 set claims the parser, repository, check, and index behavior listed
-above. It does not claim CLI/MCP/web parity, approvals, wiki generation, or the
-SQLite cutover.
+### 5.1 Phase 2-6 landing record
+
+The Phase 1 log above is historical. The later phases landed as vertical
+slices:
+
+- **CLI (`packages/cli`).** `f032517`, `4947344`, `80232f9`, `7c79865`,
+  `df9466a`, `3cd3942`, `955ee07`, `46eff30`, `df90921`, `ee6705a`.
+  Commands cover init, create, list, show, edit, delete, search, topics, check,
+  wiki (extractive + synthesized), migrate, review, approve, reject, and the
+  MCP/web wrappers. Evidence: `docs/mvp-cli-evidence.md`.
+- **MCP parity and approvals.** `9c8f771`, `e6b2260`, `91e18f6`, `88035a8`,
+  `e176d6e`, `3c36f7e`. Both transports share `McpNoteRegistrations`; the MCP
+  process receives only `submitMcp`. Evidence: `docs/mvp-mcp-evidence.md`.
+- **Approval and wiki core.** `1bd37b4`, `465ac9e`, `925f622`, `4febd88`,
+  `96f723d`, `df90921`, `cef9d19`, `f6641c5`, `4164078`. Pending
+  permanent/deletes, direct fleeting/literature, under-lock CAS, extractive
+  citations, fail-closed synthesis, and bounded output. Evidence:
+  `docs/mvp-approval-wiki-evidence.md`.
+- **Web/API cutover.** `7a1b677`, `2f4cac7`, `8a35212`, `1a9cb8c`,
+  `4ea0678`. Canonical ID API, type adapters, Foldkit routes, review queue,
+  wiki, and health. Evidence: `docs/mvp-web-evidence.md`; independent browser
+  report at `/tmp/opencode/browser-acceptance/REPORT.md`.
+- **Migration hardening.** `70c6117`, `dd9d941`, `752803a`, `8677012`,
+  `2d8ba25`, `b19f137`, `f4a4b76`, `5fbfc05`, `efac3f2`, `ee6705a`. Read-only
+  private source snapshot, exact integers/blobs, live-lock protection,
+  interrupted-run recovery, truthful skipped paths, and verification status.
+  Evidence: `docs/mvp-migration-evidence.md`; independent migration log at
+  `/tmp/opencode/mig/EVIDENCE.md`.
+- **Link checking.** `463741c`. `check` validates wikilinks and direct `.md`
+  links and returns check-time backlinks. Evidence:
+  `docs/mvp-link-check-evidence.md`.
+
+### 5.2 Open release gaps
+
+The matrix is authoritative; these are the bounded items that must not be
+mistaken for done:
+
+1. **G1, clear-cache command.** Plan §12 requires one; only
+   `check --rebuild-index` and manual cache removal exist.
+2. **G2, backlinks in the index.** Plan §5.6 says the index records backlinks;
+   today `check` derives them in memory only.
+3. **G3, migration source default.** `--db` is mandatory; the Phase 5 plan says
+   to support the current default path and `SLIPMEM_DB_PATH`.
+4. **G4, read-only old-DB compatibility path.** Not implemented; the SQLite
+   archive is untouched but no runtime reads it.
+5. **G5, real migration fixture parity.** Current fixtures are hand-written and
+   match the checked-in migration SQL today, but no test creates the source by
+   running the real migrations.
+6. **G6, synthesized semantic validity.** The validator proves exact extractive
+   support, not entailment. This is a documented conservative implementation of
+   the plan, not a semantic guarantee.
+7. **G7, browser low-severity UX fixes.** D1-D4 from the independent browser run
+   were being addressed in uncommitted web work at this snapshot; rerun the
+   browser acceptance after they land.
+8. **G8, residual low migration reporting item.** Verify the
+   duplicate-`legacyId`-across-tables merge warning still described by the
+   independent migration log.
+9. **SEC-06/final gate.** Do not claim a release until a clean `bun run check`
+   and a clean-clone smoke run are recorded after the in-flight edits land.
 
 ## 6. Architectural pointers
 
@@ -344,9 +412,13 @@ SQLite cutover.
 - Contract tests: `packages/schemas/src/markdown.test.ts`.
 - Fixture corpus: `packages/core/fixtures/phase0/README.md`.
 - Fixture tests: `packages/core/src/markdown/phase0-fixtures.test.ts`.
-- Existing SQLite behavior to preserve until cutover:
+- Current criterion record: `docs/mvp-acceptance-matrix.md`.
+- Current runtime paths: `packages/server/src/markdown.ts`,
+  `packages/mcp/src/layer.ts`, `packages/cli/src/context.ts`,
+  `packages/web/src/entry.server.ts`.
+- Historical SQLite code kept only for migration/compatibility:
   `packages/core/src/note/SQLite-note.service.ts`,
-  `packages/server/src/migrations.ts`, `packages/server/src/note-tools.ts`.
+  `packages/server/src/database.ts`, `packages/server/src/migrations.ts`.
 - Existing limits and schema style: `packages/schemas/src/*-note.ts`.
 
 ## 7. Phase 1 implementation choices (resolved)
@@ -366,24 +438,25 @@ SQLite cutover.
   and a message. Fixture manifest codes are preserved; new repository, path, and
   index codes are additive and not yet a public API promise.
 
-## 8. Recommended next bounded task
+## 8. Recommended next bounded tasks
 
-Implement the **first read-only surface wiring** on top of Phase 1, without
-cutting over the source of truth.
+The Phase 1 surface-wiring task is complete; CLI, MCP, web, approval, wiki, and
+migration all consume the Markdown services. The remaining work is release
+hardening, not a source-of-truth cutover.
 
-Scope:
+1. **Finish the in-flight web UX fixes** for browser findings D1-D4, then rerun
+   the independent browser acceptance and record a fresh report.
+2. **Run a clean full gate** (`bun run check`) and a clean-clone quickstart after
+   the web and migration edits land. SEC-06 is currently pending, not passing.
+3. **Decide and implement the explicit plan gaps:** clear-cache command (G1),
+   index-recorded backlinks (G2), migration default source (G3), and the
+   read-only legacy DB compatibility path (G4). Each needs either a narrow
+   implementation or a plan amendment; do not leave them implicit.
+4. **Add real migration fixture parity** (G5): create a source DB through the
+   actual checked-in migration path, insert representative rows, and import it
+   in a regression test.
+5. **Re-check the residual migration warning** in G8 and the synthesized-wiki
+   wording in G6. Keep semantic entailment out of any claim.
 
-1. Provide a small application factory that resolves the note root, builds
-   `MarkdownNoteRepositoryLive`, `MarkdownSearchIndexFromRepository`, and the
-   `MarkdownNoteService` adapter behind an explicit feature flag.
-2. Use it for one read-only path (CLI `list`/`show` or a health/list endpoint)
-   while SQLite remains the default for writes and all existing routes.
-3. Run `checkNoteRoot` with the index snapshot in that path and surface the
-   report without mutating notes.
-4. Prove the flag-off runtime is byte-for-byte the current SQLite behavior and
-   the flag-on path reads only `.slipmem/*.md`.
-5. Run the full `bun run check` and commit only the wiring and its tests.
-
-Approval proposals, migration cutover, wiki generation, and MCP write policy
-remain later phases. The repository/index interfaces are ready; the next worker
-should not duplicate parser, path, locking, or ranking rules.
+Do not duplicate the parser, path, locking, ranking, approval, or wiki rules in
+a surface. The acceptance matrix is the source of truth for what is still open.
