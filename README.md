@@ -30,8 +30,10 @@ bun run web
 
 ## Storage
 
-- Every note is one direct child of `.slipmem/`, named
-  `YYYYMMDDHHmmss-<kebab-slug>.md`; the filename stem is the stable ID.
+- Every new note is one direct child of `.slipmem/`, named
+  `<kebab-slug>.md`; the filename stem is the stable ID. Collisions get `-2`,
+  `-3`, and so on. Existing `YYYYMMDDHHmmss-<kebab-slug>.md` names remain valid
+  and are not renamed.
 - Type, title, timestamps, tags, provenance, and optional source live in YAML
   frontmatter. Unknown keys are preserved.
 - Local state such as pending approvals lives under `.slipmem/.state/` and is

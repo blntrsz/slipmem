@@ -474,7 +474,6 @@ export const makeApprovalService = (
         ])
         const filename = Markdown.noteFilename({
           title: input.title,
-          createdAt: nowMs,
           taken,
         })
         const noteId = Markdown.noteIdFromFilename(filename)

@@ -82,7 +82,7 @@ export const parseMarkdownNote = (
           path,
           "filename",
           "filename-pattern",
-          "Note filenames must match YYYYMMDDHHmmss-<kebab-slug>.md.",
+          "Note filenames must match <kebab-slug>.md (legacy YYYYMMDDHHmmss-<kebab-slug>.md files are also accepted).",
         ),
       )
     }
@@ -155,17 +155,21 @@ export const parseMarkdownNote = (
     const createdAt = yield* parseContractTimestamp(path, data.createdAt, "createdAt")
     const updatedAt = yield* parseContractTimestamp(path, data.updatedAt, "updatedAt")
 
-    const prefix = id.slice(0, 14)
-    if (Markdown.toUtcTimestamp(createdAt).filenamePrefix !== prefix) {
-      return yield* Effect.fail(
-        noteError(
-          path,
-          "metadata",
-          "timestamp-mismatch",
-          `createdAt must agree with the filename timestamp prefix '${prefix}'.`,
-          "createdAt",
-        ),
-      )
+    // Only legacy timestamp-prefixed IDs claim a creation time in the
+    // filename. New descriptive names keep createdAt solely in frontmatter.
+    if (Markdown.isNoteIdWithRealTimestamp(id)) {
+      const prefix = id.slice(0, 14)
+      if (Markdown.toUtcTimestamp(createdAt).filenamePrefix !== prefix) {
+        return yield* Effect.fail(
+          noteError(
+            path,
+            "metadata",
+            "timestamp-mismatch",
+            `createdAt must agree with the legacy filename timestamp prefix '${prefix}'.`,
+            "createdAt",
+          ),
+        )
+      }
     }
 
     if (updatedAt < createdAt) {

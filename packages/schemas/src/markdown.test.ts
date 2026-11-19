@@ -54,44 +54,48 @@ describe("note slugs and filenames", () => {
     expect(Markdown.parseUtcPrefix("2026111719304")).toBeNull()
   })
 
-  test("builds filenames and resolves same-second collisions", () => {
-    const createdAt = Date.parse("2026-11-17T19:30:45Z")
-
-    expect(Markdown.noteFilename({ title: "Café notes", createdAt })).toBe(
-      "20261117193045-cafe-notes.md",
-    )
+  test("builds descriptive filenames and resolves collisions", () => {
+    expect(Markdown.noteFilename({ title: "Café notes" })).toBe("cafe-notes.md")
     expect(
       Markdown.noteFilename({
         title: "Café notes",
-        createdAt,
-        taken: ["20261117193045-cafe-notes.md"],
+        taken: ["cafe-notes.md"],
       }),
-    ).toBe("20261117193045-cafe-notes-2.md")
+    ).toBe("cafe-notes-2.md")
     expect(
       Markdown.noteFilename({
         title: "Café notes",
-        createdAt,
-        taken: [
-          "20261117193045-cafe-notes.md",
-          "20261117193045-cafe-notes-2.md",
-        ],
+        taken: ["cafe-notes.md", "cafe-notes-2.md"],
       }),
-    ).toBe("20261117193045-cafe-notes-3.md")
+    ).toBe("cafe-notes-3.md")
   })
 
-  test("accepts only direct-child note filenames", () => {
+  test("accepts descriptive and legacy timestamp-prefixed note filenames", () => {
+    expect(Markdown.isNoteFilename("agent-memory-is-bounded.md")).toBe(true)
     expect(
       Markdown.isNoteFilename("20261117193045-agent-memory-is-bounded.md"),
     ).toBe(true)
     expect(Markdown.isNoteFilename("20261117193045-Bad-Uppercase.md")).toBe(false)
     expect(Markdown.isNoteFilename("20261117193045-bad_underscore.md")).toBe(false)
-    expect(Markdown.isNoteFilename("missing-timestamp.md")).toBe(false)
-    expect(Markdown.isNoteFilename("../20261117193045-escape.md")).toBe(false)
-    expect(Markdown.isNoteFilename("20261117193045-note.txt")).toBe(false)
+    expect(Markdown.isNoteFilename("20260230193045-impossible-date.md")).toBe(false)
+    expect(Markdown.isNoteFilename("../escape.md")).toBe(false)
+    expect(Markdown.isNoteFilename("note.txt")).toBe(false)
+    expect(Markdown.noteIdFromFilename("agent-memory-is-bounded.md")).toBe(
+      "agent-memory-is-bounded",
+    )
     expect(
       Markdown.noteIdFromFilename("20261117193045-agent-memory-is-bounded.md"),
     ).toBe("20261117193045-agent-memory-is-bounded")
-    expect(Markdown.noteIdFromFilename("not-a-note.md")).toBeNull()
+    expect(Markdown.noteIdFromFilename("bad_name.md")).toBeNull()
+  })
+
+  test("extracts the title slug from both ID shapes", () => {
+    expect(Markdown.noteSlugFromId("agent-memory-is-bounded")).toBe(
+      "agent-memory-is-bounded",
+    )
+    expect(
+      Markdown.noteSlugFromId("20261117193045-agent-memory-is-bounded"),
+    ).toBe("agent-memory-is-bounded")
   })
 })
 
@@ -137,7 +141,8 @@ describe("UTC timestamp and note ID schemas", () => {
     expect(decodes(Markdown.Timestamp, "2026-11-17T19:30:45")).toBe(false)
   })
 
-  test("NoteId rejects an impossible timestamp prefix", () => {
+  test("NoteId accepts descriptive slugs and rejects an impossible timestamp prefix", () => {
+    expect(decodes(Markdown.NoteId, "agent-memory-is-bounded")).toBe(true)
     expect(
       decodes(Markdown.NoteId, "20261117193045-agent-memory-is-bounded"),
     ).toBe(true)
@@ -185,7 +190,7 @@ describe("Markdown contract schemas", () => {
 
   test("rejects invalid note metadata", () => {
     expect(decodes(Markdown.NoteMetadata, { ...metadata, schema: 2 })).toBe(false)
-    expect(decodes(Markdown.NoteMetadata, { ...metadata, id: "not-an-id" })).toBe(
+    expect(decodes(Markdown.NoteMetadata, { ...metadata, id: "Not-An-Id" })).toBe(
       false,
     )
     expect(decodes(Markdown.NoteMetadata, { ...metadata, type: "unknown" })).toBe(

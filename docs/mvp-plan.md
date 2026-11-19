@@ -12,6 +12,13 @@ surface name is `tags`. The former `topics` name remains only as a read alias
 for existing frontmatter and is rewritten as `tags` on the next save. This plan
 and its examples use the current CLI, MCP, JSON API, web route, and wiki names.
 
+Naming update (2026-11-19): new notes use `<kebab-slug>.md` filenames with a
+`-2`, `-3`, ... collision suffix; creation time stays in frontmatter. Legacy
+`YYYYMMDDHHmmss-<kebab-slug>.md` names remain valid and are not migrated.
+Sections below that describe timestamp-prefixed filenames are retained as
+historical design context. `README.md` and [`operator-guide.md`](operator-guide.md)
+describe the current filename contract.
+
 Related context:
 
 - Current implementation: `@slipmem/schemas`, `@slipmem/core`,

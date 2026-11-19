@@ -119,7 +119,7 @@ describe("slipmem note commands", () => {
       title: "Bounded recall",
       content: "Every recall operation has a hard limit.",
     })
-    expect(permanent.id).toMatch(/^\d{14}-bounded-recall$/)
+    expect(permanent.id).toBe("bounded-recall")
     expect(permanent.filename).toBe(`${permanent.id}.md`)
     expect(permanent.tags).toEqual(["agent-memory", "retrieval"])
     expect(permanent.citation).toBe(`.slipmem/${permanent.filename}`)
@@ -392,10 +392,8 @@ writeFileSync(path, text.replace(/createdAt: "[^"]+"/, 'createdAt: "2020-01-01T0
       ["edit", original.id, "--dir", root, "--json"],
       { env: { SLIPMEM_EDITOR: managed } },
     )
-    expect(managedResult.code).toBe(1)
-    expect(parseJson<ErrorEnvelope>(managedResult.stderr).error.code).toBe(
-      "timestamp-mismatch",
-    )
+    expect(managedResult.code).toBe(2)
+    expect(parseJson<ErrorEnvelope>(managedResult.stderr).error.kind).toBe("usage")
   }, 30000)
 
   test("refuses editor use when no editor is configured", async () => {

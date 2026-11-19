@@ -175,7 +175,7 @@ describe("Phase 0 note fixture corpus", () => {
     )
   })
 
-  test("same-second titles produce deterministic collision suffixes", () => {
+  test("legacy same-second fixtures remain valid and new names use collision suffixes", () => {
     const cafeNotes = notesManifest.valid.filter(
       (fixture) => fixture.title === "Café notes",
     )
@@ -190,10 +190,9 @@ describe("Phase 0 note fixture corpus", () => {
     expect(
       Markdown.noteFilename({
         title: "Café notes",
-        createdAt: Date.parse("2026-11-17T21:30:00Z"),
-        taken: ["20261117213000-cafe-notes.md"],
+        taken: ["cafe-notes.md"],
       }),
-    ).toBe("20261117213000-cafe-notes-2.md")
+    ).toBe("cafe-notes-2.md")
   })
 
   test("Unicode and long titles match the frozen slug algorithm", () => {
@@ -205,12 +204,9 @@ describe("Phase 0 note fixture corpus", () => {
     expect(Markdown.slugifyTitle(unicode.title)).toBe("cafe-notes")
     expect(Markdown.slugifyTitle(long.title)).toBe(long.id.slice(15))
     expect(long.id.slice(15).length).toBeLessThanOrEqual(Markdown.MAX_SLUG_LENGTH)
-    expect(
-      Markdown.noteFilename({
-        title: long.title,
-        createdAt: Date.parse(long.createdAt),
-      }),
-    ).toBe(`${long.id}.md`)
+    expect(Markdown.noteFilename({ title: long.title })).toBe(
+      `${long.id.slice(15)}.md`,
+    )
   })
 
   test("invalid notes fail only the named contract area", () => {

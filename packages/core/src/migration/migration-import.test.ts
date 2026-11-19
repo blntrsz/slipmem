@@ -184,9 +184,7 @@ describe("SQLite to Markdown importer", () => {
     expect(report.status).toBe("imported")
     expect(report.ok).toBe(true)
     expect(report.root.nonEmpty).toBe(true)
-    expect(report.root.entries).toContain(
-      "20261117193045-current-fleeting.md",
-    )
+    expect(report.root.entries).toContain("current-fleeting.md")
     expect(report.counts).toMatchObject({
       sourceRows: 3,
       plannedNotes: 3,
@@ -208,9 +206,9 @@ describe("SQLite to Markdown importer", () => {
       noteCountAfter: 3,
     })
     expect(noteFiles(target)).toEqual([
-      "20261117193045-current-fleeting.md",
-      "20261117201500-current-literature.md",
-      "20261117213000-current-permanent.md",
+      "current-fleeting.md",
+      "current-literature.md",
+      "current-permanent.md",
     ])
     expect(readFileSync(path).equals(before)).toBe(true)
 
@@ -219,7 +217,7 @@ describe("SQLite to Markdown importer", () => {
     expect(check.noteCount).toBe(3)
 
     const fleeting = Effect.runSync(
-      readNoteFile(target, "20261117193045-current-fleeting"),
+      readNoteFile(target, "current-fleeting"),
     )
     expect(fleeting).not.toBeNull()
     expect(fleeting?.metadata).toMatchObject({
@@ -234,7 +232,7 @@ describe("SQLite to Markdown importer", () => {
     expect(fleeting?.unknown["scope"]).toBe("global")
 
     const literature = Effect.runSync(
-      readNoteFile(target, "20261117201500-current-literature"),
+      readNoteFile(target, "current-literature"),
     )
     expect(literature?.metadata.reference).toBe("Book, chapter 2")
     expect(literature?.metadata.type).toBe("literature")
@@ -395,10 +393,8 @@ describe("SQLite to Markdown importer", () => {
       malformedRows: 1,
       quarantinedRows: 1,
     })
-    expect(noteFiles(target)).toEqual(["20261117193045-good-note.md"])
-    const imported = Effect.runSync(
-      readNoteFile(target, "20261117193045-good-note"),
-    )
+    expect(noteFiles(target)).toEqual(["good-note.md"])
+    const imported = Effect.runSync(readNoteFile(target, "good-note"))
     expect(imported?.body).toBe("This text is imported.")
     expect(imported?.metadata.legacyId).toBe("mixed-valid")
 
@@ -455,9 +451,7 @@ describe("SQLite to Markdown importer", () => {
     expect(error.code).toBe("invalid-rows")
     expect(error.report?.counts.writtenNotes).toBe(1)
 
-    const note = Effect.runSync(
-      readNoteFile(target, "20261117193045-exact-valid"),
-    )
+    const note = Effect.runSync(readNoteFile(target, "exact-valid"))
     expect(note?.unknown["legacyColumns"]).toEqual({
       extension_huge: { $bigint: "9223372036854775807" },
       extension_blob: { $base64: "AP8Q" },
@@ -504,7 +498,7 @@ describe("SQLite to Markdown importer", () => {
 
     expect(report.status).toBe("imported")
     const note = Effect.runSync(
-      readNoteFile(target, "20261117193045-unsafe-structured-provenance"),
+      readNoteFile(target, "unsafe-structured-provenance"),
     )
     expect(note?.metadata.provenance).toEqual({ source: "mcp" })
     expect(note?.unknown["legacyProvenance"]).toBeUndefined()
@@ -652,9 +646,7 @@ describe("SQLite to Markdown importer", () => {
     })
 
     expect(report.status).toBe("imported")
-    const note = Effect.runSync(
-      readNoteFile(target, "20261117193045-extended-note"),
-    )
+    const note = Effect.runSync(readNoteFile(target, "extended-note"))
     expect(note?.metadata.provenance).toEqual({
       source: "mcp",
       actor: "agent",
@@ -809,7 +801,7 @@ describe("SQLite to Markdown importer", () => {
     expect(noteFiles(target)).toEqual(firstFiles)
   })
 
-  test("resolves same-second filename collisions without changing the prefix", () => {
+  test("resolves filename collisions with a numeric suffix", () => {
     const { directory, path } = createDatabase(`
       CREATE TABLE permanent_note (
         id TEXT PRIMARY KEY NOT NULL,
@@ -834,12 +826,10 @@ describe("SQLite to Markdown importer", () => {
     expect(report.counts.writtenNotes).toBe(2)
     expect(report.plan.counts.collisions).toBe(1)
     expect(noteFiles(target)).toEqual([
-      "20261117193045-same-title-2.md",
-      "20261117193045-same-title.md",
+      "same-title-2.md",
+      "same-title.md",
     ])
-    const second = Effect.runSync(
-      readNoteFile(target, "20261117193045-same-title-2"),
-    )
+    const second = Effect.runSync(readNoteFile(target, "same-title-2"))
     expect(second?.metadata.legacyId).toBe("same-b")
     expect(second?.metadata.createdAt).toBe("2026-11-17T19:30:45Z")
   })
@@ -861,14 +851,14 @@ describe("SQLite to Markdown importer", () => {
     const existing =
       "---\n" +
       "schema: 1\n" +
-      "id: 20261117193045-collision-note\n" +
+      "id: collision-note\n" +
       "type: permanent\n" +
       "title: Existing note\n" +
       'createdAt: "2026-11-17T19:30:45Z"\n' +
       'updatedAt: "2026-11-17T19:30:45Z"\n' +
       "---\n\n" +
       "Existing body\n"
-    writeFileSync(join(target, "20261117193045-collision-note.md"), existing)
+    writeFileSync(join(target, "collision-note.md"), existing)
 
     const report = importMigration({
       databasePath: path,
@@ -881,12 +871,12 @@ describe("SQLite to Markdown importer", () => {
     expect(report.counts.writtenNotes).toBe(1)
     expect(report.plan.counts.collisions).toBe(1)
     expect(noteFiles(target)).toEqual([
-      "20261117193045-collision-note-2.md",
-      "20261117193045-collision-note.md",
+      "collision-note-2.md",
+      "collision-note.md",
     ])
-    expect(
-      readFileSync(join(target, "20261117193045-collision-note.md"), "utf8"),
-    ).toBe(existing)
+    expect(readFileSync(join(target, "collision-note.md"), "utf8")).toBe(
+      existing,
+    )
   })
 
   test("backs up an uncheckpointed WAL source consistently and leaves it unchanged", () => {
@@ -1196,7 +1186,7 @@ describe("SQLite to Markdown importer", () => {
     expect(readFileSync(path).equals(before)).toBe(true)
 
     const fleeting = Effect.runSync(
-      readNoteFile(target, "20261117193045-current-fleeting"),
+      readNoteFile(target, "current-fleeting"),
     )
     expect(fleeting?.body).toBe("A current-schema fleeting note.")
   })

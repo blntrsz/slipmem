@@ -86,7 +86,7 @@
       "expected": { "area": "filename", "code": "filename-pattern" }
     },
     {
-      "file": "invalid/missing-timestamp.md",
+      "file": "invalid/bad.name.md",
       "expected": { "area": "filename", "code": "filename-pattern" }
     },
     {

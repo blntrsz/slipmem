@@ -17,8 +17,14 @@ export const SCHEMA_VERSION = 1
 export const MAX_SLUG_LENGTH = 80
 export const MAX_TAG_LENGTH = 64
 
-export const NOTE_FILENAME_PATTERN = /^\d{14}-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
-export const NOTE_ID_PATTERN = /^\d{14}-[a-z0-9]+(?:-[a-z0-9]+)*$/
+// New notes are named from their title alone. The older timestamp-prefixed
+// shape is still accepted so existing repositories and links keep working
+// without a migration.
+export const NOTE_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+export const NOTE_FILENAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*\.md$/
+export const NOTE_ID_PATTERN = NOTE_SLUG_PATTERN
+export const LEGACY_TIMESTAMP_PREFIX_PATTERN = /^\d{14}-/
+export const LEGACY_NOTE_ID_PATTERN = /^\d{14}-[a-z0-9]+(?:-[a-z0-9]+)*$/
 export const TAG_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 export const UTC_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
 
@@ -150,42 +156,54 @@ export const isUtcTimestamp = (value: string): boolean =>
   UTC_TIMESTAMP_PATTERN.test(value) &&
   parseUtcPrefix(value.replace(/[-:TZ]/g, "")) !== null
 
-/** True when a note ID starts with a real UTC timestamp prefix. */
+/**
+ * True when a note ID uses the compatible legacy timestamp-prefixed shape and
+ * names a real UTC instant. Invalid timestamp prefixes are not treated as new
+ * descriptive slugs, so the old contract still rejects them.
+ */
 export const isNoteIdWithRealTimestamp = (id: string): boolean =>
-  NOTE_ID_PATTERN.test(id) && parseUtcPrefix(id.slice(0, 14)) !== null
+  LEGACY_NOTE_ID_PATTERN.test(id) && parseUtcPrefix(id.slice(0, 14)) !== null
+
+export const isNoteId = (id: string): boolean =>
+  NOTE_ID_PATTERN.test(id) &&
+  (!LEGACY_TIMESTAMP_PREFIX_PATTERN.test(id) ||
+    parseUtcPrefix(id.slice(0, 14)) !== null)
 
 export const isNoteFilename = (filename: string): boolean =>
-  NOTE_FILENAME_PATTERN.test(filename)
-
-export const isNoteId = (id: string): boolean => NOTE_ID_PATTERN.test(id)
+  NOTE_FILENAME_PATTERN.test(filename) &&
+  isNoteId(filename.slice(0, -".md".length))
 
 export const noteIdFromFilename = (filename: string): string | null =>
   isNoteFilename(filename) ? filename.slice(0, -".md".length) : null
 
+/**
+ * The title slug portion of a note ID. Legacy IDs carry a 14-digit timestamp
+ * prefix plus a hyphen; new IDs are the slug itself.
+ */
+export const noteSlugFromId = (id: string): string =>
+  LEGACY_TIMESTAMP_PREFIX_PATTERN.test(id) ? id.slice(15) : id
+
 export interface NoteFilenameInput {
   readonly title: string
-  /** Creation time in epoch milliseconds or a UTC `Date`. */
-  readonly createdAt: Date | number
   /** Existing filenames, including the target directory. */
   readonly taken?: Iterable<string>
 }
 
 /**
- * Builds a note filename and resolves same-second title collisions with a
- * numeric suffix. The 14-digit creation prefix never changes.
+ * Builds a descriptive note filename and resolves title collisions with a
+ * numeric suffix. The creation time lives in frontmatter, not in the filename.
  */
-export const noteFilename = ({ title, createdAt, taken }: NoteFilenameInput): string => {
-  const { filenamePrefix } = toUtcTimestamp(createdAt)
+export const noteFilename = ({ title, taken }: NoteFilenameInput): string => {
   const slug = slugifyTitle(title)
   const filenames = new Set(taken ?? [])
-  const first = `${filenamePrefix}-${slug}.md`
+  const first = `${slug}.md`
 
   if (!filenames.has(first)) {
     return first
   }
 
   for (let suffix = 2; ; suffix++) {
-    const candidate = `${filenamePrefix}-${slug}-${suffix}.md`
+    const candidate = `${slug}-${suffix}.md`
     if (!filenames.has(candidate)) {
       return candidate
     }
@@ -199,11 +217,13 @@ const NonBlankString = (message: string) => Schema.String.check(isNonBlank(messa
 
 export const NoteId = Schema.String.check(
   Schema.isPattern(NOTE_ID_PATTERN, {
-    message: "Note ID must be a 14-digit UTC timestamp plus a kebab-case slug.",
+    message: "Note ID must be a kebab-case slug.",
   }),
   Schema.makeFilter(
-    (value: string) => parseUtcPrefix(value.slice(0, 14)) !== null,
-    { message: "Note ID timestamp must be a real UTC date and time." },
+    (value: string) =>
+      !LEGACY_TIMESTAMP_PREFIX_PATTERN.test(value) ||
+      parseUtcPrefix(value.slice(0, 14)) !== null,
+    { message: "A legacy note ID timestamp prefix must be a real UTC date and time." },
   ),
 ).annotate({ identifier: "Markdown.NoteId" })
 

@@ -918,7 +918,7 @@ test("permanent creates are pending, write no note, and can only be applied by a
         id: pending.proposalId,
         operation: "create",
         source: "mcp",
-        noteId: expect.stringMatching(/^\d{14}-/),
+        noteId: "agent-memory-is-bounded",
       }),
     )
     expect(proposals[0]!.content).toContain("type: permanent")

@@ -23,11 +23,13 @@ authority; this directory records the concrete examples.
 ## Rules
 
 - Timestamps are fixed UTC values. Never replace them with `Date.now()`.
-- Valid filenames use `YYYYMMDDHHmmss-<kebab-slug>.md`; the manifest ID is the
-  filename stem.
+- These legacy valid filenames keep the
+  `YYYYMMDDHHmmss-<kebab-slug>.md` shape to prove old repositories still parse;
+  the manifest ID is the filename stem. New notes use `<kebab-slug>.md`.
 - Invalid fixtures each fail exactly one named area so a parser test can assert
   a specific error without guessing.
-- Collision fixtures keep the 14-digit prefix and add `-2` to the slug.
+- Legacy collision fixtures keep the 14-digit prefix and add `-2` to the slug;
+  new collision naming adds the suffix to the descriptive slug.
 - Migration SQL must stay executable by `bun:sqlite`. It is intentionally small
   and read-only; no fixture starts a service or touches a real database.
 - Updating a fixture means consciously updating the manifest and the assertions

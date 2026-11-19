@@ -25,7 +25,7 @@ const assertManagedMetadata = (
     if (edited.metadata.createdAt !== current.metadata.createdAt) {
       return yield* Effect.fail(
         usageError(
-          "createdAt is derived from the filename and cannot be edited.",
+          "createdAt is managed by slipmem and cannot be edited directly.",
           "edit",
         ),
       )

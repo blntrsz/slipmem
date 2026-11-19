@@ -7,11 +7,12 @@ stdio entry point and by the HTTP endpoint exported from `@slipmem/server`.
 
 ## Source of truth
 
-Notes are Markdown files in `.slipmem/`; there is no note database. Each note is
-one direct child named `YYYYMMDDHHmmss-<slug>.md`, and its filename stem is the
-note ID. The MCP server reads and writes those files through
-`MarkdownNoteRepository`. The disposable SQLite FTS index under the user cache
-only accelerates search and can be deleted at any time.
+Notes are Markdown files in `.slipmem/`; there is no note database. Each new
+note is one direct child named `<kebab-slug>.md`, and its filename stem is the
+note ID. Legacy `YYYYMMDDHHmmss-<slug>.md` names remain readable and writable.
+The MCP server reads and writes those files through `MarkdownNoteRepository`.
+The disposable SQLite FTS index under the user cache only accelerates search and
+can be deleted at any time.
 
 There is no database migration at MCP startup. The server resolves the note
 root in this order:

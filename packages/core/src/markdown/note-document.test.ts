@@ -228,7 +228,7 @@ describe("Markdown note parser", () => {
   })
 
   test("reports the path for a filename outside the contract", async () => {
-    const path = join(notesRoot, "valid/escape.md")
+    const path = join(notesRoot, "valid/escape_note.md")
     const error = await failure(parseMarkdownNote({ path, content: "" }))
     expect(error.code).toBe("filename-pattern")
     expect(error.area).toBe("filename")

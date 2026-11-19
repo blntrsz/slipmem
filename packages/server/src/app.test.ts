@@ -147,7 +147,7 @@ test("canonical ID routes create, read, update, list, and delete flat Markdown n
       content: "Capture it before it disappears.",
       tags: ["agent-memory"],
     })
-    expect(created.id).toMatch(/^\d{14}-[a-z0-9]+(?:-[a-z0-9]+)*$/)
+    expect(created.id).toBe("quick-thought")
 
     // The only file is a direct child of the note root; there is no type
     // directory or hidden content database.

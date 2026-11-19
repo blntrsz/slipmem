@@ -88,8 +88,8 @@ describe("Markdown note repository CRUD", () => {
         }),
       )
 
-      expect(created.id).toBe("20261117213000-cafe-notes")
-      expect(created.filename).toBe("20261117213000-cafe-notes.md")
+      expect(created.id).toBe("cafe-notes")
+      expect(created.filename).toBe("cafe-notes.md")
       expect(created.metadata.tags).toEqual(["agent-memory"])
       expect(existsSync(join(fixture.root, created.filename))).toBe(true)
       expect(readdirSync(fixture.root).some((name) => name.endsWith(".tmp"))).toBe(
@@ -118,7 +118,7 @@ describe("Markdown note repository CRUD", () => {
     }
   })
 
-  test("resolves same-second filename collisions without changing the prefix", async () => {
+  test("resolves filename collisions with a numeric suffix", async () => {
     const fixture = setup()
     try {
       const repo = await repository(fixture)
@@ -133,16 +133,16 @@ describe("Markdown note repository CRUD", () => {
       )
 
       expect([first.id, second.id, third.id]).toEqual([
-        "20261117213000-cafe-notes",
-        "20261117213000-cafe-notes-2",
-        "20261117213000-cafe-notes-3",
+        "cafe-notes",
+        "cafe-notes-2",
+        "cafe-notes-3",
       ])
       expect(
         readdirSync(fixture.root).filter((name) => name.endsWith(".md")).sort(),
       ).toEqual([
-        "20261117213000-cafe-notes-2.md",
-        "20261117213000-cafe-notes-3.md",
-        "20261117213000-cafe-notes.md",
+        "cafe-notes-2.md",
+        "cafe-notes-3.md",
+        "cafe-notes.md",
       ])
     } finally {
       cleanup(fixture)
@@ -693,7 +693,7 @@ describe("Markdown repository path, symlink, size, and lock guards", () => {
       const created = await Effect.runPromise(
         repo.create({ type: "fleeting", title: "Recovered", content: "body" }),
       )
-      expect(created.id).toBe("20261117213000-recovered")
+      expect(created.id).toBe("recovered")
       expect(existsSync(lockPath)).toBe(false)
     } finally {
       cleanup(fixture)
@@ -827,9 +827,9 @@ describe("checkNoteRoot", () => {
         }),
       )
 
-      expect(numeric.id).toBe("20261117213000-agent-memory-2")
-      expect(second.id).toBe("20261117213000-same-second-2")
-      expect(first.id).toBe("20261117213000-same-second")
+      expect(numeric.id).toBe("agent-memory-2")
+      expect(second.id).toBe("same-second-2")
+      expect(first.id).toBe("same-second")
 
       const report = await Effect.runPromise(checkNoteRoot(fixture.root))
       expect(report.ok).toBe(true)

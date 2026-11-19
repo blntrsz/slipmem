@@ -191,7 +191,8 @@ const STARTER_README = `# slipmem notes
 
 This directory is a slipmem Markdown note repository.
 
-- Every note is a direct child named \`YYYYMMDDHHmmss-<slug>.md\`.
+- Every new note is a direct child named \`<title-slug>.md\`; a numeric suffix
+  keeps names unique. Legacy \`YYYYMMDDHHmmss-<slug>.md\` names remain valid.
 - YAML frontmatter is the metadata; the body is the note.
 - \`.state/\` holds local implementation state and is not a note.
 - Files are plaintext. Do not store secrets.

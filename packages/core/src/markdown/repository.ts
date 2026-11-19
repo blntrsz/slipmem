@@ -583,11 +583,7 @@ export const makeMarkdownNoteRepository = (
             const taken = new Set(yield* listNoteFilenames(root))
 
             for (let attempt = 0; attempt < 100; attempt++) {
-              const filename = Markdown.noteFilename({
-                title,
-                createdAt: createdAtMs,
-                taken,
-              })
+              const filename = Markdown.noteFilename({ title, taken })
               const id = Markdown.noteIdFromFilename(filename)!
               const path = yield* notePath(root, id)
               const metadata: Markdown.NoteMetadata = {
@@ -628,7 +624,7 @@ export const makeMarkdownNoteRepository = (
               }
 
               // A filename collision is the only expected create failure. The
-              // next loop iteration keeps the timestamp and adds a suffix.
+              // next loop iteration adds a numeric suffix to the slug.
               if (existsSync(path)) {
                 taken.add(filename)
                 continue

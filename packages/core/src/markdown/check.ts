@@ -673,16 +673,15 @@ const checkNoteLinks = (
 }
 
 const collisionSuffix = /-\d+$/
-const ID_PREFIX_LENGTH = 15
 
 /**
  * The filename slug is the title slug at creation time, optionally followed by
- * a same-second collision suffix. Compare the exact slug first: stripping a
- * trailing number unconditionally would report false drift for a title such as
- * "Agent memory 2" whose own slug legitimately ends in `-2`.
+ * a collision suffix. Compare the exact slug first: stripping a trailing number
+ * unconditionally would report false drift for a title such as "Agent memory 2"
+ * whose own slug legitimately ends in `-2`.
  */
 const slugMatchesTitle = (title: string, id: string): boolean => {
-  const slug = id.slice(ID_PREFIX_LENGTH)
+  const slug = Markdown.noteSlugFromId(id)
   const expected = Markdown.slugifyTitle(title)
   if (slug === expected) {
     return true

@@ -110,14 +110,12 @@ describe("SQLite migration planning", () => {
 
     const fleeting = noteFor(plan, "current-fleeting")
     expect(fleeting.type).toBe("fleeting")
-    expect(fleeting.filename).toBe("20261117193045-current-fleeting.md")
-    expect(fleeting.targetPath).toBe(
-      join(targetRoot, "20261117193045-current-fleeting.md"),
-    )
+    expect(fleeting.filename).toBe("current-fleeting.md")
+    expect(fleeting.targetPath).toBe(join(targetRoot, "current-fleeting.md"))
     expect(fleeting.body).toBe("A current-schema fleeting note.")
     expect(fleeting.metadata).toMatchObject({
       schema: 1,
-      id: "20261117193045-current-fleeting",
+      id: "current-fleeting",
       type: "fleeting",
       title: "Current fleeting",
       createdAt: "2026-11-17T19:30:45Z",
@@ -134,14 +132,14 @@ describe("SQLite migration planning", () => {
 
     const literature = noteFor(plan, "current-literature")
     expect(literature.type).toBe("literature")
-    expect(literature.filename).toBe("20261117201500-current-literature.md")
+    expect(literature.filename).toBe("current-literature.md")
     expect(literature.body).toBe("A current-schema literature note.")
     expect(literature.metadata.reference).toBe("Book, chapter 2")
     expect(literature.metadata.createdAt).toBe("2026-11-17T20:15:00Z")
 
     const permanent = noteFor(plan, "current-permanent")
     expect(permanent.type).toBe("permanent")
-    expect(permanent.filename).toBe("20261117213000-current-permanent.md")
+    expect(permanent.filename).toBe("current-permanent.md")
     expect(permanent.body).toBe("A current-schema permanent note.")
     expect(permanent.metadata.createdAt).toBe("2026-11-17T21:30:00Z")
 
@@ -178,20 +176,20 @@ describe("SQLite migration planning", () => {
       [
         "legacy-fleeting",
         "fleeting",
-        "20261117193045-legacy-fleeting.md",
-        join(".slipmem", "20261117193045-legacy-fleeting.md"),
+        "legacy-fleeting.md",
+        join(".slipmem", "legacy-fleeting.md"),
       ],
       [
         "legacy-literature",
         "literature",
-        "20261117201500-legacy-literature.md",
-        join(".slipmem", "20261117201500-legacy-literature.md"),
+        "legacy-literature.md",
+        join(".slipmem", "legacy-literature.md"),
       ],
       [
         "legacy-permanent",
         "permanent",
-        "20261117213000-legacy-permanent.md",
-        join(".slipmem", "20261117213000-legacy-permanent.md"),
+        "legacy-permanent.md",
+        join(".slipmem", "legacy-permanent.md"),
       ],
     ])
     expect(noteFor(plan, "legacy-literature").metadata.reference).toBe(
@@ -282,7 +280,7 @@ describe("SQLite migration planning", () => {
     expect(() => readdirSync(join(directory, "target"))).toThrow()
   })
 
-  test("resolves whole-second collisions while keeping the timestamp prefix", () => {
+  test("resolves filename collisions with a numeric suffix", () => {
     const { path } = createDatabase(`
       CREATE TABLE permanent_note (
         id TEXT PRIMARY KEY NOT NULL,
@@ -300,11 +298,11 @@ describe("SQLite migration planning", () => {
     const plan = planMigration({ databasePath: path })
 
     expect(plan.notes.map((note) => note.filename)).toEqual([
-      "20261117193045-same-title.md",
-      "20261117193045-same-title-2.md",
-      "20261117193046-same-title.md",
+      "same-title.md",
+      "same-title-2.md",
+      "same-title-3.md",
     ])
-    expect(plan.counts.collisions).toBe(1)
+    expect(plan.counts.collisions).toBe(2)
     expect(plan.collisions).toEqual([
       {
         source: {
@@ -312,8 +310,17 @@ describe("SQLite migration planning", () => {
           rowIndex: 1,
           legacyId: "collision-b",
         },
-        baseFilename: "20261117193045-same-title.md",
-        filename: "20261117193045-same-title-2.md",
+        baseFilename: "same-title.md",
+        filename: "same-title-2.md",
+      },
+      {
+        source: {
+          table: "permanent_note",
+          rowIndex: 2,
+          legacyId: "collision-c",
+        },
+        baseFilename: "same-title.md",
+        filename: "same-title-3.md",
       },
     ])
     expect(noteFor(plan, "collision-b").metadata.createdAt).toBe(
@@ -322,14 +329,14 @@ describe("SQLite migration planning", () => {
 
     const withExisting = planMigration({
       databasePath: path,
-      takenFilenames: ["20261117193045-same-title.md"],
+      takenFilenames: ["same-title.md"],
     })
     expect(withExisting.notes.map((note) => note.filename)).toEqual([
-      "20261117193045-same-title-2.md",
-      "20261117193045-same-title-3.md",
-      "20261117193046-same-title.md",
+      "same-title-2.md",
+      "same-title-3.md",
+      "same-title-4.md",
     ])
-    expect(withExisting.counts.collisions).toBe(2)
+    expect(withExisting.counts.collisions).toBe(3)
   })
 
   test("preserves scope, provenance extras, and unknown source columns", () => {

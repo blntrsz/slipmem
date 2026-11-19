@@ -36,8 +36,10 @@ The portable artifact is one flat directory of Markdown files, normally
 `.slipmem/` at the repository root. The CLI, stdio MCP server, and index read
 the same files.
 
-- Every note is a direct child of `.slipmem/` named
-  `YYYYMMDDHHmmss-<kebab-slug>.md`.
+- Every new note is a direct child of `.slipmem/` named `<kebab-slug>.md`.
+  Collisions get `-2`, `-3`, and so on. Legacy
+  `YYYYMMDDHHmmss-<kebab-slug>.md` names are still accepted and are never
+  renamed automatically.
 - The filename stem is the note ID. It is the ID used by `show`, `edit`,
   search results, citations, and MCP.
 - There are no `fleeting/`, `permanent/`, `literature/`, or date
@@ -64,7 +66,7 @@ A note looks like this:
 ```markdown
 ---
 schema: 1
-id: 20261117223848-operator-smoke-note
+id: operator-smoke-note
 type: fleeting
 title: Operator smoke note
 createdAt: "2026-11-17T22:38:48Z"
@@ -80,8 +82,9 @@ First line of the note body.
 ```
 
 Required metadata is `schema`, `id`, `type`, `title`, `createdAt`, and
-`updatedAt`. `createdAt` must agree with the 14-digit filename prefix in UTC
-seconds. `updatedAt` must not precede `createdAt`. Literature notes also require
+`updatedAt`. `createdAt` and `updatedAt` are whole-second UTC timestamps;
+`updatedAt` must not precede `createdAt`. A legacy filename with a 14-digit
+timestamp prefix must still agree with `createdAt`. Literature notes also require
 a non-whitespace `reference`. Body limits are:
 
 | Type | Body limit |
@@ -426,9 +429,10 @@ For each conflicted note:
 1. Open the file in a text editor.
 2. Remove `<<<<<<<`, `=======`, and `>>>>>>>` markers and choose the correct
    content.
-3. Keep the frontmatter valid: `id` must equal the filename stem, `createdAt`
-   must match the filename prefix, `updatedAt` must not precede `createdAt`, and
-   the body must satisfy the type limit.
+3. Keep the frontmatter valid: `id` must equal the filename stem,
+   `updatedAt` must not precede `createdAt`, and the body must satisfy the type
+   limit. For a legacy timestamp-prefixed filename, `createdAt` must also match
+   that prefix.
 4. Save and run `bun run slipmem -- check`.
 5. Run `bun run slipmem -- check --rebuild-index` if the index drifted.
 6. Confirm with `bun run slipmem -- show <id>`.
