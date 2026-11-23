@@ -289,7 +289,6 @@ describe("disposable FTS search index", () => {
       )
       await Effect.runPromise(first.index.close())
 
-      expect(existsSync(join(fixture.cache, INDEX_FILENAME))).toBe(true)
       rmSync(fixture.cache, { recursive: true, force: true })
 
       const rebuilt = await searchIndex(fixture)

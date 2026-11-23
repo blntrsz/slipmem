@@ -594,13 +594,89 @@ describe("synthesized tag wiki", () => {
     }
   })
 
+  test("omits concrete ellipsis, parenthetical, and abbreviation clips", async () => {
+    const fixture = await createFixture()
+    try {
+      const cases: ReadonlyArray<readonly [string, string]> = [
+        ["Deleting is safe... only after verified backup.", "Deleting is safe."],
+        [
+          "Deleting is safe . . . only after verified backup.",
+          "Deleting is safe.",
+        ],
+        [
+          "Caching is not... dangerous for this workload.",
+          "dangerous for this workload.",
+        ],
+        [
+          "Caching is not . . . dangerous for this workload.",
+          "dangerous for this workload.",
+        ],
+        [
+          "Deleting is safe (when backup verified.) unless backup stale.",
+          "Deleting is safe (when backup verified.)",
+        ],
+        [
+          "Deleting is safe (backup verified?) only after checks.",
+          "Deleting is safe (backup verified?)",
+        ],
+        [
+          "Deleting is safe (backup verified!) only after checks.",
+          "Deleting is safe (backup verified!)",
+        ],
+        [
+          "Deleting is safe only after a backup by Acme Corp. is verified.",
+          "Deleting is safe only after a backup by Acme Corp.",
+        ],
+        [
+          "Deleting is safe only after signoff by Acme Co. is recorded.",
+          "Deleting is safe only after signoff by Acme Co.",
+        ],
+        [
+          "Deleting is safe only after review by Smith et al. is completed.",
+          "Deleting is safe only after review by Smith et al.",
+        ],
+      ]
+      const note = await createNote(fixture, {
+        title: "Punctuation clips",
+        content: cases.map(([body]) => body).join("\n\n"),
+        tags: ["punctuation-clips"],
+      })
+      const service = await wiki(fixture, {
+        synthesis: { kind: "model", modelId: "punctuation-clip-model" },
+        modelAdapters: [
+          {
+            modelId: "punctuation-clip-model",
+            synthesize: () =>
+              Effect.succeed({
+                sentences: cases.map(([, clip]) => ({
+                  text: clip,
+                  noteId: note.id,
+                  quote: clip,
+                })),
+              }),
+          },
+        ],
+      })
+
+      const page = await Effect.runPromise(
+        service.build({ tag: "punctuation-clips", mode: "synthesized" }),
+      )
+      expect(page.sections).toEqual([])
+      expect(page.sources).toEqual([])
+      expect(page.markdown).not.toContain("Deleting is safe")
+      expect(page.markdown).toContain(`${cases.length} omitted`)
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("accepts a full paragraph wrapped across Markdown lines", async () => {
     const fixture = await createFixture()
     try {
       const note = await createNote(fixture, {
         title: "Wrapped paragraph",
         content:
-          "Caching is not dangerous for\nthis workload. Deleting is safe only after a verified backup.",
+          "# Caching\n\nCaching is not dangerous for\nthis workload. Deleting is safe only after a verified backup.",
         tags: ["wrapped-citation"],
       })
       const fullParagraph =
@@ -624,7 +700,7 @@ describe("synthesized tag wiki", () => {
                     quote: "Deleting is safe",
                   },
                   {
-                    text: fullParagraph,
+                    text: `\u201c${fullParagraph}\u201d`,
                     noteId: note.id,
                     quote: fullParagraph,
                   },
@@ -638,7 +714,7 @@ describe("synthesized tag wiki", () => {
         service.build({ tag: "wrapped-citation", mode: "synthesized" }),
       )
       expect(page.sections).toHaveLength(1)
-      expect(page.markdown).toContain(fullParagraph)
+      expect(page.markdown).toContain(`\u201c${fullParagraph}\u201d`)
       expect(page.sections[0]!.citations.map((citation) => citation.excerpt)).toEqual([
         fullParagraph,
       ])

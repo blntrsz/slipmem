@@ -8,12 +8,6 @@ import {
   validateSynthesisOutput,
 } from "./synthesis.js"
 
-const note = (body: string): ParsedMarkdownNote =>
-  ({ id: "20261117213000-note", body }) as unknown as ParsedMarkdownNote
-
-const validate = (sentences: ReadonlyArray<unknown>, body: string) =>
-  Effect.runPromise(validateSynthesisOutput({ sentences }, [note(body)]))
-
 describe("extractive paragraph support equality", () => {
   test("accepts the complete exact source paragraph", () => {
     expect(
@@ -197,104 +191,30 @@ describe("complete source paragraph spans", () => {
   })
 })
 
-describe("synthesis citation validation", () => {
-  test("omits text plus quote clipped from a negated paragraph", async () => {
-    const result = await validate(
-      [
+describe("synthesis citation omission reasons", () => {
+  test("explains that a clipped fragment is not a complete source paragraph", async () => {
+    const result = await Effect.runPromise(
+      validateSynthesisOutput(
         {
-          text: "dangerous for this workload.",
-          noteId: "20261117213000-note",
-          quote: "dangerous for this workload.",
+          sentences: [
+            {
+              text: "dangerous for this workload.",
+              noteId: "20261117213000-note",
+              quote: "dangerous for this workload.",
+            },
+          ],
         },
-      ],
-      "Caching is not dangerous for this workload.",
-    )
-
-    expect(result.sentences).toEqual([])
-    expect(result.omitted).toBe(1)
-    expect(result.reasons.join("\n")).toContain("complete source paragraph")
-  })
-
-  test("omits text plus quote that cuts a qualifier", async () => {
-    const result = await validate(
-      [
-        {
-          text: "Deleting is safe.",
-          noteId: "20261117213000-note",
-          quote: "Deleting is safe",
-        },
-      ],
-      "Deleting is safe only after a verified backup.",
-    )
-
-    expect(result.sentences).toEqual([])
-    expect(result.omitted).toBe(1)
-    expect(result.reasons.join("\n")).toContain("complete source paragraph")
-  })
-
-  test("omits concrete ellipsis, parenthetical, and abbreviation clips", async () => {
-    const cases: ReadonlyArray<readonly [string, string]> = [
-      ["Deleting is safe... only after verified backup.", "Deleting is safe."],
-      [
-        "Deleting is safe . . . only after verified backup.",
-        "Deleting is safe.",
-      ],
-      [
-        "Deleting is safe (when backup verified.) unless backup stale.",
-        "Deleting is safe (when backup verified.)",
-      ],
-      [
-        "Deleting is safe only after a backup by Acme Corp. is verified.",
-        "Deleting is safe only after a backup by Acme Corp.",
-      ],
-      [
-        "Deleting is safe only after signoff by Acme Co. is recorded.",
-        "Deleting is safe only after signoff by Acme Co.",
-      ],
-      [
-        "Deleting is safe only after review by Smith et al. is completed.",
-        "Deleting is safe only after review by Smith et al.",
-      ],
-    ]
-
-    for (const [body, clip] of cases) {
-      const result = await validate(
         [
           {
-            text: clip,
-            noteId: "20261117213000-note",
-            quote: clip,
-          },
+            id: "20261117213000-note",
+            body: "Caching is not dangerous for this workload.",
+          } as unknown as ParsedMarkdownNote,
         ],
-        body,
-      )
-      expect(result.sentences).toEqual([])
-      expect(result.omitted).toBe(1)
-    }
-  })
-
-  test("accepts a complete paragraph and canonicalizes the excerpt", async () => {
-    const body =
-      "Caching is not dangerous for this workload.\nDeleting is safe only after a verified backup."
-    const result = await validate(
-      [
-        {
-          text: "\u201cCaching is not dangerous for this workload. Deleting is safe only after a verified backup.\u201d",
-          noteId: "20261117213000-note",
-          quote:
-            "Caching is not dangerous for this workload. Deleting is safe only after a verified backup.",
-        },
-      ],
-      `# Caching\n\n${body}`,
+      ),
     )
 
-    expect(result.omitted).toBe(0)
-    expect(result.sentences).toHaveLength(1)
-    expect(result.sentences[0]!.text).toBe(
-      "\u201cCaching is not dangerous for this workload. Deleting is safe only after a verified backup.\u201d",
-    )
-    expect(result.sentences[0]!.quote).toBe(
-      "Caching is not dangerous for this workload. Deleting is safe only after a verified backup.",
-    )
+    expect(result.sentences).toEqual([])
+    expect(result.omitted).toBe(1)
+    expect(result.reasons.join("\n")).toContain("complete source paragraph")
   })
 })

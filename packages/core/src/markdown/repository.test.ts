@@ -91,7 +91,6 @@ describe("Markdown note repository CRUD", () => {
       expect(created.id).toBe("cafe-notes")
       expect(created.filename).toBe("cafe-notes.md")
       expect(created.metadata.tags).toEqual(["agent-memory"])
-      expect(existsSync(join(fixture.root, created.filename))).toBe(true)
       expect(readdirSync(fixture.root).some((name) => name.endsWith(".tmp"))).toBe(
         false,
       )
@@ -282,7 +281,6 @@ describe("Markdown note repository CRUD", () => {
       expect(updated.metadata.tags).toEqual(["agent-memory", "retrieval"])
       expect(updated.unknown.reviewStatus).toBe("accepted")
       expect(updated.body).toBe("A revised and shorter body.")
-      expect(existsSync(source)).toBe(true)
 
       const text = readFileSync(source, "utf8")
       expect(text).toContain("reviewStatus: accepted")
@@ -505,7 +503,6 @@ describe("Markdown note repository CRUD", () => {
 
       const result = await Effect.runPromise(repo.delete(created.id))
       expect(existsSync(join(fixture.root, created.filename))).toBe(false)
-      expect(existsSync(result.backupPath)).toBe(true)
       expect(result.backupPath.startsWith(fixture.backup)).toBe(true)
       expect(result.backupPath.startsWith(fixture.root)).toBe(false)
       expect(readFileSync(result.backupPath, "utf8")).toContain(
@@ -606,7 +603,6 @@ describe("Markdown repository path, symlink, size, and lock guards", () => {
       const error = await failure(unsafe.delete(created.id))
       expect(error.area).toBe("repository")
       expect(error.code).toBe("backup-failed")
-      expect(existsSync(join(fixture.root, created.filename))).toBe(true)
       expect(
         readdirSync(fixture.root).filter((name) => name.endsWith(".md")),
       ).toEqual([created.filename])

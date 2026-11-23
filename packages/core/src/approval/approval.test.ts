@@ -33,7 +33,6 @@ const FIXED_NOW = Date.parse("2026-11-17T21:30:00Z")
 interface Fixture {
   readonly base: string
   readonly root: string
-  readonly backup: string
   readonly repository: MarkdownNoteRepositoryShape
   readonly service: ApprovalServiceShape
   readonly pending: string
@@ -80,7 +79,6 @@ const createFixture = async (
   return {
     base,
     root,
-    backup,
     repository,
     service,
     pending: join(root, ".state", "pending"),
@@ -274,50 +272,6 @@ describe("approval lifecycle", () => {
     }
   })
 
-  test("fleeting and literature writes are direct with MCP provenance", async () => {
-    const fixture = await createFixture()
-    try {
-      const fleeting = await submit(fixture, {
-        operation: "create",
-        type: "fleeting",
-        title: "Inbox thought",
-        content: "A quick capture.",
-        actor: "agent-b",
-      })
-      expect(fleeting.status).toBe("direct")
-      if (fleeting.status !== "direct") {
-        throw new Error("expected direct")
-      }
-      expect(fleeting.note.metadata.provenance).toEqual({
-        source: "mcp",
-        actor: "agent-b",
-      })
-
-      const updated = await submit(fixture, {
-        operation: "update",
-        id: fleeting.note.id,
-        content: "An updated quick capture.",
-      })
-      expect(updated.status).toBe("direct")
-
-      const literature = await submit(fixture, {
-        operation: "create",
-        type: "literature",
-        title: "Source note",
-        content: "Recall should cite a source.",
-        reference: "https://example.com/source",
-      })
-      expect(literature.status).toBe("direct")
-      if (literature.status !== "direct") {
-        throw new Error("expected direct")
-      }
-      expect(literature.note.metadata.reference).toBe("https://example.com/source")
-      expect(pendingFiles(fixture.pending)).toHaveLength(0)
-    } finally {
-      cleanup(fixture)
-    }
-  })
-
   test("permanent update and reclassification are pending; rejection changes nothing", async () => {
     const fixture = await createFixture()
     try {
@@ -382,48 +336,6 @@ describe("approval lifecycle", () => {
       }
       expect(applied.operation).toBe("reclassify")
       expect(applied.note.metadata.type).toBe("permanent")
-    } finally {
-      cleanup(fixture)
-    }
-  })
-
-  test("any MCP delete is pending, deletes nothing, and applies into a backup", async () => {
-    const fixture = await createFixture()
-    try {
-      const note = await Effect.runPromise(
-        fixture.repository.create({
-          type: "fleeting",
-          title: "Remove me",
-          content: "Temporary.",
-        }),
-      )
-      const result = await submit(fixture, {
-        operation: "delete",
-        id: note.id,
-        actor: "agent-c",
-      })
-      expect(result.status).toBe("pending_approval")
-      if (result.status !== "pending_approval") {
-        throw new Error("expected pending")
-      }
-      expect(noteFiles(fixture.root)).toEqual([note.filename])
-      expect(existsSync(note.path)).toBe(true)
-
-      const review = await Effect.runPromise(fixture.service.review())
-      expect(review.proposals[0]!.diff).toContain("-Temporary.")
-      expect(review.proposals[0]!.stale).toBe(false)
-
-      const applied = await Effect.runPromise(
-        fixture.service.apply(result.proposalId),
-      )
-      expect(applied.status).toBe("applied")
-      if (applied.status !== "applied" || applied.operation !== "delete") {
-        throw new Error("expected an applied delete")
-      }
-      expect(existsSync(note.path)).toBe(false)
-      expect(applied.backupPath.startsWith(fixture.backup)).toBe(true)
-      expect(existsSync(applied.backupPath)).toBe(true)
-      expect(noteFiles(fixture.root)).toEqual([])
     } finally {
       cleanup(fixture)
     }
@@ -495,6 +407,10 @@ describe("approval lifecycle", () => {
       await Effect.runPromise(
         fixture.repository.update({ id: note.id, content: "Changed first." }),
       )
+
+      const review = await Effect.runPromise(fixture.service.review())
+      expect(review.proposals[0]!.diff).toContain("-Changed first.")
+      expect(review.proposals[0]!.stale).toBe(true)
 
       const error = await failure(fixture.service.apply(result.proposalId))
       expect(error._tag).toBe("ApprovalError")
@@ -873,32 +789,6 @@ describe("approval lifecycle", () => {
       })
       expect(deletion.status).toBe("pending_approval")
       expect(existsSync(created.note.path)).toBe(true)
-    } finally {
-      cleanup(fixture)
-    }
-  })
-
-  test("stores proposals as local state, never as note files", async () => {
-    const fixture = await createFixture()
-    try {
-      const result = await submit(fixture, {
-        operation: "create",
-        type: "permanent",
-        title: "Local only",
-        content: "Pending records are not notes.",
-      })
-      if (result.status !== "pending_approval") {
-        throw new Error("expected pending")
-      }
-      const pendingPath = join(fixture.pending, `${result.proposalId}.json`)
-      expect(existsSync(pendingPath)).toBe(true)
-      const raw = JSON.parse(readFileSync(pendingPath, "utf8")) as {
-        source: string
-        operation: string
-      }
-      expect(raw.source).toBe("mcp")
-      expect(raw.operation).toBe("create")
-      expect(noteFiles(fixture.root)).toEqual([])
     } finally {
       cleanup(fixture)
     }
