@@ -18,6 +18,30 @@ export {
   mcpServerName,
   mcpServerVersion,
 } from "./mcp"
+export {
+  formatAutomaticMemoryNotice,
+  PRIMARY_CHAT_ENV_NAMES,
+  resolveAutomaticMemoryRuntime,
+  resolvePrimaryChatModel,
+  resolveRecallProvider,
+  type AutomaticMemoryRuntime,
+  type PrimaryChatModel,
+  type RecallProviderRuntime,
+} from "@slipmem/mcp"
+export {
+  formatGitIngressNotice,
+  GIT_INGRESS_ENV,
+  GIT_INGRESS_PATH,
+  makeGitIngressHandler,
+  makeGitIngressLayer,
+  resolveGitIngressConfig,
+  type GitIngressConfig,
+  type GitIngressEnabled,
+  type GitIngressOptions,
+  type GitIngressRunInput,
+  type GitIngressRunResult,
+  type GitIngressRunner,
+} from "./git-ingress"
 export { makeDatabaseLayer } from "./database"
 export {
   makeMigrationsLayer,

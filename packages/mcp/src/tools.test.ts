@@ -12,7 +12,7 @@ import {
 } from "./schemas"
 import { McpNoteRegistrations } from "./tools"
 import { McpApprovalService } from "./approval"
-import { makeMarkdownNoteRepository, type MarkdownNoteRepositoryShape } from "@slipmem/core"
+import { makeMarkdownNoteRepository, recallEvaluatorError, type MarkdownNoteRepositoryShape, type PromptRecallEvaluator } from "@slipmem/core"
 import { makeApprovalService } from "@slipmem/core/approval"
 import { expect, test } from "bun:test"
 import { Effect, Layer, Option } from "effect"
@@ -43,10 +43,27 @@ const makeClient = (
   cacheDir: string,
   now: () => number,
   env: Readonly<Record<string, string | undefined>> = {},
+  recall: {
+    readonly evaluator?: PromptRecallEvaluator
+    readonly concurrency?: number
+  } = {},
 ) =>
   McpTest.makeClient(
     McpNoteRegistrations.pipe(
-      Layer.provide(makeMarkdownServicesLayer({ root, cacheDir, now, env })),
+      Layer.provide(
+        makeMarkdownServicesLayer({
+          root,
+          cacheDir,
+          now,
+          env,
+          ...(recall.evaluator === undefined
+            ? {}
+            : { recallEvaluator: recall.evaluator }),
+          ...(recall.concurrency === undefined
+            ? {}
+            : { recallConcurrency: recall.concurrency }),
+        }),
+      ),
     ),
     { protocols: [McpProtocol.v2025_11_25] },
   )
@@ -57,11 +74,15 @@ const withClient = <A>(
   now: () => number,
   run: (client: McpTest.Client) => Effect.Effect<A, any>,
   env: Readonly<Record<string, string | undefined>> = {},
+  recall: {
+    readonly evaluator?: PromptRecallEvaluator
+    readonly concurrency?: number
+  } = {},
 ): Promise<A> =>
   Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
-        const client = yield* makeClient(root, cacheDir, now, env)
+        const client = yield* makeClient(root, cacheDir, now, env, recall)
         return yield* run(client)
       }),
     ) as Effect.Effect<A>,
@@ -128,10 +149,15 @@ test("exposes the bounded read surface", async () => {
       "search_notes",
       "list_tags",
       "build_tag_wiki",
+      "recall_prompt",
     ])
     expect(tools.tools.some((tool) => /approve|reject|apply/.test(tool.name))).toBe(
       false,
     )
+    const recall = tools.tools.find((tool) => tool.name === "recall_prompt")
+    expect(recall?.annotations?.openWorldHint).toBe(true)
+    expect(recall?.annotations?.readOnlyHint).toBe(true)
+    expect(recall?.annotations?.destructiveHint).toBe(false)
   } finally {
     await removeDisposableRoot(disposable)
   }
@@ -435,6 +461,165 @@ test("search rejects empty and whitespace-only queries at the tool boundary", as
         "at least one non-whitespace character",
       )
     }
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("recall_prompt evaluates permanent notes once and separates failures", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    const relevant = await createTestNote(
+      disposable.root,
+      {
+        type: "permanent",
+        title: "Deployment checklist",
+        content: "Deploy with the release script.",
+      },
+      clock.now,
+    )
+    clock.advance()
+    const irrelevant = await createTestNote(
+      disposable.root,
+      {
+        type: "permanent",
+        title: "Grocery list",
+        content: "Milk and bread.",
+      },
+      clock.now,
+    )
+    clock.advance()
+    const failing = await createTestNote(
+      disposable.root,
+      {
+        type: "permanent",
+        title: "Failing evaluation",
+        content: "Remember to deploy.",
+      },
+      clock.now,
+    )
+    clock.advance()
+    await createTestNote(
+      disposable.root,
+      {
+        type: "fleeting",
+        title: "Deploy thought",
+        content: "Deploy later.",
+      },
+      clock.now,
+    )
+
+    const calls: string[] = []
+    const evaluator: PromptRecallEvaluator = {
+      model: "test-jev",
+      evaluate: (input) => {
+        calls.push(input.note.id)
+        if (input.note.id === failing.id) {
+          return Effect.fail(
+            recallEvaluatorError({
+              code: "timeout",
+              message: "This note timed out.",
+            }),
+          )
+        }
+        return Effect.succeed(
+          input.note.id === relevant.id
+            ? { verdict: "relevant" as const, confidence: 0.9 }
+            : { verdict: "irrelevant" as const, confidence: 0.1 },
+        )
+      },
+    }
+
+    const result = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({
+          name: "recall_prompt",
+          arguments: { prompt: "  How do I deploy?  " },
+        }),
+      {},
+      { evaluator, concurrency: 2 },
+    )
+
+    expect(calls).toHaveLength(3)
+    expect(new Set(calls)).toEqual(
+      new Set([relevant.id, irrelevant.id, failing.id]),
+    )
+    const body = result.structuredContent as {
+      readonly prompt: string
+      readonly evaluator: string | null
+      readonly counts: Record<string, number>
+      readonly notes: ReadonlyArray<{
+        readonly id: string
+        readonly decision: string
+        readonly confidence?: number
+        readonly excerpt: string
+      }>
+      readonly failures: ReadonlyArray<{
+        readonly id: string
+        readonly code: string
+        readonly message: string
+      }>
+    }
+    expect(body.prompt).toBe("How do I deploy?")
+    expect(body.evaluator).toBe("test-jev")
+    expect(body.counts).toEqual({
+      eligible: 3,
+      relevant: 1,
+      irrelevant: 1,
+      failed: 1,
+      skipped: 0,
+    })
+    expect(body.notes).toEqual([
+      expect.objectContaining({
+        id: relevant.id,
+        decision: "relevant",
+        confidence: 0.9,
+      }),
+    ])
+    expect(body.notes[0]!.excerpt).toContain("Deploy with the release script")
+    expect(body.failures).toEqual([
+      expect.objectContaining({
+        id: failing.id,
+        code: "timeout",
+        message: "This note timed out.",
+      }),
+    ])
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("recall_prompt fails closed when no evaluator is configured", async () => {
+  const disposable = await makeDisposableRoot()
+  const clock = makeTestClock()
+
+  try {
+    await createTestNote(
+      disposable.root,
+      { type: "permanent", title: "Permanent", content: "Body." },
+      clock.now,
+    )
+
+    const result = await withClient(
+      disposable.root,
+      disposable.cacheDir,
+      clock.now,
+      (client) =>
+        client.callTool({
+          name: "recall_prompt",
+          arguments: { prompt: "Find something" },
+        }),
+    )
+
+    expect(result.isError).toBe(true)
+    expect((result.content[0] as { text: string }).text).toContain(
+      "evaluator-not-configured",
+    )
   } finally {
     await removeDisposableRoot(disposable)
   }

@@ -1,21 +1,22 @@
 import { Layer, Logger } from "effect"
 import { McpProtocol, McpServer } from "effect/ai"
 import { mcpInstructions, mcpServerName, mcpServerVersion, type McpServerOptions } from "./config"
-import { makeMarkdownServicesLayer } from "./layer"
-import { McpNoteRegistrations } from "./tools"
+import { makeMcpRegistrationsLayer } from "./layer"
 import { layer as stdioLayer } from "./stdio"
 
 /**
  * Builds the complete stdio MCP server for one Markdown note root.
  *
- * The same `McpNoteRegistrations` layer is transport-neutral: an HTTP endpoint
- * can provide the identical registrations with the same repository/index
+ * The same registrations layer is transport-neutral: an HTTP endpoint can
+ * provide the identical registrations with the same repository/index
  * services, so tool names, schemas, limits, and result shapes do not drift.
+ *
+ * When automatic memory is enabled, the registrations layer also starts the
+ * scoped write queue, cross-process note watcher, and run lease. Both transports
+ * therefore share the same event-driven lifecycle rather than a periodic timer.
  */
 export const makeServerLayer = (options: McpServerOptions) => {
-  const registrations = McpNoteRegistrations.pipe(
-    Layer.provide(makeMarkdownServicesLayer(options)),
-  )
+  const { registrations } = makeMcpRegistrationsLayer(options)
 
   return McpServer.layerStdio({
     name: mcpServerName,

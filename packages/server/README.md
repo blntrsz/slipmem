@@ -10,6 +10,13 @@ process as the pages.
 `extraRoutes: makeMcpHttp({ root })` to serve `/mcp` beside `/api`; the web entry
 does this with the same registrations as the stdio server.
 
+`makeMcpHttp` resolves the serving memory runtime when `automaticMemory` is
+omitted. A primary OpenAI-compatible chat model is required
+(`SLIPMEM_CHAT_PROVIDER`, `SLIPMEM_CHAT_MODEL`, `SLIPMEM_CHAT_BASE_URL`, optional
+`SLIPMEM_CHAT_API_KEY`); a missing or partial configuration fails startup. A
+programmatic host or test can inject an explicit `AutomaticMemoryRuntime`,
+including `{ enabled: false }`, instead.
+
 ## Usage
 
 ```ts
@@ -126,10 +133,30 @@ notes directly. The loopback bind and filesystem permissions are the boundary.
 Pending proposals never appear in the note list, search, tags, or the note
 root.
 
+## Git push ingress
+
+The web entry can mount `POST /api/hooks/git-push` for a trusted automation job.
+It is absent unless `SLIPMEM_GIT_INGRESS=on` and every required value resolves:
+a separate bearer token (`SLIPMEM_GIT_INGRESS_TOKEN` or
+`SLIPMEM_GIT_INGRESS_TOKEN_FILE`), a canonical trusted checkout
+(`SLIPMEM_GIT_INGRESS_REPO`), and an operator-configured capture argv
+(`SLIPMEM_GIT_INGRESS_COMMAND`). The caller sends only exact `before`/`after`
+commit SHAs and an optional bounded `commits` list; it can never supply a path,
+branch, tag, diff, note root, command, or environment value.
+
+`makeGitIngressHandler` and `makeGitIngressLayer` are exported for programmatic
+hosts. Production runs the configured capture command in the trusted checkout
+and leaves consolidation to the same serving memory runtime. The bearer token is
+never logged, echoed, or passed to the child. See
+[`docs/git-ingress.md`](../../docs/git-ingress.md) for status codes, deployment
+rules, and an example.
+
 ## Network posture
 
-The API and `/mcp` are unauthenticated. The web server binds to `127.0.0.1` by
-default. Setting `HOST` is explicit; a non-loopback bind prints a warning to
+The API, `/mcp`, and any Git ingress share the process but not the same trust
+model. `/api` and `/mcp` are unauthenticated. The ingress requires its own
+bearer token and must not cause the rest of the surface to be exposed. The web
+server binds to `127.0.0.1` by default. Setting `HOST` is explicit; a non-loopback bind prints a warning to
 stderr because anyone who can reach the address can read and write plaintext
 notes.
 

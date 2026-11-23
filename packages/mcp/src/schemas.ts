@@ -88,6 +88,15 @@ export const BuildTagWikiInput = Schema.Struct({
 }).annotate({ identifier: "Mcp.BuildTagWikiInput" })
 
 /**
+ * One prompt recall call evaluates eligible permanent notes within bounded
+ * per-note and shared deadlines. The prompt is user intent; note bodies are
+ * untrusted data passed to an injected evaluator.
+ */
+export const RecallPromptInput = Schema.Struct({
+  prompt: Schema.String,
+}).annotate({ identifier: "Mcp.RecallPromptInput" })
+
+/**
  * Recall responses use a summary instead of `Note.Info`. A full note can carry
  * up to 5000 body characters and its metadata is not length-bounded by the
  * storage contract, so echoing `Note.Info` multiplied both by a 50-result list.
@@ -171,6 +180,45 @@ export const TagSummaryResult = Schema.Struct({
 export const ListTagsResult = Schema.Struct({
   tags: Schema.Array(TagSummaryResult),
 }).annotate({ identifier: "Mcp.ListTagsResult" })
+
+/** A relevant note keeps the bounded summary shape plus its typed decision. */
+export const RecallPromptHit = Schema.Struct({
+  ...NoteSummary.fields,
+  decision: Schema.Literal("relevant"),
+  confidence: Schema.optional(Schema.Finite),
+}).annotate({ identifier: "Mcp.RecallPromptHit" })
+export type RecallPromptHit = Schema.Schema.Type<typeof RecallPromptHit>
+
+/** A failed evaluation is never folded into an irrelevant decision. */
+export const RecallPromptFailure = Schema.Struct({
+  id: Schema.String,
+  type: Markdown.NoteType,
+  title: Schema.String,
+  path: Schema.String,
+  code: Schema.String,
+  message: Schema.String,
+}).annotate({ identifier: "Mcp.RecallPromptFailure" })
+export type RecallPromptFailure = Schema.Schema.Type<
+  typeof RecallPromptFailure
+>
+
+export const RecallPromptCounts = Schema.Struct({
+  /** Current eligible permanents before the bounded call was applied. */
+  eligible: Schema.Int,
+  relevant: Schema.Int,
+  irrelevant: Schema.Int,
+  failed: Schema.Int,
+  /** Eligible notes not evaluated because the result cap or deadline hit. */
+  skipped: Schema.Int,
+}).annotate({ identifier: "Mcp.RecallPromptCounts" })
+
+export const RecallPromptResult = Schema.Struct({
+  prompt: Schema.String,
+  evaluator: Schema.NullOr(Schema.String),
+  counts: RecallPromptCounts,
+  notes: Schema.Array(RecallPromptHit),
+  failures: Schema.Array(RecallPromptFailure),
+}).annotate({ identifier: "Mcp.RecallPromptResult" })
 
 export const ToolFailure = Schema.Struct({
   code: Schema.String,

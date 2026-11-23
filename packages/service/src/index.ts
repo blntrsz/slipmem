@@ -1,0 +1,32 @@
+export {
+  DEFAULT_START_TIMEOUT_MS,
+  DEFAULT_STOP_TIMEOUT_MS,
+  inspectService,
+  startService,
+  stopService,
+  type InspectServiceOptions,
+  type ServiceStatus,
+  type StartServiceOptions,
+  type StartServiceResult,
+  type StopServiceOptions,
+  type StopServiceResult,
+} from "./lifecycle"
+export { ServiceError, type ServiceErrorCode } from "./errors"
+export {
+  LOOPBACK_HOST,
+  SERVICE_DIRECTORY,
+  SERVICE_LOG_FILENAME,
+  SERVICE_OWNER_FILENAME,
+  SERVICE_START_LOCK_FILENAME,
+  SERVICE_STATE_FILENAME,
+  SERVICE_STATE_VERSION,
+  serviceDirectory,
+  serviceLogPath,
+  serviceOwnerPath,
+  serviceStartLockPath,
+  serviceStatePath,
+  serviceUrl,
+  type ServiceHealth,
+  type ServiceOwner,
+  type ServiceState,
+} from "./state"

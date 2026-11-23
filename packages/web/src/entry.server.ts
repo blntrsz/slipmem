@@ -1,7 +1,17 @@
-import { Effect } from "effect"
+import { Effect, Layer } from "effect"
 import { Server } from "foldkit/experimental"
 
-import { makeApiHandler, makeMcpHttp, resolveNoteRootPath } from "@slipmem/server"
+import {
+  formatAutomaticMemoryNotice,
+  formatGitIngressNotice,
+  makeApiHandler,
+  makeGitIngressLayer,
+  makeMcpHttp,
+  resolveAutomaticMemoryRuntime,
+  resolveGitIngressConfig,
+  resolveNoteRootPath,
+  resolveRecallProvider,
+} from "@slipmem/server"
 
 import { init, view } from "./main"
 
@@ -16,6 +26,7 @@ type ApiHandler = ReturnType<typeof makeApiHandler>
 type ServerGlobals = typeof globalThis & {
   __slipmemApiHandler?: ApiHandler
   __slipmemShutdownRegistered?: boolean
+  __slipmemNoticesPrinted?: boolean
 }
 
 const serverGlobals = globalThis as ServerGlobals
@@ -35,10 +46,72 @@ if (previousApi !== undefined) {
 // the `slipmem init` guidance instead of silently creating a repository or
 // falling back to the retired SQLite note tables. The HTTP MCP endpoint shares
 // the same note root and registration layer as the stdio server.
-const noteRoot = resolveNoteRootPath()
-const api = makeApiHandler(noteRoot, {
-  extraRoutes: makeMcpHttp({ root: noteRoot }),
+//
+// Provider resolution happens before the handler is built so an invalid or
+// incomplete automatic-memory/chat configuration fails startup exactly like the
+// stdio entry point. A programmatic host can still inject a fixture by calling
+// `makeMcpHttp`/`makeAutomaticMemoryLayer` directly instead of using this
+// environment-driven entry.
+const resolveStartup = () => {
+  try {
+    return {
+      noteRoot: resolveNoteRootPath(),
+      automaticMemory: resolveAutomaticMemoryRuntime(process.env),
+      recallProvider: resolveRecallProvider(process.env),
+      gitIngress: resolveGitIngressConfig(process.env),
+    }
+  } catch (error) {
+    console.error(
+      `slipmem web startup: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    process.exit(1)
+  }
+}
+
+const { noteRoot, automaticMemory, recallProvider, gitIngress } = resolveStartup()
+
+if (serverGlobals.__slipmemNoticesPrinted !== true) {
+  serverGlobals.__slipmemNoticesPrinted = true
+  const automaticNotice = formatAutomaticMemoryNotice(automaticMemory)
+  if (automaticNotice !== undefined) {
+    console.error(automaticNotice)
+  }
+  if (recallProvider.notice !== undefined) {
+    console.error(recallProvider.notice)
+  }
+  const ingressNotice = formatGitIngressNotice(
+    gitIngress,
+    automaticMemory.enabled,
+  )
+  if (ingressNotice !== undefined) {
+    console.error(ingressNotice)
+  }
+}
+
+const mcpRoutes = makeMcpHttp({
+  root: noteRoot,
+  automaticMemory,
+  ...(recallProvider.evaluator === undefined
+    ? {}
+    : { recallEvaluator: recallProvider.evaluator }),
 })
+
+// The Git ingress is absent unless it resolved an explicit token, trusted
+// worktree, command, and capture model. It is a separate surface; it never
+// widens the unauthenticated JSON API or the MCP endpoint.
+const extraRoutes =
+  gitIngress.enabled === true
+    ? Layer.merge(
+        mcpRoutes,
+        makeGitIngressLayer({
+          config: gitIngress,
+          noteRoot,
+          maintenanceEnabled: automaticMemory.enabled,
+        }),
+      )
+    : mcpRoutes
+
+const api = makeApiHandler(noteRoot, { extraRoutes })
 serverGlobals.__slipmemApiHandler = api
 
 if (serverGlobals.__slipmemShutdownRegistered !== true) {

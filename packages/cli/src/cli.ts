@@ -1,5 +1,6 @@
 import { ApprovalError, MarkdownError, WikiError } from "@slipmem/core"
 import { Effect } from "effect"
+import { GitCaptureError } from "./capture/errors.js"
 import {
   GLOBAL_OPTIONS,
   parseArgs,
@@ -8,10 +9,13 @@ import {
 import type { CommandDefinition } from "./commands/command.js"
 import { approveCommand } from "./commands/approve.js"
 import { cacheCommand } from "./commands/cache.js"
+import { captureCommand } from "./commands/capture.js"
 import { checkCommand } from "./commands/check.js"
 import { deleteCommand } from "./commands/delete.js"
 import { editCommand } from "./commands/edit.js"
+import { graphCommand } from "./commands/graph.js"
 import { initCommand } from "./commands/init.js"
+import { initiativeCommand } from "./commands/initiative.js"
 import { legacyCommand } from "./commands/legacy.js"
 import { listCommand } from "./commands/list.js"
 import { migrateCommand } from "./commands/migrate.js"
@@ -19,12 +23,14 @@ import { newCommand } from "./commands/new.js"
 import { rejectCommand } from "./commands/reject.js"
 import { reviewCommand } from "./commands/review.js"
 import { searchCommand } from "./commands/search.js"
+import { serviceCommand } from "./commands/service.js"
 import { showCommand } from "./commands/show.js"
 import { tagsCommand } from "./commands/tags.js"
 import { wikiCommand } from "./commands/wiki.js"
 import { mcpCommand, webCommand } from "./commands/wrappers.js"
 import type { CliContext } from "./context.js"
 import { CliMigrationError, CliUnavailableError, CliUsageError, usageError } from "./errors.js"
+import { runInitiativeCli } from "./initiative-cli.js"
 import {
   PROGRAM,
   VERSION,
@@ -44,6 +50,9 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   tagsCommand,
   checkCommand,
   cacheCommand,
+  captureCommand,
+  graphCommand,
+  initiativeCommand,
   wikiCommand,
   migrateCommand,
   legacyCommand,
@@ -52,6 +61,7 @@ export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   rejectCommand,
   mcpCommand,
   webCommand,
+  serviceCommand,
 ]
 
 const commandByName = (
@@ -143,6 +153,18 @@ const reportFailure = (
       },
     }
   } else if (error instanceof ApprovalError) {
+    code = 1
+    envelope = {
+      ok: false,
+      error: {
+        kind: "validation",
+        code: error.code,
+        message: error.message,
+        ...(error.path === undefined ? {} : { path: error.path }),
+        ...(error.field === undefined ? {} : { field: error.field }),
+      },
+    }
+  } else if (error instanceof GitCaptureError) {
     code = 1
     envelope = {
       ok: false,
@@ -274,6 +296,13 @@ export const runCli = async (
         `Unknown command '${first}'. Run '${PROGRAM} help' for usage.`,
         first,
       )
+    }
+
+    // The initiative command owns a strict parser for its subcommands, which
+    // have option sets that differ per action. Route the raw argv through it
+    // instead of pre-parsing against one flat option table.
+    if (command.name === "initiative") {
+      return await runInitiativeCli(argv.slice(1), context)
     }
 
     const parsed = parseCommandArguments(command, argv.slice(1))

@@ -13,6 +13,7 @@
   "dependencies": {
     "@slipmem/core": "workspace:*",
     "@slipmem/schemas": "workspace:*",
+    "@slipmem/service": "workspace:*",
     "effect": "catalog:"
   }
 }

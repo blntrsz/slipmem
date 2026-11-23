@@ -6,6 +6,62 @@ import { cliEntry, makeTempBase, parseJson, runCliProcess } from "./test-support
 const cleanup: string[] = []
 const children: Array<ReturnType<typeof Bun.spawn>> = []
 
+/**
+ * These wrappers exercise transport startup, not model providers. Strip any
+ * ambient live chat, maintenance, recall, or capture configuration and use an
+ * unreachable loopback chat fixture, because public MCP/web serve entrypoints
+ * now require a primary model. The fixture performs no call when the disposable
+ * root has no pending raw notes.
+ */
+const providerEnvKeys = [
+  "SLIPMEM_AUTO_MEMORY",
+  "SLIPMEM_AUTO_MEMORY_INTERVAL_MS",
+  "SLIPMEM_AUTO_MEMORY_RUN_ON_START",
+  "SLIPMEM_CHAT_PROVIDER",
+  "SLIPMEM_CHAT_BASE_URL",
+  "SLIPMEM_CHAT_MODEL",
+  "SLIPMEM_CHAT_API_KEY",
+  "SLIPMEM_MAINTENANCE_PROVIDER",
+  "SLIPMEM_MAINTENANCE_BASE_URL",
+  "SLIPMEM_MAINTENANCE_MODEL",
+  "SLIPMEM_MAINTENANCE_API_KEY",
+  "SLIPMEM_RECALL_PROVIDER",
+  "SLIPMEM_RECALL_JEV_MODEL",
+  "SLIPMEM_CAPTURE_PROVIDER",
+  "SLIPMEM_CAPTURE_BASE_URL",
+  "SLIPMEM_CAPTURE_MODEL",
+  "SLIPMEM_CAPTURE_API_KEY",
+  "TYPESAFE_API_KEY",
+  "OPENAI_API_KEY",
+  "OPENAI_BASE_URL",
+  "OPENAI_MODEL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_BASE_URL",
+] as const
+
+const inertEnv = (
+  extra: Readonly<Record<string, string>>,
+): Record<string, string> => {
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) {
+      env[key] = value
+    }
+  }
+  for (const key of providerEnvKeys) {
+    delete env[key]
+  }
+  return {
+    ...env,
+    SLIPMEM_CHAT_PROVIDER: "openai-compatible",
+    SLIPMEM_CHAT_MODEL: "offline-wrapper-test-model",
+    SLIPMEM_CHAT_BASE_URL: "http://127.0.0.1:9/v1",
+    SLIPMEM_CHAT_API_KEY: "offline-wrapper-test-key",
+    SLIPMEM_RECALL_PROVIDER: "off",
+    ...extra,
+  }
+}
+
 afterEach(() => {
   while (children.length > 0) {
     const child = children.pop()!
@@ -31,6 +87,7 @@ const setup = async (): Promise<{
   const env = {
     XDG_CACHE_HOME: join(base, "cache"),
     XDG_STATE_HOME: join(base, "state"),
+    SLIPMEM_RECALL_PROVIDER: "off",
   }
   const init = await runCliProcess(["init", "--dir", root, "--json"], { env })
   expect(init.code).toBe(0)
@@ -79,7 +136,7 @@ describe("slipmem wrappers launched from outside the repository", () => {
       [process.execPath, cliEntry, "mcp", "--dir", setupValue.root],
       {
         cwd: setupValue.base,
-        env: { ...process.env, ...setupValue.env },
+        env: inertEnv(setupValue.env),
         stdin: "pipe",
         stdout: "pipe",
         stderr: "pipe",
@@ -129,13 +186,12 @@ describe("slipmem wrappers launched from outside the repository", () => {
     const port = freePort()
     const server = Bun.spawn([process.execPath, cliEntry, "web"], {
       cwd: setupValue.base,
-      env: {
-        ...process.env,
+      env: inertEnv({
         ...setupValue.env,
         SLIPMEM_DIR: setupValue.root,
         HOST: "127.0.0.1",
         PORT: String(port),
-      },
+      }),
       stdin: "ignore",
       stdout: "pipe",
       stderr: "pipe",

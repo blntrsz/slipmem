@@ -5,9 +5,13 @@
   "exports": {
     ".": "./src/index.ts",
     "./approval": "./src/approval/index.ts",
+    "./initiative": "./src/initiative/index.ts",
+    "./maintenance": "./src/maintenance/index.ts",
+    "./model": "./src/model/openai-compatible-transport.ts",
     "./wiki": "./src/wiki/index.ts"
   },
   "dependencies": {
+    "@effect/ai-typesafe": "4.1.4",
     "@effect/sql-sqlite-bun": "catalog:",
     "@slipmem/schemas": "workspace:*",
     "drizzle-orm": "catalog:",

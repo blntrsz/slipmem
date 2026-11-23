@@ -21,6 +21,23 @@ bun run web
 note root follows `SLIPMEM_DIR`, then the nearest ancestor `.slipmem/`. A
 missing root stops startup with the `slipmem init` guidance.
 
+The web process mounts `/mcp`, so it also requires the serving primary chat
+model. There is no default provider, URL, or model, and a missing or partial
+configuration stops startup:
+
+```sh
+SLIPMEM_CHAT_PROVIDER=openai-compatible \
+SLIPMEM_CHAT_MODEL=... \
+SLIPMEM_CHAT_BASE_URL=https://provider.example/v1 \
+SLIPMEM_CHAT_API_KEY=... \
+bun run web
+```
+
+Ordinary one-shot CLI commands stay local and do not need this configuration.
+The legacy `SLIPMEM_MAINTENANCE_*` names are accepted aliases. See the
+[operator guide](../../docs/operator-guide.md#memory-runtime-and-queue-driven-consolidation)
+for queue behavior and egress.
+
 The scripts use `bun --bun vite` because the Markdown index uses `bun:sqlite`.
 Vite's development SSR runner must execute under Bun.
 

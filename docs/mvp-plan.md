@@ -109,7 +109,10 @@ under a normal Git merge.
 - Hosted accounts, multi-tenant authorization, or a public SaaS deployment.
 - Real-time multi-user editing or CRDT conflict resolution.
 - Vector search, embeddings, or an external search service.
-- Automatic conversation ingestion or background memory writes.
+- Automatic conversation ingestion, or unreviewed background memory writes.
+  Serving modes require an explicitly configured chat model and use the
+  generated-only, queue-driven maintenance path documented in the operator guide
+  and MCP README. Ordinary one-shot CLI commands never consolidate.
 - A persisted wiki. Tag pages are generated on demand and never stored as a
   second source of truth.
 - A graph database. Links and tags are metadata, not a separate graph store.

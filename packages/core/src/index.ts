@@ -202,3 +202,12 @@ export {
 // of `MarkdownNoteRepository` they need and do not change SQLite behavior.
 export * from "./approval/index"
 export * from "./wiki/index"
+
+// Opt-in permanent-memory maintenance. Callers inject the model boundary and
+// invoke `run`; nothing here weakens the MCP approval policy.
+export * from "./maintenance/index"
+export * from "./recall/index"
+
+// Initiative bookkeeping is durable project state, not notes. It consumes
+// source files as advisory evidence and never enters the note/recall store.
+export * from "./initiative/index"

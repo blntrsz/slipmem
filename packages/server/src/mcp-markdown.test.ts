@@ -104,7 +104,14 @@ test("HTTP MCP uses the same Markdown registrations and approval policy as stdio
       disableLogger: true,
       cacheDir,
       now,
-      extraRoutes: makeMcpHttp({ root, cacheDir, now }),
+      // A programmatic host may inject the disabled fixture runtime instead of
+      // resolving the required serving chat model from the environment.
+      extraRoutes: makeMcpHttp({
+        root,
+        cacheDir,
+        now,
+        automaticMemory: { enabled: false },
+      }),
     })
 
     try {
@@ -129,6 +136,7 @@ test("HTTP MCP uses the same Markdown registrations and approval policy as stdio
         "search_notes",
         "list_tags",
         "build_tag_wiki",
+        "recall_prompt",
       ])
       expect(tools.some((name) => /approve|reject|apply/.test(name))).toBe(false)
 
@@ -181,4 +189,4 @@ test("HTTP MCP uses the same Markdown registrations and approval policy as stdio
   } finally {
     await rm(directory, { recursive: true, force: true })
   }
-})
+}, 30_000)

@@ -2,7 +2,7 @@
 
 Status: **living operator document for the Markdown-first cutover.**
 
-Date: 2026-11-17
+Date: 2026-11-22
 
 Authority: [`docs/mvp-plan.md`](./mvp-plan.md). This guide describes how to run
 and recover a local slipmem repository. It records only behavior that exists in
@@ -19,11 +19,18 @@ and are not written as if they work.
 | CLI migration | **available** | `migrate sqlite [--db <path>] [--dry-run] [--merge]`, defaulting to `SLIPMEM_DB_PATH` then the XDG data database |
 | CLI legacy view | **available, read-only** | `legacy list` / `legacy show` read the retired SQLite database for one release; never imports or writes |
 | CLI approvals | **available** | `review`, `approve`, `reject` over the shared approval service |
-| stdio MCP | **available** | bounded read tools plus policy-enforced write tools over `.slipmem/` |
+| CLI Git capture | **available** | `capture git --before <sha> --after <sha>` verifies a main-push delta, writes idempotent fleeting sources and a checkpoint |
+| CLI graph | **available, read-only** | `graph` projects typed maintenance relations plus disposable Markdown links with version status |
+| CLI initiatives | **available** | `initiative` creates durable records outside the note store, verifies pinned evidence, and promotes one supported assertion at a time |
+| stdio MCP | **available** | bounded read tools plus policy-enforced write tools over `.slipmem/`; requires an explicit primary chat model |
+| MCP prompt recall | **available** | `recall_prompt` uses Jev when `SLIPMEM_RECALL_PROVIDER=jev`, otherwise the required primary chat model; no fallback on provider errors |
+| MCP memory runtime | **available, required model** | queue-driven consolidation in stdio/HTTP serve modes; a missing or partial chat model stops startup, while one-shot CLI commands stay local |
+| Git push ingress | **available, opt-in privileged** | `POST /api/hooks/git-push` accepts only SHAs behind a separate bearer token; absent unless fully configured |
 | MCP approvals | **proposal side available** | permanent writes and all deletes create pending proposals; no MCP tool can approve them |
 | Human review / approve / reject | **available** | CLI `review`/`approve`/`reject` and local web/API `/api/pending` |
-| Browser UI | **available locally** | list, detail, new, edit, search, tags, wiki, review, and health routes load from the local server |
-| HTTP MCP endpoint | **mounted by the web server** | `/mcp` shares the stdio registrations when the web build is served; stdio remains the simplest local setup |
+| Browser UI | **available locally** | list, detail, new, edit, search, tags, wiki, review, and health routes load from the local server; the web process requires the serving chat model |
+| HTTP MCP endpoint | **mounted by the web server** | `/mcp` shares the stdio registrations and required chat model; stdio remains the simplest local setup |
+| Background service | **available, explicit start** | `service start`, `service status`, and `service stop` run one loopback HTTP/API/MCP service per canonical root; it has no idle shutdown and is never started automatically |
 | `slipmem mcp` / `slipmem web` wrappers | **available** | they resolve the note root in the caller's context and start the same MCP stdio or Vite development entry point |
 | Clear-cache CLI | **available** | `cache clear` empties only the derived index through the core index API; `check --rebuild-index` is the full rebuild path |
 
@@ -45,10 +52,15 @@ the same files.
 - There are no `fleeting/`, `permanent/`, `literature/`, or date
   subdirectories. Type is frontmatter metadata.
 - `.slipmem/.state/` is local implementation state (locks, migration runs,
-  pending proposals). The generated `.slipmem/.gitignore` contains exactly
-  `.state/`, so Git ignores that directory but still tracks the notes, README,
-  and `.gitignore` itself. `.state/` is not a note and is not part of backup or
+  pending proposals, consolidation revision receipts and leases, Git-capture
+  checkpoints, and initiative-projection receipts). The generated
+  `.slipmem/.gitignore` contains exactly `.state/`,
+  so Git ignores that directory but still tracks the notes, README, and
+  `.gitignore` itself. `.state/` is not a note and is not part of backup or
   sync.
+- `.slipmem/initiatives/` holds durable initiative records. It is a nested
+  directory, not a flat note child; the note scanner and every recall surface
+  ignore it.
 - The search index lives outside the note root. The default is
   `$XDG_CACHE_HOME/slipmem/index/<root-key>/index.sqlite`, falling back to
   `~/.cache/slipmem/index/<root-key>/index.sqlite`.
@@ -773,6 +785,249 @@ visible in the note file. Unknown values fail closed to `approval` with a
 warning. Use this only for an isolated, trusted automation account with a
 disposable note root. It is unsafe for shared, imported, or untrusted content.
 
+### Prompt recall: optional Jev, required model
+
+`recall_prompt` evaluates every eligible permanent note independently against
+one prompt and returns relevant bounded summaries plus separate per-note
+failures. It has no keyword fallback.
+
+Jev/TypeSafe is an optional decision model, not a requirement:
+
+```sh
+SLIPMEM_RECALL_PROVIDER=jev
+TYPESAFE_API_KEY=...
+# optional; the pinned default is jev-1.13.0
+SLIPMEM_RECALL_JEV_MODEL=jev-1.13.0
+```
+
+`TYPESAFE_API_KEY` alone does nothing; the provider selector is the opt-in.
+When `SLIPMEM_RECALL_PROVIDER` is unset or `off`, the primary chat model
+configured for serving makes the same structured relevance decision for each
+note. An embedding host that deliberately runs without a serving model keeps
+`recall_prompt` disabled with `evaluator-not-configured`. A configured
+provider's error is a per-note failure, never a silent switch to another
+provider.
+
+Both the stdio server and `/mcp` read the same environment, so one configuration
+serves both. A call sends each note's ID, title, body, tags, and `updatedAt` to
+exactly one configured provider for one typed relevance decision; no tools are
+offered and no background recall runs. Provider failures appear in `failures`
+and are never reported as irrelevant.
+
+### Memory runtime and queue-driven consolidation
+
+Serving requires an explicit tool-less OpenAI-compatible chat model. It runs
+inside a long-lived MCP serve mode: the stdio server (`slipmem mcp` or
+`packages/mcp/src/main.ts`), the HTTP `/mcp` endpoint, the web server that
+mounts it, and the background `slipmem service` process. Ordinary one-shot CLI
+commands neither start it nor resolve a model.
+A missing or partial model configuration stops serving startup with an
+actionable error; there is no production switch that restores a model-free serve
+default.
+
+There is no default provider, URL, model, or egress:
+
+```sh
+SLIPMEM_CHAT_PROVIDER=openai-compatible
+SLIPMEM_CHAT_MODEL=...                    # required; no default
+SLIPMEM_CHAT_BASE_URL=https://provider.example/v1
+SLIPMEM_CHAT_API_KEY=...                  # optional bearer token
+```
+
+The legacy `SLIPMEM_MAINTENANCE_PROVIDER`, `SLIPMEM_MAINTENANCE_MODEL`,
+`SLIPMEM_MAINTENANCE_BASE_URL`, and `SLIPMEM_MAINTENANCE_API_KEY` names remain
+accepted, but new configuration should use `SLIPMEM_CHAT_*`. `SLIPMEM_AUTO_MEMORY`
+and its interval/run-on-start variables are no longer read; they cannot disable
+a serving runtime. A partial chat configuration stops startup with an actionable
+error. The base URL must be HTTPS, or HTTP only on a loopback host;
+`/chat/completions` is appended unless already present. The transport does not stream, does not send tools, and never
+logs the prompt, response body, authorization value, or URL.
+
+Consolidation is event-driven, not periodic. One startup recovery pass runs when
+the serve mode starts. After that, a successful fleeting or literature write
+wakes the worker through a scoped Effect queue; there is no 15-minute scan and no
+normal timer. MCP writes in the serving process signal directly; writes from the
+CLI or another process are observed through a scoped note-root watcher as a wake
+hint. A durable receipt file at
+`.slipmem/.state/automatic-memory-revisions.json` records the source revisions
+actually examined by successful bounded batches, so a restart or a touch-only
+filesystem event does not re-send unchanged notes. One wake drains bounded
+batches until every current raw revision is examined or a batch makes no
+progress, so an inbox larger than the per-pass source limit is not lost. A run
+lease at `.slipmem/.state/automatic-memory.lease` serializes consolidation
+across processes without holding the repository mutation lock across a provider
+call.
+
+The startup notice states that the runtime is queue-driven, whether egress is
+local or remote, and the direct-write exception. A watcher failure is reported
+and does not stop in-process wakes; startup recovery covers missed external
+writes. A failed pass is written to stderr and the next wake is attempted.
+
+Each pass selects bounded fleeting or literature source notes and existing
+maintenance-owned permanent candidates. Defaults are 12 sources and 12
+candidates, each context capped at 16,000 characters; one pass is bounded to 8
+operations and 32,000 output characters. Every source and candidate ID is
+validated before writing. Consolidation also records typed, evidence-backed
+relations in generated note metadata; `slipmem graph` projects them read-only.
+
+**Egress:** with a non-loopback base URL, that bounded note content leaves this
+machine on every pass and is handled under the provider's retention policy. With
+a loopback URL, it goes only to that local endpoint. Ordinary one-shot CLI
+commands perform no maintenance egress, and a missing or partial chat
+configuration fails startup instead of silently disabling consolidation. There
+is no default provider URL, model, or key.
+
+**Writes and approval:** maintenance is not an MCP tool. It creates or updates
+permanent notes directly with `provenance.source: maintenance`, never deletes or
+reclassifies a note, and does not create pending proposals. Starting a serve
+mode is the operator's explicit decision to allow that write path; it is not governed by
+`SLIPMEM_MCP_WRITE_POLICY`. Every MCP tool write keeps the existing approval
+policy, and no MCP tool can approve, reject, enable, disable, or trigger
+maintenance.
+
+Runs are sequential and scoped to the server instance, so passes never overlap
+in one process; the run lease extends that serialization to other consolidators.
+Shutdown interrupts the fiber.
+
+### Git main-push capture
+
+`slipmem capture git --before <sha> --after <sha>` is the explicit CI or
+operator adapter for the main-push path. It reads only Git objects, verifies
+that both inputs are exact commits present in the checkout, that `HEAD` equals
+`--after`, and that `after` descends from `before`. It refuses force pushes and
+reversed ranges instead of inventing a delta, and it never checks out, fetches,
+resets, or writes to the source checkout.
+
+Capture inherits the primary chat model configuration, so
+`SLIPMEM_CHAT_PROVIDER`, `SLIPMEM_CHAT_MODEL`, `SLIPMEM_CHAT_BASE_URL`, and
+`SLIPMEM_CHAT_API_KEY` are enough. Per-field `SLIPMEM_CAPTURE_PROVIDER`, `SLIPMEM_CAPTURE_MODEL`,
+`SLIPMEM_CAPTURE_BASE_URL`, and `SLIPMEM_CAPTURE_API_KEY` values optionally
+override it. There is no default model for capture either.
+
+```sh
+bun run slipmem -- capture git \
+  --before "$BEFORE" --after "$AFTER" --repo "$CHECKOUT" --dir "$NOTES/.slipmem"
+```
+
+Capture uses the exact before/after diff, not the webhook's commit list. It
+bounds files, hunks, and patch characters; an omitted file is reported rather
+than silently shortened. The tool-less model proposes zero or more fleeting
+sources; every proposed quote and line range is validated against the diff
+before a note is written. A push with only formatting or binary churn can
+produce no notes. Notes carry Git provenance and a deterministic capture key, so
+redelivering the same range reuses existing sources instead of duplicating them.
+A checkpoint under `.slipmem/.state/git-capture/` records the captured range,
+and the note root itself is excluded from the captured delta.
+
+Capture writes fleeting source notes directly through the CLI repository with
+provenance `source: cli` and actor `slipmem-git-capture`; it does not create
+approval proposals. Consolidation is left to the configured memory runtime
+unless `--consolidate` is supplied; that flag is for an offline/CI run that owns
+the note root and does not race a serving process. It participates in the same
+`.slipmem/.state/automatic-memory.lease`, so it is rejected while a live runtime
+or CLI consolidation owns the root. Capture is a local adapter: it does not
+deploy a workflow, subscribe to Git, or update authoritative notes by itself.
+Point `--dir` at the authoritative note root, or configure the authenticated
+ingress below. The capture contract is in
+[`docs/git-capture.md`](git-capture.md); the authenticated handoff is in
+[`docs/git-ingress.md`](git-ingress.md). API keys belong in the environment or
+CI secrets, never in argv.
+
+### Authenticated Git push ingress (opt-in)
+
+A long-lived web server can expose a narrow ingress at
+`POST /api/hooks/git-push` for a trusted automation job. It is absent unless
+every value resolves, and it is not a GitHub webhook receiver: do not forward a
+raw push payload.
+
+```sh
+SLIPMEM_GIT_INGRESS=on
+SLIPMEM_GIT_INGRESS_TOKEN=...            # at least 32 random characters
+# or: SLIPMEM_GIT_INGRESS_TOKEN_FILE=/run/secrets/slipmem-git-ingress
+SLIPMEM_GIT_INGRESS_REPO=/srv/slipmem-checkout
+SLIPMEM_GIT_INGRESS_COMMAND='["/usr/local/bin/bun","/srv/slipmem/packages/cli/src/main.ts","capture","git","--before","{before}","--after","{after}","--repo","{repository}","--json"]'
+```
+
+The caller sends only exact `before` and `after` commit SHAs and an optional
+bounded `commits` list. The ingress rejects paths, branches, tags, diffs, note
+roots, commands, and environment values from the request. It validates a
+separate bearer token, runs the operator-configured capture argv in the trusted
+checkout, and returns after the capture command persists notes. The serving
+process watcher then wakes consolidation; the durable note files, not the HTTP
+response, are the handoff. A restart before the write means the caller should
+retry the same SHA-only event; a restart after the write keeps the sources.
+
+The token is never logged, echoed, or passed to the capture child. `/api` and
+`/mcp` remain unauthenticated and must not be exposed alongside the ingress;
+terminate TLS at a reverse proxy and route only the ingress path. See
+[`docs/git-ingress.md`](git-ingress.md) for status codes, checkout rules, and a
+self-hosted runner example. Without a self-hosted runner or trusted poller,
+use the CLI capture mode with the authoritative note root mounted.
+
+### Initiative workspaces
+
+An initiative is durable planning state that stays outside the default note
+store. Records live under `.slipmem/initiatives/`, a nested directory that the
+note scanner, search index, recall, and approval queue never treat as notes.
+Only a promoted projection is written as a permanent note. There is no Spec Kit
+dependency, no automatic spec-to-code merge gate, and no automatic verification
+or promotion.
+
+```sh
+bun run slipmem -- initiative create --title "..." --scope "..." --intended-behavior "..."
+bun run slipmem -- initiative list
+bun run slipmem -- initiative scope <initiative-id>
+bun run slipmem -- initiative verify <initiative-id>
+bun run slipmem -- initiative promote <initiative-id> <assertion-id>
+bun run slipmem -- initiative project <initiative-id> <assertion-id>
+bun run slipmem -- initiative reconcile [<initiative-id>]
+```
+
+A record holds a stable `initiative-...` ID, a scope and intended behavior,
+milestones, assertions, and promotion snapshots. Each assertion can declare
+supporting or contradicting evidence pins: a code or test path, a one-based
+inclusive line range, the SHA-256 of the whole file, and the SHA-256 of the
+selected lines. `initiative pin <path> --kind code|test --lines <start-end>`
+computes a pin from the current file.
+
+`initiative verify` re-reads every pin against the observed snapshot on each
+run. Assertions are reported separately as **supported**, **contradicted**, or
+**not evidenced**; a moved line, changed file, missing required evidence kind, or
+unreachable source makes the assertion not evidenced. The report is advisory:
+it does not infer support, run a test suite, edit code, or accept an unchecked
+claim merely because a caller supplied it.
+
+`initiative promote` accepts one assertion at a time and only when a fresh
+verification says it is clearly supported. It also requires the evidence
+snapshot's observed commit to be reachable from the configured `main` ref, so a
+branch-only or dirty working-tree claim cannot be presented as landed. Use
+`--main-ref`, `--observed-ref`, and `--working-tree` to disclose a different
+snapshot. The unversioned opt-out (`--working-tree` or `--allow-unversioned`)
+is explicit and recorded in the report; it is not the default, and it skips the
+permanent-note projection. Promotions are snapshots, not permanent truth: later
+verification can mark them stale.
+
+A landed promotion projects the supported assertion into one permanent note
+inside the normal note store, where it participates in recall like any other
+permanent. `initiative project` performs that projection explicitly for an
+already-promoted assertion; `initiative reconcile` repairs missing projections
+idempotently. Existing projection notes are reused, never overwritten, and an
+unversioned promotion skips the note write. Verification and projection are
+explicit operator actions; neither runs a PR check, infers support, or promotes
+automatically. All initiative record text is untrusted data, never instructions
+or approval.
+
+### Read-only note graph
+
+`slipmem graph` projects the typed maintenance relations stored in note metadata
+(`derived_from`, `supersedes`, `contradicts`, `implements`) together with the
+disposable Markdown link graph. It never writes, repairs, or promotes an edge.
+Use a note ID for a focused outgoing/incoming view, or filter the whole graph
+with `--from`, `--to`, `--kind`, and `--status current|stale|missing`. `stale`
+or `missing` means the recorded target version no longer matches the current
+note. The graph is rebuildable from note artifacts and is separate from
+initiative records and the search index.
+
 ### Local configuration is an operator decision
 
 Adding or changing `mcp.servers.slipmem`, its command, its environment, or the
@@ -784,11 +1039,14 @@ that applies to note writes: an agent may propose, but a human decides.
 ### HTTP MCP
 
 The local web server mounts `/mcp` using the same Markdown repository,
-approval service, and `McpNoteRegistrations` as the stdio server. This means the
-HTTP MCP endpoint has the same tool names, bounds, and approval policy as stdio.
-It is also unauthenticated and loopback-only in practice; do not expose it.
+approval service, and `McpNoteRegistrations` as the stdio server. It also
+requires the same serving chat model. This means the HTTP MCP endpoint has the
+same tool names, bounds, model requirement, and approval policy as stdio. It is
+also unauthenticated and loopback-only in practice; do not expose it.
 
-Use stdio for MCP clients unless you specifically need the HTTP transport. The
+Use stdio for MCP clients unless you specifically need the HTTP transport or a
+single long-lived consolidator shared by several clients; the latter is the
+background service below. The
 `slipmem mcp` wrapper now resolves the caller's note root (`SLIPMEM_DIR`,
 ancestor `.slipmem/`, or `--dir`) and starts `packages/mcp/src/main.ts` from the
 caller's working directory. It exits with the child process status. With `--dir`
@@ -799,6 +1057,72 @@ the wrapper passes the resolved absolute root to the child through
 SLIPMEM_DIR=/path/to/notes bun run slipmem -- mcp
 bun run slipmem -- mcp --dir /path/to/notes
 ```
+
+### Shared background service
+
+`slipmem service` runs one background HTTP service for one canonical Markdown
+note root. It mounts the same JSON API and HTTP MCP endpoint as the web entry
+and owns the same scoped consolidation worker, so consolidation keeps running
+after every MCP client disconnects. One service, one consolidation consumer per
+canonical root; there is no cross-root registry and no multi-root process.
+
+```sh
+bun run slipmem -- service start [--dir <path>] [--port <n>] [--json]
+bun run slipmem -- service status [--dir <path>] [--json]
+bun run slipmem -- service stop   [--dir <path>] [--json]
+```
+
+- `start` canonicalizes the root with `realpath`, reuses an already-ready
+  service for that root, and requires the same explicit serving chat model as
+  stdio and web unless that matching service is already running. A missing or
+  partial `SLIPMEM_CHAT_*` configuration fails before a child starts. `status`
+  and `stop` never resolve a model.
+- `status` reports `running`, `ready`, and a bounded reason when the process is
+  alive but not yet answering health. `--json` also returns `url`, `mcpUrl`,
+  `healthUrl`, `pid`, and `startedAt`.
+- `stop` verifies PID identity and the registered instance ID before signaling,
+  waits, then forces `SIGKILL` only after the normal timeout.
+- There is no idle timer. The service stays until `stop` or process death.
+- Nothing starts a service for you. The default stdio entry remains standalone;
+  using the service is an explicit operator action, not an automatic upgrade of
+  an existing MCP configuration. Pointing a client at the URL does not start the
+  service; run `service start` yourself.
+
+Use a stable port when a remote MCP client needs a fixed URL:
+
+```sh
+bun run slipmem -- service start --port 4319
+bun run slipmem -- service status --json
+```
+
+`--port` overrides `SLIPMEM_SERVICE_PORT`; `0` or an unset value asks the
+operating system for a fresh loopback port. `SLIPMEM_SERVICE_START_TIMEOUT_MS`
+bounds the readiness wait. For OpenCode, replace the local server entry with the
+remote endpoint. OpenCode enables OAuth for remote servers by default; slipmem
+offers none, so set `oauth: false`:
+
+```json
+{
+  "mcp": {
+    "servers": {
+      "slipmem": {
+        "type": "remote",
+        "url": "http://127.0.0.1:4319/mcp",
+        "oauth": false
+      }
+    }
+  }
+}
+```
+
+Local state lives under `<root>/.state/service/`: `state.json` is the ready
+registration, `owner.json` is the lifetime per-root owner lock, `start.lock`
+coordinates concurrent starts, and `service.log` captures child stdout/stderr.
+The child binds only to `127.0.0.1` by construction and ignores inherited `HOST`
+and `PORT`. The API and `/mcp` are still unauthenticated: do not expose the port
+through a proxy or a non-loopback bind. The loopback bind and filesystem
+permissions remain the real boundary. See
+[`packages/service/README.md`](../packages/service/README.md).
 
 ## 10. Local HTTP security
 
@@ -822,8 +1146,14 @@ machine. It is not a multi-user service.
 
 ### Run the local web UI
 
+The web process mounts `/mcp`, so it requires the serving primary chat model.
+There is no default, and a missing or partial configuration stops startup.
+
 ```sh
 bun run web:build
+SLIPMEM_CHAT_PROVIDER=openai-compatible \
+SLIPMEM_CHAT_MODEL=... \
+SLIPMEM_CHAT_BASE_URL=https://provider.example/v1 \
 SLIPMEM_DIR=/path/to/notes PORT=3000 bun run web:serve
 ```
 
@@ -853,7 +1183,9 @@ production server and does not run `web:build`.
 
 The browser UI and approval routes are local-only in practice. They have no
 authentication, no accounts, and no TLS. Do not expose the current HTTP surface
-to a network you do not fully trust, even if the UI loads successfully.
+to a network you do not fully trust, even if the UI loads successfully. The
+optional Git ingress has its own bearer token, but that does not authenticate
+`/api` or `/mcp`; expose only the ingress path behind a TLS reverse proxy.
 
 
 ## 11. Troubleshooting
@@ -870,7 +1202,24 @@ to a network you do not fully trust, even if the UI loads successfully.
 | MCP permanent create returns `pending_approval` | Expected approval policy | No note was written; run `review` then `approve` or `reject` |
 | MCP delete returns `pending_approval` | Expected approval policy | Nothing was deleted; run `review` then `approve` or `reject` |
 | `delete` refuses without `--yes` | Non-interactive session | Re-run with `--yes` after checking the ID, or delete interactively |
-| MCP exits immediately | Note root missing or invalid | Run `init`, set `SLIPMEM_DIR`, check stderr |
+| MCP exits immediately | Note root missing or invalid, or the serving chat model is missing | Run `init`, set `SLIPMEM_DIR`, configure `SLIPMEM_CHAT_*`, check stderr |
+| MCP/web serve fails startup | The serving primary chat model is missing or partial | Set `SLIPMEM_CHAT_PROVIDER=openai-compatible`, `SLIPMEM_CHAT_MODEL`, and `SLIPMEM_CHAT_BASE_URL`; ordinary CLI commands do not need them |
+| `recall_prompt` says `evaluator-not-configured` | Neither Jev nor a primary chat model is configured | Set `SLIPMEM_RECALL_PROVIDER=jev` plus `TYPESAFE_API_KEY`, or configure `SLIPMEM_CHAT_PROVIDER`/`SLIPMEM_CHAT_MODEL`/`SLIPMEM_CHAT_BASE_URL` |
+| Serving maintenance runs but writes nothing | No pending source revision, provider returned no operations, or validation skipped the operation | Check stderr for provider failures; inspect the bounded source/candidate limits and the revision receipts in `.state/` |
+| A new raw note does not wake consolidation | External write landed without a watcher event, or the note is not fleeting/literature | Restart the serve mode for the startup recovery pass; generated permanents never trigger a wake |
+| `capture git` says `checkout-mismatch` | The checkout `HEAD` is not the push's `after` commit | Check out the exact pushed commit (CI usually does) and retry; capture never changes the checkout |
+| `capture git` says `not-ancestor` | Force push, branch replacement, or reversed range | Capture refuses to fabricate a delta; inspect the push before replaying it intentionally |
+| `capture git` says a commit is missing | The CI checkout is shallow or omitted the range | Fetch full history (`fetch-depth: 0`), then retry; capture never fetches objects |
+| Capture writes notes but recall never changes | Capture ran in an ephemeral checkout, or the serving runtime is not watching that note root | Run capture where the authoritative note root is mounted, or configure the authenticated ingress; do not run two consolidators against one root |
+| Git ingress returns `404` | The route is absent because `SLIPMEM_GIT_INGRESS` is unset or an incomplete configuration failed startup | Set `SLIPMEM_GIT_INGRESS=on` plus token, trusted repository, and capture command; the route is never exposed by default |
+| Git ingress returns `401` | Missing or wrong bearer token | Send `authorization: Bearer <token>` with the configured value; rotate only through the server configuration |
+| Git ingress returns `403` | A browser `Origin` header or cross-origin attempt reached the ingress | Call it only from a trusted server-side job, not a browser |
+| Git ingress returns `429` | Four capture runs are already running or queued | Retry after the current captures finish; the durable note sources make a repeated SHA pair safe |
+| Git ingress returns `502`/`504` | The capture command failed or exceeded its timeout | Inspect the server and capture stderr, fix the checkout/config, then resend the same SHA pair |
+| `initiative promote` says `unsupported-promotion` | The assertion is contradicted, not evidenced, or its pinned lines changed | Run `initiative verify`; add valid code/test pins, then promote one clearly supported assertion |
+| `initiative promote` says `main-required` | The observed commit is not reachable from the configured main ref | Merge or rebase onto `main` and fetch the main ref, or deliberately pass `--working-tree`/`--allow-unversioned` for an unversioned promotion without a projection |
+| `initiative list` reports an invalid record | The Markdown record failed schema or hash validation | Fix the named field or restore the file; invalid records are reported, never silently treated as notes |
+| `graph` shows `stale` or `missing` | The recorded target note version changed or disappeared | Verify the relation in the source note; the graph never repairs it automatically |
 | `synthesis-config` from `wiki` | Synthesized mode has no usable synthesizer, or no working agent sandbox | Configure `SLIPMEM_WIKI_AGENT`/`SLIPMEM_WIKI_AGENT_ARGS`, install a usable `bwrap`, or use `--mode extractive` |
 | Agent starts but is refused | Bubblewrap probe failed | Install usable user namespaces/bubblewrap, or set the documented unsafe `SLIPMEM_WIKI_AGENT_UNSAFE=1` for a reviewed command |
 | `synthesis-adapter-unsupported` | `--model`/env model ID has no registered adapter in this CLI | Use `--agent` or `--mode extractive`; the CLI ships no model providers |

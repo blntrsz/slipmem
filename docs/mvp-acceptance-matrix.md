@@ -320,3 +320,30 @@ The release evidence is now closed for the named criteria and the nine
 definition-of-done steps. The remaining limits are evidence scope, not open
 gates: no production corpus, no semantic truth claim, no enforced network
 namespace, and a video recorded two source commits before the gate.
+
+## 11. Unverified acceptance cases: memory runtime, capture, graph, and initiatives (added 2026-11-22)
+
+**Scope.** This section is separate from the release evidence in sections 0-10
+and changes no earlier status. It records acceptance cases for the uncommitted
+work in the current working tree: a model-required serving memory runtime,
+queue-driven consolidation, main-push capture, a derived relation graph, and
+initiative records. None of these cases has been run against a committed
+snapshot, and no clean-clone gate covers them. Every case here is **Unverified**;
+do not count it as an MVP **Pass** or cite it as evidence until a committed test
+or a named independent run at a fixed commit exercises the whole clause.
+
+**Relationship to the historical wording.** Sections 0-10 remain the record at
+`d1f3565`/`2cdf077`. Their offline-operation statements describe that snapshot.
+They do not establish that a future serve mode can run without a model, and this
+section does not retroactively expand them. The old matrix has no acceptance case
+for these paths, so its silence must not be read as coverage.
+
+| ID | Acceptance case | Required observable result | Status |
+| --- | --- | --- | --- |
+| FUT-01 Required chat for serve | A serve process that enables the memory runtime has no model-less mode. | An explicit OpenAI-compatible chat provider, model, and base URL are required. Missing, partial, or invalid configuration stops startup with an actionable error; it must not silently disable memory, assume a default model, write a note, or call a provider. If Jev is not explicitly selected, structured per-note recall uses the same required model and validates each decision; a configured provider failure stays a per-note failure, not a keyword fallback. | Unverified |
+| FUT-02 Offline local CLI remains useful | Ordinary non-serve CLI use must not inherit the serve requirement. | With no chat or recall provider configured and no network, local commands that do not explicitly opt into a model (`init`, `new`, `list`, `show`, `edit`, `delete`, `search`, `tags`, extractive `wiki`, `review`/`approve`/`reject`, `check`, `cache`, `migrate`, `legacy`) keep their current behavior and exit codes. No memory runtime, watcher, consolidation, recall egress, or provider construction starts. A serve process that does not enable the memory runtime likewise keeps its local MCP behavior and needs no model. `capture git` is the explicit exception: it requires its own model and fails closed before producing model-derived data when that model is absent. | Unverified |
+| FUT-03 Queue-driven consolidation | Raw writes wake one bounded consolidation path without a normal timer. | A successful fleeting or literature write from CLI, MCP, HTTP, or capture causes one coalesced wake, and the durable note revision remains recoverable by a startup pass after restart. Unchanged revisions are not sent to the provider again. A cross-process wake failure is reported and leaves work for startup recovery rather than silently dropping it. Provider calls run outside the repository mutation lock, a run-level lease prevents overlapping consolidators, and provider failure is reported and never promoted to a successful write. | Unverified |
+| FUT-04 Main-push capture | Capture is tied to an exact, verified Git range. | `slipmem capture git` accepts only exact lowercase full commit SHAs, requires after to descend from before (rejecting force-push, branch replacement, and reversed ranges), and never checks out, fetches, resets, or writes to the source checkout. When the adapter depends on the checked-out worktree, it also requires `HEAD` to equal the after commit and says so. Diff input is bounded. Model evidence must match a real commit, path, and hunk in the verified range. Note and checkpoint writes are idempotent. An ephemeral CI checkout must not be presented as updating an authoritative note root. Any authenticated ingress is opt-in, default unexposed, configured with a trusted local Git root, and accepts event SHAs rather than caller filesystem paths. | Unverified |
+| FUT-05 Derived relation graph | The graph is derived and rebuildable, never a second source of truth. | Projection happens on demand from note artifacts. `derived_from` follows recorded source ID and hash. `supersedes` and `contradicts` appear only from a validated, evidence-pinned plan; `implements` is preserved read-only. Stale or missing targets remain visible. Projection never deletes, rewrites, promotes, or grants trust to a note. | Unverified |
+| FUT-06 Initiative workspaces | Initiative planning stays outside default note and recall storage. | Records have stable IDs and durable scope, milestones, and assertions. Verification is advisory and evidence-pinned. Supported, contradicted, and not-evidenced assertions are reported separately. Only an individually landed and clearly supported assertion may be promoted, and arbitrary unchecked caller data cannot become verified. No Spec Kit dependency and no leakage into the default note or recall store. | Unverified |
+| FUT-07 Write policy and provenance | Existing approvals and new automatic writes remain distinct. | MCP tool writes keep the approval policy. Maintenance and capture use distinct provenance. Maintenance writes directly and does not create pending proposals or obey `SLIPMEM_MCP_WRITE_POLICY`; enabling it is the operator's explicit write decision. No MCP tool can approve, reject, trigger, enable, or disable memory. A disabled or unconfigured runtime produces no egress, and credentials, prompts, response bodies, and endpoint URLs are not logged. | Unverified |

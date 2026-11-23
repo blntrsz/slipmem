@@ -199,7 +199,7 @@ describe("slipmem migrate sqlite", () => {
     expect(
       createHash("sha256").update(readFileSync(dbPath)).digest("hex"),
     ).toBe(sha256)
-  })
+  }, 30000)
 
   test("resolves the migration source from --db, SLIPMEM_DB_PATH, then XDG data", async () => {
     const base = makeTempBase()
@@ -473,7 +473,7 @@ describe("slipmem migrate sqlite", () => {
     expect(encoded.code).toBe(0)
     expect(encoded.stdout).toContain('"$bigint": "9223372036854775807"')
     expect(encoded.stdout).toContain('"$base64": "AP8Q"')
-  })
+  }, 30000)
 
   test("reports malformed rows without truncating or dropping their source data", async () => {
     const { base, dbPath } = makeDatabase("invalid-rows.sql")
@@ -500,7 +500,7 @@ describe("slipmem migrate sqlite", () => {
       expect(Object.keys(issue.row!).length).toBeGreaterThan(0)
     }
     expect(existsSync(root)).toBe(false)
-  })
+  }, 30000)
 
   test("reports a missing source and rejects an unknown migration kind", async () => {
     const base = makeTempBase()

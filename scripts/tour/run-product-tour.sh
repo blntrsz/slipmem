@@ -18,6 +18,35 @@
 
 set -euo pipefail
 
+# Provider-backed memory is opt-in. The tour records a fixed, disposable
+# scenario, so remove any ambient chat/maintenance/recall/capture configuration
+# before the seeding CLI or the web server can inherit it. This also keeps a
+# partial host configuration from failing server startup.
+unset \
+  SLIPMEM_AUTO_MEMORY \
+  SLIPMEM_AUTO_MEMORY_INTERVAL_MS \
+  SLIPMEM_AUTO_MEMORY_RUN_ON_START \
+  SLIPMEM_CHAT_PROVIDER \
+  SLIPMEM_CHAT_BASE_URL \
+  SLIPMEM_CHAT_MODEL \
+  SLIPMEM_CHAT_API_KEY \
+  SLIPMEM_MAINTENANCE_PROVIDER \
+  SLIPMEM_MAINTENANCE_BASE_URL \
+  SLIPMEM_MAINTENANCE_MODEL \
+  SLIPMEM_MAINTENANCE_API_KEY \
+  SLIPMEM_RECALL_PROVIDER \
+  SLIPMEM_RECALL_JEV_MODEL \
+  SLIPMEM_CAPTURE_PROVIDER \
+  SLIPMEM_CAPTURE_BASE_URL \
+  SLIPMEM_CAPTURE_MODEL \
+  SLIPMEM_CAPTURE_API_KEY \
+  TYPESAFE_API_KEY \
+  OPENAI_API_KEY \
+  OPENAI_BASE_URL \
+  OPENAI_MODEL \
+  ANTHROPIC_API_KEY \
+  ANTHROPIC_BASE_URL
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 work_root="${TOUR_WORK_ROOT:-/tmp/opencode/slipmem-tour}"

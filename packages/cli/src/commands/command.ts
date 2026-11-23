@@ -2,9 +2,15 @@ import type { ApprovalError, MarkdownError, WikiError } from "@slipmem/core"
 import type { Effect } from "effect"
 import type { OptionSpec, ParsedArguments } from "../args.js"
 import type { CliContext } from "../context.js"
+import type { GitCaptureError } from "../capture/errors.js"
 import type { CliFailure } from "../errors.js"
 
-export type CommandError = CliFailure | MarkdownError | WikiError | ApprovalError
+export type CommandError =
+  | CliFailure
+  | MarkdownError
+  | WikiError
+  | ApprovalError
+  | GitCaptureError
 
 export type CommandRunner = (
   parsed: ParsedArguments,
