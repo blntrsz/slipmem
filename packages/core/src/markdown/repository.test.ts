@@ -74,80 +74,6 @@ const copyFixture = (fixture: Fixture, file: string): string => {
 }
 
 describe("Markdown note repository CRUD", () => {
-  test("creates a note that survives a new repository instance", async () => {
-    const fixture = setup()
-    try {
-      const repo = await repository(fixture)
-      const created = await Effect.runPromise(
-        repo.create({
-          type: "fleeting",
-          title: "Café notes",
-          content: "An inbox thought.",
-          tags: ["Agent Memory"],
-          provenance: { source: "cli", actor: "user" },
-        }),
-      )
-
-      expect(created.id).toBe("cafe-notes")
-      expect(created.filename).toBe("cafe-notes.md")
-      expect(created.metadata.tags).toEqual(["agent-memory"])
-      expect(readdirSync(fixture.root).some((name) => name.endsWith(".tmp"))).toBe(
-        false,
-      )
-
-      // A new process/repository reads only the filesystem.
-      const restarted = await repository(fixture)
-      const list = await Effect.runPromise(restarted.list())
-      expect(list).toHaveLength(1)
-      expect(list[0]).toMatchObject({
-        type: "fleeting",
-        title: "Café notes",
-        content: "An inbox thought.",
-      })
-      expect(String(list[0]!.id)).toBe(created.id)
-
-      const stored = await Effect.runPromise(restarted.get(created.id))
-      expect(stored._tag).toBe("Some")
-      if (stored._tag === "Some") {
-        expect(stored.value.metadata.tags).toEqual(["agent-memory"])
-        expect(stored.value.unknown).toEqual({})
-      }
-    } finally {
-      cleanup(fixture)
-    }
-  })
-
-  test("resolves filename collisions with a numeric suffix", async () => {
-    const fixture = setup()
-    try {
-      const repo = await repository(fixture)
-      const first = await Effect.runPromise(
-        repo.create({ type: "permanent", title: "Café notes", content: "One." }),
-      )
-      const second = await Effect.runPromise(
-        repo.create({ type: "permanent", title: "Café notes", content: "Two." }),
-      )
-      const third = await Effect.runPromise(
-        repo.create({ type: "permanent", title: "Café notes", content: "Three." }),
-      )
-
-      expect([first.id, second.id, third.id]).toEqual([
-        "cafe-notes",
-        "cafe-notes-2",
-        "cafe-notes-3",
-      ])
-      expect(
-        readdirSync(fixture.root).filter((name) => name.endsWith(".md")).sort(),
-      ).toEqual([
-        "cafe-notes-2.md",
-        "cafe-notes-3.md",
-        "cafe-notes.md",
-      ])
-    } finally {
-      cleanup(fixture)
-    }
-  })
-
   test("enforces type-specific content and reference rules before writing", async () => {
     const fixture = setup()
     try {
@@ -714,40 +640,6 @@ describe("Markdown repository path, symlink, size, and lock guards", () => {
       expect(defaulted).toHaveLength(10)
       const requested = await Effect.runPromise(repo.list({ limit: 999 }))
       expect(requested).toHaveLength(12)
-    } finally {
-      cleanup(fixture)
-    }
-  })
-
-  test("filters by type and normalized tag with a bounded list", async () => {
-    const fixture = setup()
-    try {
-      let tick = FIXED_NOW
-      const repo = await repository(fixture, () => {
-        tick += 1000
-        return tick
-      })
-      const fleeting = await Effect.runPromise(
-        repo.create({
-          type: "fleeting",
-          title: "Tag note",
-          content: "Fleeting body.",
-          tags: ["Agent Memory"],
-        }),
-      )
-      await Effect.runPromise(
-        repo.create({ type: "permanent", title: "No tag", content: "Permanent body." }),
-      )
-
-      const byType = await Effect.runPromise(repo.list({ type: "permanent" }))
-      expect(byType.map((note) => note.title)).toEqual(["No tag"])
-
-      const byTag = await Effect.runPromise(repo.list({ tag: "Agent Memory" }))
-      expect(byTag.map((note) => String(note.id))).toEqual([fleeting.id])
-
-      const limited = await Effect.runPromise(repo.list({ limit: 1 }))
-      expect(limited).toHaveLength(1)
-      expect(limited[0]!.title).toBe("No tag")
     } finally {
       cleanup(fixture)
     }

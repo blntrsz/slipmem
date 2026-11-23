@@ -18,6 +18,12 @@ const jsonRequest = (path: string, method: string, body: unknown, headers: Recor
     body: JSON.stringify(body),
   })
 
+const apiRequest = (path: string, method = "GET") =>
+  new Request(`http://localhost${path}`, {
+    method,
+    headers: { accept: "application/json" },
+  })
+
 const initializeMcp = async (api: ReturnType<typeof makeApiHandler>) => {
   const response = await api.handler(
     jsonRequest("/mcp", "POST", {
@@ -110,6 +116,7 @@ test("HTTP MCP uses the same Markdown registrations and approval policy as stdio
         root,
         cacheDir,
         now,
+        env: { SLIPMEM_ACTOR: "http-agent" },
         automaticMemory: { enabled: false },
       }),
     })
@@ -157,21 +164,127 @@ test("HTTP MCP uses the same Markdown registrations and approval policy as stdio
       const permanent = await callTool(api, sessionId, 4, "create_permanent_note", {
         title: "Needs approval",
         content: "No file yet.",
+        tags: ["Agent Memory"],
       })
       expect(permanent.result.isError).toBeFalsy()
       expect(permanent.result.structuredContent).toEqual(
         expect.objectContaining({ status: "pending_approval" }),
       )
+      const proposal = permanent.result.structuredContent as {
+        readonly proposalId: string
+      }
+      expect(proposal.proposalId).toMatch(/^proposal-\d{14}-[0-9a-f]{8}$/)
 
-      const pending = await readdir(join(root, ".state", "pending"))
-      expect(pending.filter((name) => name.endsWith(".json"))).toHaveLength(1)
+      const pendingBefore = await readdir(join(root, ".state", "pending"))
+      expect(pendingBefore.filter((name) => name.endsWith(".json"))).toHaveLength(1)
+      const noteFilesBefore = (await readdir(root)).filter(
+        (name) => name.endsWith(".md") && name !== "README.md",
+      )
+      expect(noteFilesBefore).toEqual(["http-source.md"])
 
       const list = await callTool(api, sessionId, 5, "list_permanent_notes", {})
       expect(
         (list.result.structuredContent as { notes: ReadonlyArray<unknown> }).notes,
       ).toEqual([])
 
-      const search = await callTool(api, sessionId, 6, "search_notes", {
+      const pendingResponse = await api.handler(apiRequest("/api/pending"))
+      expect(pendingResponse.status).toBe(200)
+      const review = (await pendingResponse.json()) as {
+        readonly proposals: ReadonlyArray<{
+          readonly id: string
+          readonly operation: string
+          readonly actor?: string
+          readonly summary: string
+          readonly stale: boolean
+          readonly expired: boolean
+          readonly diff: string
+        }>
+      }
+      expect(review.proposals).toHaveLength(1)
+      expect(review.proposals[0]).toMatchObject({
+        id: proposal.proposalId,
+        operation: "create",
+        actor: "http-agent",
+        stale: false,
+        expired: false,
+      })
+      expect(review.proposals[0]!.summary).toContain("Create permanent note")
+      expect(review.proposals[0]!.diff).toContain("+No file yet.")
+
+      const approveResponse = await api.handler(
+        apiRequest(`/api/pending/${proposal.proposalId}/approve`, "POST"),
+      )
+      expect(approveResponse.status).toBe(200)
+      const approved = (await approveResponse.json()) as {
+        readonly status: string
+        readonly proposalId: string
+        readonly operation: string
+        readonly noteId: string
+        readonly note: {
+          readonly type: string
+          readonly title: string
+          readonly content: string
+          readonly tags: ReadonlyArray<string>
+          readonly provenance?: {
+            readonly source?: string
+            readonly actor?: string
+          }
+        }
+        readonly index: { readonly status: string }
+      }
+      expect(approved).toMatchObject({
+        status: "applied",
+        proposalId: proposal.proposalId,
+        operation: "create",
+      })
+      expect(approved.note).toMatchObject({
+        type: "permanent",
+        title: "Needs approval",
+        content: "No file yet.",
+        tags: ["agent-memory"],
+        provenance: { source: "mcp", actor: "http-agent" },
+      })
+      expect(approved.index).toEqual({ status: "refreshed" })
+
+      const pendingAfter = await readdir(join(root, ".state", "pending"))
+      expect(pendingAfter.filter((name) => name.endsWith(".json"))).toHaveLength(0)
+      expect(
+        (await readdir(root)).filter(
+          (name) => name.endsWith(".md") && name !== "README.md",
+        ),
+      ).toHaveLength(2)
+
+      const visible = await callTool(api, sessionId, 6, "list_permanent_notes", {})
+      expect(
+        (visible.result.structuredContent as { notes: ReadonlyArray<unknown> }).notes,
+      ).toEqual([
+        expect.objectContaining({
+          id: approved.noteId,
+          type: "permanent",
+          title: "Needs approval",
+        }),
+      ])
+
+      const fetched = await callTool(api, sessionId, 7, "get_permanent_note", {
+        id: approved.noteId,
+      })
+      expect(fetched.result.isError).toBeFalsy()
+      expect(fetched.result.structuredContent).toEqual({
+        note: expect.objectContaining({
+          id: approved.noteId,
+          type: "permanent",
+          title: "Needs approval",
+          content: "No file yet.",
+        }),
+      })
+
+      const afterReviewResponse = await api.handler(apiRequest("/api/pending"))
+      const afterReview = (await afterReviewResponse.json()) as {
+        readonly proposals: ReadonlyArray<unknown>
+      }
+      expect(afterReview.proposals).toHaveLength(0)
+
+      const search = await callTool(api, sessionId, 8, "search_notes", {
         query: "HTTP",
         type: "literature",
       })

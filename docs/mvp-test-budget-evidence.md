@@ -49,6 +49,12 @@ timeouts, cleanup, fixture content, and every assertion are unchanged.
 | `packages/mcp/src/tools.test.ts` | "search is cross-kind, filterable, refreshed, and excerpt-bounded" | `30_000` ms | Three note writes plus four MCP `search_notes` calls through the real Markdown service layer. Each search refreshes the SQLite FTS index, so the test pays layer startup and index build cost. Cross-kind filtering, topic filtering, injection excerpt bounds, and path assertions are retained. |
 | `packages/core/src/markdown/search-index.test.ts` | "cache loss and copied notes rebuild identical backlink identities" | `30_000` ms | Three complete FTS index rebuilds: the original root, the root after deleting the cache directory, and a copied note-only root. The test proves the same note count and backlink identities after cache loss and after copying only the Markdown files; all assertions and both cleanup paths are retained. |
 
+Later consolidation: the MCP search test named in this table was merged with the
+tag, detail, and external-edit cases into `packages/mcp/src/tools.test.ts`
+"MCP writes, edits, search ranking/filtering/refresh, and tag counts". That
+consolidated test retains the explicit `30_000` ms budget; the
+`migrate.test.ts` and `search-index.test.ts` budgets above are unchanged.
+
 The 30 s value follows the existing convention in this repository: most CLI
 tests that launch real child processes already pass `30000` (for example
 `search.test.ts`, `notes.test.ts`, `wiki.test.ts`, `init.test.ts`,

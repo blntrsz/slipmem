@@ -155,11 +155,31 @@ test("canonical ID routes create, read, update, list, and delete flat Markdown n
     expect(entries).toContain(`${created.id}.md`)
     expect(entries).not.toContain("fleeting")
 
+    // A same-title note is distinct: the numeric filename suffix keeps both
+    // notes readable through the public routes without overwriting either.
+    const secondResponse = await api.handler(
+      request("/api/notes", "POST", {
+        type: "fleeting",
+        title: "Quick thought",
+        content: "A second, independently stored thought.",
+        tags: ["Agent Memory"],
+      }),
+    )
+    expect(secondResponse.status).toBe(201)
+    const second = await readNote(secondResponse)
+    expect(second.id).toBe("quick-thought-2")
+    expect(second.path).not.toBe(created.path)
+    expect(second.content).toBe("A second, independently stored thought.")
+    expect(await readdir(root.root)).toEqual(
+      expect.arrayContaining(["quick-thought.md", "quick-thought-2.md"]),
+    )
+
     const getResponse = await api.handler(request(`/api/notes/${created.id}`))
     expect(getResponse.status).toBe(200)
     expect(await readNote(getResponse)).toMatchObject({
       id: created.id,
       title: "Quick thought",
+      content: "Capture it before it disappears.",
     })
 
     const updatedResponse = await api.handler(
@@ -180,7 +200,17 @@ test("canonical ID routes create, read, update, list, and delete flat Markdown n
 
     const listResponse = await api.handler(request("/api/notes?type=fleeting&limit=5"))
     expect(listResponse.status).toBe(200)
-    expect(await readNotes(listResponse)).toHaveLength(1)
+    expect((await readNotes(listResponse)).map((note) => note.id).sort()).toEqual(
+      [created.id, second.id].sort(),
+    )
+
+    const tagResponse = await api.handler(
+      request("/api/notes?tag=agent-memory&limit=1"),
+    )
+    expect(tagResponse.status).toBe(200)
+    const tagged = await readNotes(tagResponse)
+    expect(tagged).toHaveLength(1)
+    expect([created.id, second.id]).toContain(tagged[0]!.id)
 
     const deleteResponse = await api.handler(
       request(`/api/notes/${created.id}`, "DELETE"),
@@ -196,6 +226,17 @@ test("canonical ID routes create, read, update, list, and delete flat Markdown n
 
     const afterDelete = await api.handler(request(`/api/notes/${created.id}`))
     expect(afterDelete.status).toBe(404)
+
+    // The colliding note is untouched by the delete of its sibling.
+    const remaining = await readNotes(
+      await api.handler(request("/api/notes?tag=agent-memory")),
+    )
+    expect(remaining).toEqual([
+      expect.objectContaining({
+        id: second.id,
+        content: "A second, independently stored thought.",
+      }),
+    ])
   })
 })
 
@@ -845,6 +886,7 @@ test("a second handler over the same root sees the same notes", async () => {
           type: "permanent",
           title: "Persisted",
           content: "Survives a process restart.",
+          tags: ["restart"],
         }),
       ),
     )
@@ -859,8 +901,38 @@ test("a second handler over the same root sees the same notes", async () => {
         await second.handler(request("/api/notes")),
       )
       expect(notes).toEqual([
-        expect.objectContaining({ id: created.id, title: "Persisted" }),
+        expect.objectContaining({
+          id: created.id,
+          title: "Persisted",
+          content: "Survives a process restart.",
+          tags: ["restart"],
+        }),
       ])
+
+      const readBack = await second.handler(
+        request(`/api/notes/${created.id}`),
+      )
+      expect(readBack.status).toBe(200)
+      expect(await readNote(readBack)).toMatchObject({
+        id: created.id,
+        type: "permanent",
+        content: "Survives a process restart.",
+        tags: ["restart"],
+      })
+
+      // The restarted handler allocates the collision suffix from the files
+      // already on disk, so the first note is never overwritten.
+      const colliding = await readNote(
+        await second.handler(
+          request("/api/notes", "POST", {
+            type: "permanent",
+            title: "Persisted",
+            content: "Written after the restart.",
+          }),
+        ),
+      )
+      expect(colliding.id).toBe("persisted-2")
+      expect(colliding.content).toBe("Written after the restart.")
     } finally {
       await second.dispose()
     }

@@ -217,61 +217,6 @@ describe("approval diff", () => {
 })
 
 describe("approval lifecycle", () => {
-  test("MCP permanent create stays pending, reviews, and applies atomically", async () => {
-    const fixture = await createFixture()
-    try {
-      const result = await submit(fixture, {
-        operation: "create",
-        type: "permanent",
-        title: "Durable lesson",
-        content: "Approval is enforced by the server, not the prompt.",
-        tags: ["Agent Memory"],
-        actor: "agent-a",
-      })
-
-      expect(result.status).toBe("pending_approval")
-      if (result.status !== "pending_approval") {
-        throw new Error("expected pending")
-      }
-      expect(result.proposalId).toMatch(/^proposal-\d{14}-[0-9a-f]{8}$/)
-      expect(noteFiles(fixture.root)).toEqual([])
-      expect(pendingFiles(fixture.pending)).toHaveLength(1)
-
-      const review = await Effect.runPromise(fixture.service.review())
-      expect(review.proposals).toHaveLength(1)
-      expect(review.proposals[0]!.summary).toContain("Create permanent note")
-      expect(review.proposals[0]!.diff).toContain(
-        "+Approval is enforced by the server, not the prompt.",
-      )
-      expect(review.proposals[0]!.stale).toBe(false)
-      expect(review.proposals[0]!.proposal.actor).toBe("agent-a")
-
-      const applied = await Effect.runPromise(
-        fixture.service.apply(result.proposalId),
-      )
-      expect(applied.status).toBe("applied")
-      if (applied.status !== "applied" || applied.operation === "delete") {
-        throw new Error("expected an applied create")
-      }
-      expect(applied.note.metadata.type).toBe("permanent")
-      expect(applied.note.metadata.provenance).toEqual({
-        source: "mcp",
-        actor: "agent-a",
-      })
-      expect(applied.note.metadata.tags).toEqual(["agent-memory"])
-      expect(noteFiles(fixture.root)).toHaveLength(1)
-      expect(pendingFiles(fixture.pending)).toHaveLength(0)
-
-      const visible = await Effect.runPromise(fixture.repository.list())
-      expect(visible).toHaveLength(1)
-
-      const after = await Effect.runPromise(fixture.service.review())
-      expect(after.proposals).toHaveLength(0)
-    } finally {
-      cleanup(fixture)
-    }
-  })
-
   test("permanent update and reclassification are pending; rejection changes nothing", async () => {
     const fixture = await createFixture()
     try {

@@ -135,73 +135,43 @@ const seed = async (
 }
 
 describe("disposable FTS search index", () => {
-  test("rebuilds from files and searches title, body, reference, type, and tag", async () => {
+  test("supports internal field filters, typed search, and bounded tag counts", async () => {
     const fixture = setup()
-    const index = await (async () => {
-      const seeded = await seed(fixture)
-      return seeded
-    })()
+    const seeded = await seed(fixture)
     try {
-      expect(index.index.mode).toBe("fts5")
-      const stats = await Effect.runPromise(index.index.rebuild())
+      expect(seeded.index.mode).toBe("fts5")
+      const stats = await Effect.runPromise(seeded.index.rebuild())
       expect(stats.mode).toBe("fts5")
       expect(stats.added).toBe(3)
       expect(stats.invalid).toBe(0)
 
-      const all = await Effect.runPromise(index.index.search({ query: "recall" }))
-      expect(new Set(all.map((hit) => hit.id))).toEqual(
-        new Set([index.ids.permanent, index.ids.literature, index.ids.fleeting]),
-      )
-
       const titleOnly = await Effect.runPromise(
-        index.index.search({ query: "bounded", fields: ["title"] }),
+        seeded.index.search({ query: "bounded", fields: ["title"] }),
       )
-      expect(titleOnly.map((hit) => hit.id)).toEqual([index.ids.permanent])
+      expect(titleOnly.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
 
       const referenceOnly = await Effect.runPromise(
-        index.index.search({ query: "example", fields: ["reference"] }),
+        seeded.index.search({ query: "example", fields: ["reference"] }),
       )
-      expect(referenceOnly.map((hit) => hit.id)).toEqual([index.ids.literature])
-
-      const tagOnly = await Effect.runPromise(
-        index.index.search({ query: "retrieval" }),
-      )
-      expect(tagOnly.map((hit) => hit.id)).toEqual([index.ids.permanent])
+      expect(referenceOnly.map((hit) => hit.id)).toEqual([seeded.ids.literature])
 
       const tagsField = await Effect.runPromise(
-        index.index.search({ query: "retrieval", fields: ["tags"] }),
+        seeded.index.search({ query: "retrieval", fields: ["tags"] }),
       )
-      expect(tagsField.map((hit) => hit.id)).toEqual([index.ids.permanent])
+      expect(tagsField.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
 
       const titleDoesNotSearchTags = await Effect.runPromise(
-        index.index.search({ query: "retrieval", fields: ["title"] }),
+        seeded.index.search({ query: "retrieval", fields: ["title"] }),
       )
       expect(titleDoesNotSearchTags).toEqual([])
 
-      const matchingTagFilter = await Effect.runPromise(
-        index.index.search({ query: "retrieval", tag: "retrieval" }),
+      const noFields = await Effect.runPromise(
+        seeded.index.search({ query: "recall", fields: [] }),
       )
-      expect(matchingTagFilter.map((hit) => hit.id)).toEqual([
-        index.ids.permanent,
-      ])
-
-      const mismatchedTagFilter = await Effect.runPromise(
-        index.index.search({ query: "retrieval", tag: "mcp" }),
-      )
-      expect(mismatchedTagFilter).toEqual([])
-
-      const literatureOnly = await Effect.runPromise(
-        index.index.search({ query: "recall", kinds: ["literature"] }),
-      )
-      expect(literatureOnly.map((hit) => hit.id)).toEqual([index.ids.literature])
-
-      const filteredByTag = await Effect.runPromise(
-        index.index.search({ query: "recall", tag: "MCP" }),
-      )
-      expect(filteredByTag.map((hit) => hit.id)).toEqual([index.ids.literature])
+      expect(noFields).toEqual([])
 
       const notes = await Effect.runPromise(
-        index.index.searchNotes({ query: "cite", kinds: ["literature"] }),
+        seeded.index.searchNotes({ query: "cite", kinds: ["literature"] }),
       )
       expect(notes).toHaveLength(1)
       expect(notes[0]).toMatchObject({
@@ -209,8 +179,23 @@ describe("disposable FTS search index", () => {
         title: "MCP recall must cite sources",
         reference: "https://example.com/mcp-recall",
       })
+
+      const tags = await Effect.runPromise(seeded.index.listTags({ limit: 2 }))
+      expect(tags).toEqual([
+        { tag: "agent-memory", noteCount: 1 },
+        { tag: "cafe", noteCount: 1 },
+      ])
+
+      const mcp = await Effect.runPromise(
+        seeded.index.listTags({ query: "MCP" }),
+      )
+      expect(mcp).toEqual([{ tag: "mcp", noteCount: 1 }])
+
+      const invalid = await failure(seeded.index.listTags({ query: "!!!" }))
+      expect(invalid.area).toBe("metadata")
+      expect(invalid.code).toBe("invalid-tag")
     } finally {
-      await Effect.runPromise(index.index.close())
+      await Effect.runPromise(seeded.index.close())
       cleanup(fixture)
     }
   })
@@ -250,30 +235,6 @@ describe("disposable FTS search index", () => {
         await Effect.runPromise(index.close())
       }
     } finally {
-      cleanup(fixture)
-    }
-  })
-
-  test("lists bounded tag counts and filters email-like display tags", async () => {
-    const fixture = setup()
-    const seeded = await seed(fixture)
-    try {
-      await Effect.runPromise(seeded.index.rebuild())
-      const tags = await Effect.runPromise(
-        seeded.index.listTags({ limit: 2 }),
-      )
-      expect(tags).toHaveLength(2)
-      expect(tags[0]).toMatchObject({ noteCount: 1 })
-      expect(tags.map((tag) => tag.tag)).toEqual(
-        expect.arrayContaining(["agent-memory"]),
-      )
-
-      const mcp = await Effect.runPromise(
-        seeded.index.listTags({ query: "MCP" }),
-      )
-      expect(mcp).toEqual([{ tag: "mcp", noteCount: 1 }])
-    } finally {
-      await Effect.runPromise(seeded.index.close())
       cleanup(fixture)
     }
   })
@@ -588,50 +549,7 @@ describe("disposable FTS search index", () => {
     }
   })
 
-  test("refreshes an externally edited file and removes deleted files", async () => {
-    const fixture = setup()
-    const seeded = await seed(fixture)
-    try {
-      await Effect.runPromise(seeded.index.rebuild())
-      const notePath = join(
-        fixture.root,
-        `${seeded.ids.permanent}.md`,
-      )
-      const original = readFileSync(notePath, "utf8")
-      expect(original).toContain("server-side limit")
-      writeFileSync(
-        notePath,
-        original.replace("server-side limit", "unbounded external edit"),
-      )
-      const future = new Date(Date.now() + 2_000)
-      utimesSync(notePath, future, future)
-
-      const refreshed = await Effect.runPromise(seeded.index.refresh())
-      expect(refreshed.updated).toBe(1)
-      expect(refreshed.mode).toBe("fts5")
-      const old = await Effect.runPromise(
-        seeded.index.search({ query: "limit", fields: ["content"] }),
-      )
-      expect(old).toHaveLength(0)
-      const changed = await Effect.runPromise(
-        seeded.index.search({ query: "external", fields: ["content"] }),
-      )
-      expect(changed.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
-
-      unlinkSync(notePath)
-      const removed = await Effect.runPromise(seeded.index.refresh())
-      expect(removed.removed).toBe(1)
-      const snapshot = await Effect.runPromise(seeded.index.snapshot())
-      expect(snapshot.map((entry) => entry.id)).not.toContain(
-        seeded.ids.permanent,
-      )
-    } finally {
-      await Effect.runPromise(seeded.index.close())
-      cleanup(fixture)
-    }
-  })
-
-  test("refreshes an external edit that preserves size and mtime", async () => {
+  test("refreshes external edits by content hash and removes deleted files", async () => {
     const fixture = setup()
     const seeded = await seed(fixture)
     try {
@@ -640,6 +558,7 @@ describe("disposable FTS search index", () => {
       const before = statSync(notePath)
       const original = readFileSync(notePath, "utf8")
       expect(original).toContain("server-side limit")
+
       writeFileSync(
         notePath,
         original.replace("server-side limit", "server-wide limit"),
@@ -647,10 +566,9 @@ describe("disposable FTS search index", () => {
       // Restore the exact timestamps so a stat-only refresh cannot notice.
       utimesSync(notePath, before.atime, before.mtime)
 
-      const refreshed = await Effect.runPromise(seeded.index.refresh())
-      expect(refreshed.updated).toBe(1)
-      expect(refreshed.unchanged).toBe(2)
-
+      const sameSize = await Effect.runPromise(seeded.index.refresh())
+      expect(sameSize.updated).toBe(1)
+      expect(sameSize.unchanged).toBe(2)
       const changed = await Effect.runPromise(
         seeded.index.search({ query: "wide", fields: ["content"] }),
       )
@@ -659,6 +577,36 @@ describe("disposable FTS search index", () => {
         seeded.index.search({ query: "side", fields: ["content"] }),
       )
       expect(old.map((hit) => hit.id)).not.toContain(seeded.ids.permanent)
+
+      writeFileSync(
+        notePath,
+        readFileSync(notePath, "utf8").replace(
+          "server-wide limit",
+          "unbounded external edit",
+        ),
+      )
+      const future = new Date(Date.now() + 2_000)
+      utimesSync(notePath, future, future)
+
+      const refreshed = await Effect.runPromise(seeded.index.refresh())
+      expect(refreshed.updated).toBe(1)
+      expect(refreshed.mode).toBe("fts5")
+      const removedText = await Effect.runPromise(
+        seeded.index.search({ query: "limit", fields: ["content"] }),
+      )
+      expect(removedText).toHaveLength(0)
+      const external = await Effect.runPromise(
+        seeded.index.search({ query: "external", fields: ["content"] }),
+      )
+      expect(external.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
+
+      unlinkSync(notePath)
+      const removed = await Effect.runPromise(seeded.index.refresh())
+      expect(removed.removed).toBe(1)
+      const snapshot = await Effect.runPromise(seeded.index.snapshot())
+      expect(snapshot.map((entry) => entry.id)).not.toContain(
+        seeded.ids.permanent,
+      )
     } finally {
       await Effect.runPromise(seeded.index.close())
       cleanup(fixture)
