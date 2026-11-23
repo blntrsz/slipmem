@@ -1,11 +1,13 @@
 import { expect, test } from "bun:test"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 
 import { serviceHealthResponse } from "./health"
 import type { ServiceState } from "./state"
 
 const readyState: ServiceState = {
   version: 1,
-  root: "/tmp/opencode/health-test/.slipmem",
+  root: join(tmpdir(), "slipmem-health-test", ".slipmem"),
   pid: 4321,
   identity: "12345",
   instanceId: "instance-health-test",

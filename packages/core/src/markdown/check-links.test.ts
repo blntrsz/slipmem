@@ -8,6 +8,7 @@ import {
   readFileSync,
   rmSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { basename, join } from "node:path"
 import { checkNoteRoot, extractInternalMarkdownLinks } from "./check.js"
 import {
@@ -25,7 +26,7 @@ interface Fixture {
 }
 
 const setup = (): Fixture => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-link-check-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-link-check-"))
   const root = join(base, ".slipmem")
   const backup = join(base, "backups")
   mkdirSync(root, { recursive: true })

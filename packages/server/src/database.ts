@@ -6,7 +6,7 @@ import {
   SQLiteLiteratureNoteService,
   SQLiteNoteService,
   SQLitePermanentNoteService,
-} from "@slipmem/core"
+} from "@slipmem/core/legacy/sqlite"
 import { Layer } from "effect"
 import { makeMigrationsLayer } from "./migrations"
 

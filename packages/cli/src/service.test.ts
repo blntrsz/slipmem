@@ -3,6 +3,7 @@ import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { existsSync } from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { parseJson, runCliProcess } from "./test-support"
@@ -88,7 +89,7 @@ const startFakeProvider = () => {
 test(
   "service CLI starts, reports status, and stops without model config",
   async () => {
-    const directory = await mkdtemp("/tmp/opencode/slipmem-cli-service-")
+    const directory = await mkdtemp(join(tmpdir(), "slipmem-cli-service-"))
     const root = join(directory, ".slipmem")
     const provider = startFakeProvider()
     try {
@@ -156,7 +157,7 @@ test(
 test(
   "service CLI start reports a missing model instead of running model-free",
   async () => {
-    const directory = await mkdtemp("/tmp/opencode/slipmem-cli-service-")
+    const directory = await mkdtemp(join(tmpdir(), "slipmem-cli-service-"))
     const root = join(directory, ".slipmem")
     try {
       await Effect.runPromise(initializeNoteRoot(root))

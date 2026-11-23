@@ -18,6 +18,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { checkNoteRoot } from "./check.js"
 import { MarkdownError } from "./errors.js"
@@ -44,7 +45,7 @@ interface Fixture {
 }
 
 const setup = (): Fixture => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-index-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-index-"))
   const root = join(base, ".slipmem")
   const cache = join(base, "cache")
   const backup = join(base, "backups")

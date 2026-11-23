@@ -1,4 +1,5 @@
 import { mkdtempSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 
 export const repoRoot = resolve(import.meta.dir, "../../..")
@@ -19,7 +20,7 @@ export interface CliProcessOptions {
 }
 
 export const makeTempBase = (): string =>
-  mkdtempSync("/tmp/opencode/slipmem-cli-")
+  mkdtempSync(join(tmpdir(), "slipmem-cli-"))
 
 export const runCliProcess = async (
   args: ReadonlyArray<string>,

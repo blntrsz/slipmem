@@ -3,6 +3,7 @@ import {
   MarkdownSearchIndex,
   PromptRecallService,
   WikiService,
+  type NoteProjection,
   type PromptRecallError,
 } from "@slipmem/core"
 import {
@@ -10,7 +11,7 @@ import {
   type McpWriteResult,
 } from "@slipmem/core/approval"
 import type { WikiError } from "@slipmem/core/wiki"
-import type { Note } from "@slipmem/schemas/note"
+import { aggregateTagInventory } from "@slipmem/core/tags"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { Effect, Layer, Option } from "effect"
 import { McpServer, Tool, Toolkit } from "effect/ai"
@@ -130,7 +131,7 @@ const SearchNotes = readOnlyTool(Tool.make("search_notes", {
 
 const ListTags = readOnlyTool(Tool.make("list_tags", {
   description:
-    "List tag slugs with note counts and up to three bounded examples each; an optional query filters by substring. Default 50, hard maximum 200. Derived from frontmatter, never a stored tag page.",
+    "List tag slugs with note counts, a per-type breakdown, and up to three bounded examples each; an optional query filters by substring. Default 50, hard maximum 200. Derived from frontmatter, never a stored tag page.",
   parameters: ListTagsInput,
   success: ListTagsResult,
   failure: ToolFailure,
@@ -259,29 +260,31 @@ const getInfoOfKind = (
   repository: MarkdownNoteRepository["Service"],
   id: string,
   type: Markdown.NoteType,
-): Effect.Effect<Option.Option<Note.Info>, ToolFailure> =>
+): Effect.Effect<Option.Option<NoteProjection>, ToolFailure> =>
   repository.getInfo(id).pipe(
-    Effect.map(Option.filter((info) => info.type === type)),
+    Effect.map(Option.filter((projection) => projection.type === type)),
     // A missing note is a successful "not found" read. Any other repository
     // failure (root missing, invalid/path-escaping ID, unreadable file) is a
     // real tool error and must not be disguised as a null detail.
     Effect.catchIf(
       (error) => error.code === "not-found",
-      () => Effect.succeed(Option.none<Note.Info>()),
+      () => Effect.succeed(Option.none<NoteProjection>()),
     ),
     Effect.mapError(toolFailure),
   )
 
 /** Keeps the single-note body but projects bounded display metadata. */
-const detailOf = (info: Note.Info) =>
+const detailOf = (projection: NoteProjection) =>
   noteDetail({
-    id: info.id,
-    type: info.type,
-    title: info.title,
-    content: info.content,
-    ...(info.type === "literature" ? { reference: info.reference } : {}),
-    createdAt: info.createdAt,
-    updatedAt: info.updatedAt,
+    id: projection.id,
+    type: projection.type,
+    title: projection.title,
+    content: projection.content,
+    ...(projection.type === "literature"
+      ? { reference: projection.reference }
+      : {}),
+    createdAt: projection.createdAt,
+    updatedAt: projection.updatedAt,
   })
 
 const getDetailOfKind = (
@@ -311,11 +314,11 @@ const listOfKind = (
         notes: notes.map((note) =>
           noteSummary({
             id: note.id,
-            type: note.info.type,
-            title: note.info.title,
-            content: note.info.content,
-            createdAt: note.info.createdAt,
-            updatedAt: note.info.updatedAt,
+            type: note.projection.type,
+            title: note.projection.title,
+            content: note.projection.content,
+            createdAt: note.projection.createdAt,
+            updatedAt: note.projection.updatedAt,
             path: note.path,
           }),
         ),
@@ -327,7 +330,7 @@ const searchHit = (
   hit: {
     readonly id: string
     readonly path: string
-    readonly note: Note.Info
+    readonly note: NoteProjection
   },
 ): SearchHit => {
   const summary = noteSummary({
@@ -365,8 +368,8 @@ const requireNoteOfKind = (
 ): Effect.Effect<void, ToolFailure> =>
   repository.getInfo(id).pipe(
     Effect.mapError(toolFailure),
-    Effect.flatMap((info) =>
-      Option.isSome(info) && info.value.type === type
+    Effect.flatMap((projection) =>
+      Option.isSome(projection) && projection.value.type === type
         ? Effect.void
         : Effect.fail(noteNotFound(`${type} note`, id)),
     ),
@@ -375,7 +378,7 @@ const requireNoteOfKind = (
 /** Collapses the core result into the public MCP create/update shape. */
 const toWriteResult = (result: McpWriteResult): WriteNoteResult =>
   result.status === "direct"
-    ? result.note.info
+    ? result.note.projection
     : {
         status: "pending_approval",
         proposalId: result.proposalId,
@@ -556,40 +559,20 @@ export const McpHandlersLayer = McpNoteTools.toLayer(
             )
           }
 
-          const summaries = new Map<
-            string,
-            { count: number; examples: Array<{ id: string; type: Markdown.NoteType; title: string }> }
-          >()
-          for (const note of scan.notes) {
-            for (const tag of note.metadata.tags ?? []) {
-              if (requested !== "" && !tag.includes(requested)) {
-                continue
-              }
-              const summary = summaries.get(tag) ?? { count: 0, examples: [] }
-              summary.count++
-              if (summary.examples.length < MAX_TAG_EXAMPLES) {
-                summary.examples.push({
-                  id: note.id,
-                  type: note.metadata.type,
-                  title: boundedTitle(note.metadata.title),
-                })
-              }
-              summaries.set(tag, summary)
-            }
-          }
-
-          const tags = [...summaries.entries()]
-            .map(([tag, summary]) => ({
-              tag,
-              noteCount: summary.count,
-              examples: summary.examples,
-            }))
-            .sort(
-              (left, right) =>
-                right.noteCount - left.noteCount ||
-                (left.tag < right.tag ? -1 : left.tag > right.tag ? 1 : 0),
-            )
-            .slice(0, boundedTagLimit(input.limit))
+          const tags = aggregateTagInventory(scan.notes, {
+            query: requested,
+            limit: boundedTagLimit(input.limit),
+            maxExamples: MAX_TAG_EXAMPLES,
+          }).map((entry) => ({
+            tag: entry.tag,
+            noteCount: entry.noteCount,
+            byType: entry.byType,
+            examples: entry.examples.map((example) => ({
+              id: example.id,
+              type: example.type,
+              title: boundedTitle(example.title),
+            })),
+          }))
 
           return { tags }
         }),
@@ -618,8 +601,8 @@ export const McpHandlersLayer = McpNoteTools.toLayer(
                     type: result.note.metadata.type,
                     title: result.note.metadata.title,
                     content: result.note.body,
-                    createdAt: result.note.info.createdAt,
-                    updatedAt: result.note.info.updatedAt,
+                    createdAt: result.note.projection.createdAt,
+                    updatedAt: result.note.projection.updatedAt,
                     path: result.note.path,
                   }),
                   decision: "relevant" as const,

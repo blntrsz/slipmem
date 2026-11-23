@@ -7,7 +7,7 @@ import {
   listLegacyNotes,
   MigrationSourceError,
   type LegacyReadRow,
-} from "@slipmem/core"
+} from "@slipmem/core/legacy/migration"
 import { Effect } from "effect"
 import {
   numberOption,

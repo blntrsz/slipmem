@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { numberOption, stringOption } from "../args.js"
 import { resolveRoot } from "../context.js"
-import { withSearchIndex } from "../index-access.js"
+import { withResilientSearchIndex } from "../index-access.js"
 import { parseLimit } from "../note-values.js"
 import { writeJson, writeLine } from "../output.js"
 import type { CommandDefinition } from "./command.js"
@@ -23,15 +23,18 @@ export const tagsCommand: CommandDefinition = {
       })
       const query = stringOption(parsed, "query")
       const resolved = yield* resolveRoot(context, stringOption(parsed, "dir"))
-      const result = yield* withSearchIndex(context, resolved.root, (index) =>
-        Effect.gen(function* () {
-          yield* index.refresh()
-          const tags = yield* index.listTags({
-            limit,
-            ...(query === undefined ? {} : { query }),
-          })
-          return { tags, mode: index.mode }
-        }),
+      const result = yield* withResilientSearchIndex(
+        context,
+        resolved.root,
+        (index) =>
+          Effect.gen(function* () {
+            yield* index.refresh()
+            const tags = yield* index.listTags({
+              limit,
+              ...(query === undefined ? {} : { query }),
+            })
+            return { tags, mode: index.mode }
+          }),
       )
 
       if (parsed.options.json === true) {

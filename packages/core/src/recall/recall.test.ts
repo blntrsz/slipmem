@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Exit } from "effect"
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   MAINTENANCE_METADATA_KEY,
@@ -30,7 +31,7 @@ interface Fixture {
 }
 
 const createFixture = async (): Promise<Fixture> => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-recall-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-recall-"))
   const root = join(base, ".slipmem")
   mkdirSync(root, { recursive: true })
   const clock = { value: FIXED_NOW }

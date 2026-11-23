@@ -6,7 +6,6 @@ import {
 } from "@slipmem/core"
 import { Effect } from "effect"
 import {
-  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -18,8 +17,7 @@ import type { CliContext } from "./context.js"
 import { hasEditor } from "./context.js"
 import { usageError, type CliFailure } from "./errors.js"
 
-const temporaryBase = (): string =>
-  existsSync("/tmp/opencode") ? "/tmp/opencode" : tmpdir()
+const temporaryBase = (): string => tmpdir()
 
 export const ensureEditor = (context: CliContext): Effect.Effect<void, CliFailure> =>
   hasEditor(context.env)

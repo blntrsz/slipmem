@@ -1,8 +1,12 @@
-import { STATE_DIRECTORY } from "@slipmem/core"
+import {
+  ensureStateSubdirectory,
+  isPathInside,
+  STATE_DIRECTORY,
+} from "@slipmem/core"
 import { randomUUID } from "node:crypto"
 import {
   closeSync,
-  mkdirSync,
+  lstatSync,
   openSync,
   readFileSync,
   realpathSync,
@@ -113,9 +117,15 @@ export const canonicalServiceRoot = (root: string): string => {
   return canonical
 }
 
+/**
+ * Every service registration, start lock, and log is written under this
+ * directory. Create it through the repository's audited state boundary so a
+ * symlinked `.state/` or `.state/service/` cannot redirect service state
+ * outside the note root.
+ */
 export const ensureServiceDirectory = (root: string): void => {
   try {
-    mkdirSync(serviceDirectory(root), { recursive: true, mode: 0o700 })
+    ensureStateSubdirectory(root, SERVICE_DIRECTORY)
   } catch (cause) {
     throw new ServiceError(
       "io",
@@ -127,12 +137,67 @@ export const ensureServiceDirectory = (root: string): void => {
   }
 }
 
+/**
+ * Read-only containment check for the service directory.
+ *
+ * `ensureServiceDirectory` is for writers and creates missing components.
+ * Status, stale-registration cleanup, and unlink paths must not create `.state/`
+ * merely to discover that no registration exists, and must not read or unlink
+ * through a symlinked `.state/` or `.state/service/` outside the note root.
+ * This returns the real service directory only when every component already
+ * exists as a real directory contained by the root.
+ */
+const containedServiceDirectory = (root: string): string | null => {
+  try {
+    const rootReal = realpathSync(resolve(root))
+    const statePath = join(rootReal, STATE_DIRECTORY)
+    const stateStat = lstatSync(statePath)
+    if (stateStat.isSymbolicLink() || !stateStat.isDirectory()) {
+      return null
+    }
+    const stateReal = realpathSync(statePath)
+    if (!isPathInside(stateReal, rootReal)) {
+      return null
+    }
+    const servicePath = join(stateReal, SERVICE_DIRECTORY)
+    const serviceStat = lstatSync(servicePath)
+    if (serviceStat.isSymbolicLink() || !serviceStat.isDirectory()) {
+      return null
+    }
+    const serviceReal = realpathSync(servicePath)
+    return isPathInside(serviceReal, rootReal) ? serviceReal : null
+  } catch {
+    return null
+  }
+}
+
 const readJson = (path: string): unknown => {
   try {
     return JSON.parse(readFileSync(path, "utf8")) as unknown
   } catch {
     return undefined
   }
+}
+
+const readContainedJson = (directory: string, filename: string): unknown => {
+  const path = join(directory, filename)
+  try {
+    // A registration file is never a link. Reject one instead of reading
+    // through it; unlink paths would only remove the link, never its target.
+    if (lstatSync(path).isSymbolicLink()) {
+      return undefined
+    }
+  } catch {
+    return undefined
+  }
+  return readJson(path)
+}
+
+const readServiceJson = (root: string, filename: string): unknown => {
+  const directory = containedServiceDirectory(root)
+  return directory === null
+    ? undefined
+    : readContainedJson(directory, filename)
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -214,10 +279,10 @@ const asOwner = (value: unknown): ServiceOwner | null => {
 }
 
 export const readServiceState = (root: string): ServiceState | null =>
-  asState(readJson(serviceStatePath(root)))
+  asState(readServiceJson(root, SERVICE_STATE_FILENAME))
 
 export const readServiceOwner = (root: string): ServiceOwner | null =>
-  asOwner(readJson(serviceOwnerPath(root)))
+  asOwner(readServiceJson(root, SERVICE_OWNER_FILENAME))
 
 export const isProcessAlive = (pid: number): boolean => {
   if (!Number.isInteger(pid) || pid <= 0) {
@@ -313,7 +378,14 @@ const writeJsonAtomic = (
 
 export const writeServiceState = (root: string, state: ServiceState): void => {
   ensureServiceDirectory(root)
-  writeJsonAtomic(serviceStatePath(root), state)
+  const directory = containedServiceDirectory(root)
+  if (directory === null) {
+    throw new ServiceError(
+      "io",
+      `The service state directory for ${root} is not contained by the note root.`,
+    )
+  }
+  writeJsonAtomic(join(directory, SERVICE_STATE_FILENAME), state)
 }
 
 const MAX_OWNER_ACQUIRE_ATTEMPTS = 100
@@ -336,7 +408,14 @@ const isMissingFile = (cause: unknown): boolean =>
  */
 export const acquireServiceOwner = (root: string): ServiceOwnerHandle => {
   ensureServiceDirectory(root)
-  const path = serviceOwnerPath(root)
+  const directory = containedServiceDirectory(root)
+  if (directory === null) {
+    throw new ServiceError(
+      "io",
+      `The service state directory for ${root} is not contained by the note root.`,
+    )
+  }
+  const path = join(directory, SERVICE_OWNER_FILENAME)
   const startedAt = new Date().toISOString()
   const record: ServiceOwner = {
     version: SERVICE_STATE_VERSION,
@@ -357,7 +436,9 @@ export const acquireServiceOwner = (root: string): ServiceOwnerHandle => {
       return {
         record,
         release: () => {
-          const current = readServiceOwner(root)
+          const current = asOwner(
+            readContainedJson(directory, SERVICE_OWNER_FILENAME),
+          )
           if (
             current !== null &&
             current.instanceId === record.instanceId &&
@@ -395,7 +476,9 @@ export const acquireServiceOwner = (root: string): ServiceOwnerHandle => {
           { cause },
         )
       }
-      const current = readServiceOwner(root)
+      const current = asOwner(
+        readContainedJson(directory, SERVICE_OWNER_FILENAME),
+      )
       if (
         current !== null &&
         current.root === root &&
@@ -434,18 +517,26 @@ export const removeRegistrationOwnedBy = (
   root: string,
   predicate: (record: ServiceState | ServiceOwner) => boolean,
 ): void => {
-  const state = readServiceState(root)
+  // Resolve containment once. A missing or symlinked state directory means
+  // there is no local registration to remove; never follow it outside the root.
+  const directory = containedServiceDirectory(root)
+  if (directory === null) {
+    return
+  }
+  const statePath = join(directory, SERVICE_STATE_FILENAME)
+  const state = asState(readContainedJson(directory, SERVICE_STATE_FILENAME))
   if (state !== null && predicate(state)) {
     try {
-      unlinkSync(serviceStatePath(root))
+      unlinkSync(statePath)
     } catch {
       // Already removed.
     }
   }
-  const owner = readServiceOwner(root)
+  const ownerPath = join(directory, SERVICE_OWNER_FILENAME)
+  const owner = asOwner(readContainedJson(directory, SERVICE_OWNER_FILENAME))
   if (owner !== null && predicate(owner)) {
     try {
-      unlinkSync(serviceOwnerPath(root))
+      unlinkSync(ownerPath)
     } catch {
       // Already removed.
     }

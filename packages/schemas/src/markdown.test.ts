@@ -70,6 +70,39 @@ describe("note slugs and filenames", () => {
     ).toBe("cafe-notes-3.md")
   })
 
+  test("never generates a legacy-looking filename for a date-prefixed title", () => {
+    // An impossible timestamp prefix used to produce a filename that
+    // `isNoteFilename` rejected, so creation could generate an unreadable note.
+    const impossible = Markdown.noteFilename({
+      title: "20260230193045 impossible date",
+    })
+    expect(impossible).toBe("note-20260230193045-impossible-date.md")
+    expect(Markdown.isNoteFilename(impossible)).toBe(true)
+    expect(Markdown.isNoteId(impossible.slice(0, -".md".length))).toBe(true)
+    expect(
+      Markdown.isNoteIdWithRealTimestamp(impossible.slice(0, -".md".length)),
+    ).toBe(false)
+
+    // A real-looking prefix is also ambiguous: a new note should keep its
+    // creation time in frontmatter, not claim it in the filename.
+    const realLooking = Markdown.noteFilename({
+      title: "20261117193045 retrospective",
+    })
+    expect(realLooking).toBe("note-20261117193045-retrospective.md")
+    expect(Markdown.isNoteFilename(realLooking)).toBe(true)
+    expect(
+      Markdown.isNoteIdWithRealTimestamp(realLooking.slice(0, -".md".length)),
+    ).toBe(false)
+
+    // Collision resolution still applies to the deterministic fallback.
+    expect(
+      Markdown.noteFilename({
+        title: "20260230193045 impossible date",
+        taken: ["note-20260230193045-impossible-date.md"],
+      }),
+    ).toBe("note-20260230193045-impossible-date-2.md")
+  })
+
   test("accepts descriptive and legacy timestamp-prefixed note filenames", () => {
     expect(Markdown.isNoteFilename("agent-memory-is-bounded.md")).toBe(true)
     expect(
@@ -153,6 +186,41 @@ describe("UTC timestamp and note ID schemas", () => {
       decodes(Markdown.NoteId, "20261301193045-agent-memory-is-bounded"),
     ).toBe(false)
     expect(Markdown.isNoteIdWithRealTimestamp("20260230193045-agent-memory")).toBe(
+      false,
+    )
+  })
+})
+
+describe("canonical note projection", () => {
+  const base = {
+    id: "agent-memory-is-bounded",
+    title: "Agent memory is bounded",
+    content: "Body.",
+    createdAt: 1_763_407_845_000,
+    updatedAt: 1_763_407_902_000,
+  }
+
+  test("decodes each note kind with the legacy wire shape", () => {
+    expect(decodes(Markdown.NoteProjection, { ...base, type: "fleeting" })).toBe(
+      true,
+    )
+    expect(decodes(Markdown.NoteProjection, { ...base, type: "permanent" })).toBe(
+      true,
+    )
+    expect(
+      decodes(Markdown.NoteProjection, {
+        ...base,
+        type: "literature",
+        reference: "Book",
+      }),
+    ).toBe(true)
+    expect(
+      decodes(Markdown.NoteProjection, {
+        ...base,
+        type: "literature",
+      }),
+    ).toBe(false)
+    expect(decodes(Markdown.NoteProjection, { ...base, type: "unknown" })).toBe(
       false,
     )
   })

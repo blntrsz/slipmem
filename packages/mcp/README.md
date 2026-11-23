@@ -130,7 +130,7 @@ List tools accept an optional `limit` and `tag`. Search accepts `query` plus
 optional `type`, `tag`, and `limit`. Defaults and hard bounds:
 
 - list and search: default **10**, hard maximum **50**
-- tag inventory: default 50, hard maximum 200, at most 3 examples per tag
+- tag inventory: default 50, hard maximum 200, per-type counts, and at most 3 examples per tag
 - tag wiki: default **10**, hard maximum **25**
 - list/search/tag titles: at most **200** characters
 - search and detail references: at most **240** characters

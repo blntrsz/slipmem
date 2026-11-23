@@ -7,6 +7,10 @@ import { openRepository, resolveRoot, type CliContext } from "../context.js"
 import { usageError, CliUsageError } from "../errors.js"
 import { noteToJson } from "../note-values.js"
 import { writeJson, writeLine } from "../output.js"
+import {
+  assertExpectedRevision,
+  expectedRevisionOption,
+} from "../stale-note.js"
 import type { CommandDefinition } from "./command.js"
 
 const confirmDelete = async (
@@ -36,16 +40,21 @@ const confirmDelete = async (
 export const deleteCommand: CommandDefinition = {
   name: "delete",
   summary: "Move one note to the local trash backup after confirmation",
-  usage: "delete <id> [--yes] [--json]",
+  usage: "delete <id> [--expect <hash>] [--yes] [--json]",
   details: [
     "The note file is moved to the per-root trash directory outside .slipmem/.",
     "Non-interactive sessions must pass --yes; without it the command refuses",
     "before reading or removing the note.",
+    "The delete is conditional on the version read for confirmation. Pass",
+    "--expect with the contentHash from an earlier show to also refuse a",
+    "version that changed before the command started.",
   ],
   minPositionals: 1,
   maxPositionals: 1,
   options: {
     yes: { type: "boolean" },
+    expect: { type: "string", valueName: "hash" },
+    revision: { type: "string", valueName: "hash" },
   },
   run: (parsed, context) =>
     Effect.gen(function* () {
@@ -64,6 +73,9 @@ export const deleteCommand: CommandDefinition = {
           }),
         )
       }
+
+      const expected = expectedRevisionOption(parsed, "delete")
+      yield* assertExpectedRevision(note.value, expected, "delete")
 
       if (booleanOption(parsed, "yes") !== true) {
         const confirmed = yield* Effect.tryPromise({
@@ -91,7 +103,9 @@ export const deleteCommand: CommandDefinition = {
         }
       }
 
-      const result = yield* repository.delete(id)
+      const result = yield* repository.delete(id, {
+        expectedContentHash: expected ?? note.value.contentHash,
+      })
       if (parsed.options.json === true) {
         writeJson(context.io, {
           ok: true,

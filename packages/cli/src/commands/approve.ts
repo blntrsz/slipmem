@@ -29,7 +29,17 @@ export const approveCommand: CommandDefinition = {
         { refreshIndex: true },
       )
 
+      const writeWarnings = (): void => {
+        if (application.index.warning !== undefined) {
+          writeErrorLine(context.io, `Warning: ${application.index.warning}`)
+        }
+        if (application.cleanup?.warning !== undefined) {
+          writeErrorLine(context.io, `Warning: ${application.cleanup.warning}`)
+        }
+      }
+
       if (parsed.options.json === true) {
+        writeWarnings()
         writeJson(context.io, {
           ok: true,
           root: resolved.root,
@@ -42,6 +52,9 @@ export const approveCommand: CommandDefinition = {
                   noteId: application.noteId,
                   backupPath: application.backupPath,
                   index: application.index,
+                  ...(application.cleanup === undefined
+                    ? {}
+                    : { cleanup: application.cleanup }),
                 }
               : {
                   status: application.status,
@@ -50,6 +63,9 @@ export const approveCommand: CommandDefinition = {
                   noteId: application.noteId,
                   note: noteToJson(resolved.root, application.note),
                   index: application.index,
+                  ...(application.cleanup === undefined
+                    ? {}
+                    : { cleanup: application.cleanup }),
                 },
         })
         return 0
@@ -67,9 +83,7 @@ export const approveCommand: CommandDefinition = {
         )
         writeLine(context.io, `  ${application.note.path}`)
       }
-      if (application.index.warning !== undefined) {
-        writeErrorLine(context.io, `Warning: ${application.index.warning}`)
-      }
+      writeWarnings()
       return 0
     }),
 }

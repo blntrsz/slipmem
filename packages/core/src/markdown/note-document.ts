@@ -1,7 +1,3 @@
-import type { FleetingNote } from "@slipmem/schemas/fleeting-note"
-import type { LiteratureNote } from "@slipmem/schemas/literature-note"
-import type { Note } from "@slipmem/schemas/note"
-import type { PermanentNote } from "@slipmem/schemas/permanent-note"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { createHash } from "node:crypto"
 import { basename } from "node:path"
@@ -24,8 +20,20 @@ export interface ParsedMarkdownNote {
   /** Filename stem; the stable note identity. */
   readonly id: string
   readonly metadata: Markdown.NoteMetadata
-  /** The existing `Note.Info` wire shape used by the SQLite services. */
-  readonly info: Note.Info
+  /**
+   * Canonical projection of the Markdown note for active read surfaces.
+   *
+   * It deliberately matches the long-standing CLI/MCP/HTTP JSON shape so the
+   * model migration does not change the wire contract.
+   */
+  readonly projection: Markdown.NoteProjection
+  /**
+   * Compatibility alias for callers that still read `info`.
+   *
+   * @deprecated Use `projection`. The alias is the same value and is no longer
+   * tied to the legacy SQLite `Note.Info` type.
+   */
+  readonly info: Markdown.NoteProjection
   readonly body: string
   /** Frontmatter keys outside the frozen contract, preserved verbatim. */
   readonly unknown: Readonly<Record<string, unknown>>
@@ -63,7 +71,7 @@ const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.trim().length > 0
 
 /**
- * Parses one note file into metadata, body, and the existing `Note.Info` shape.
+ * Parses one note file into metadata, body, and the canonical note projection.
  *
  * Validation order is intentional: filename first, then YAML, then known fields,
  * then body. The first failure is returned so a caller gets one actionable path
@@ -236,12 +244,15 @@ export const parseMarkdownNote = (
       ...(aliases === undefined ? {} : { aliases }),
     }
 
+    const projection = toNoteProjection(metadata, body, createdAt, updatedAt)
+
     return {
       path,
       filename,
       id,
       metadata,
-      info: toNoteInfo(metadata, body, createdAt, updatedAt),
+      projection,
+      info: projection,
       body,
       unknown: splitUnknownMetadata(data),
       contentHash: createHash("sha256").update(content, "utf8").digest("hex"),
@@ -481,17 +492,17 @@ const parseOptionalStringArray = (
     return value as ReadonlyArray<string>
   })
 
-const toNoteInfo = (
+const toNoteProjection = (
   metadata: Markdown.NoteMetadata,
   body: string,
   createdAt: number,
   updatedAt: number,
-): Note.Info => {
+): Markdown.NoteProjection => {
   switch (metadata.type) {
     case "fleeting":
       return {
         type: "fleeting",
-        id: metadata.id as FleetingNote.ID,
+        id: metadata.id as Markdown.FleetingNoteProjection["id"],
         title: metadata.title,
         content: body,
         createdAt,
@@ -500,7 +511,7 @@ const toNoteInfo = (
     case "literature":
       return {
         type: "literature",
-        id: metadata.id as LiteratureNote.ID,
+        id: metadata.id as Markdown.LiteratureNoteProjection["id"],
         title: metadata.title,
         content: body,
         reference: metadata.reference ?? "",
@@ -510,7 +521,7 @@ const toNoteInfo = (
     case "permanent":
       return {
         type: "permanent",
-        id: metadata.id as PermanentNote.ID,
+        id: metadata.id as Markdown.PermanentNoteProjection["id"],
         title: metadata.title,
         content: body,
         createdAt,

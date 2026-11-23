@@ -4,6 +4,7 @@ import {
   type ParsedMarkdownNote,
 } from "@slipmem/core"
 import { Effect, Option } from "effect"
+import { createHash } from "node:crypto"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { stringOption } from "../args.js"
@@ -12,6 +13,10 @@ import { ensureEditor, parseDraft, readDraft, withTempDraft } from "../editor.js
 import { usageError, type CliUsageError } from "../errors.js"
 import { noteToJson } from "../note-values.js"
 import { writeJson, writeLine } from "../output.js"
+import {
+  assertExpectedRevision,
+  expectedRevisionOption,
+} from "../stale-note.js"
 import type { CommandDefinition } from "./command.js"
 
 const same = (left: unknown, right: unknown): boolean =>
@@ -83,19 +88,33 @@ const readCurrentContent = (
       }),
   })
 
+/**
+ * The raw draft is the version the user edits, so its hash (not a hash from an
+ * earlier repository read) is the base for the compare-and-swap. The repository
+ * re-reads the file under its lock and compares this value before writing.
+ */
+const contentHashOf = (content: string): string =>
+  createHash("sha256").update(content, "utf8").digest("hex")
+
 export const editCommand: CommandDefinition = {
   name: "edit",
   summary: "Edit a note in $EDITOR and save it atomically after validation",
-  usage: "edit <id> [--json]",
+  usage: "edit <id> [--expect <hash>] [--json]",
   details: [
     "The draft is a full note in a temporary directory outside the repository.",
     "Saving validates the filename, frontmatter, type rules, and body limits",
     "before the repository writes the file atomically. Invalid drafts are",
     "reported and the original note is left untouched.",
+    "The write is conditional on the version read for the draft. Pass --expect",
+    "with the contentHash from an earlier show to also refuse a version that",
+    "changed before the editor opened.",
   ],
   minPositionals: 1,
   maxPositionals: 1,
-  options: {},
+  options: {
+    expect: { type: "string", valueName: "hash" },
+    revision: { type: "string", valueName: "hash" },
+  },
   run: (parsed, context) =>
     Effect.gen(function* () {
       const id = parsed.positionals[0]!
@@ -114,9 +133,12 @@ export const editCommand: CommandDefinition = {
         )
       }
 
-      yield* ensureEditor(context)
       const note = current.value
+      const expected = expectedRevisionOption(parsed, "edit")
+      yield* assertExpectedRevision(note, expected, "edit")
+      yield* ensureEditor(context)
       const original = yield* readCurrentContent(note)
+      const draftHash = contentHashOf(original)
 
       const result = yield* withTempDraft(note.filename, original, context, (draftPath) =>
         Effect.gen(function* () {
@@ -138,6 +160,10 @@ export const editCommand: CommandDefinition = {
             ...(edited.metadata.provenance === undefined
               ? {}
               : { provenance: edited.metadata.provenance }),
+            // The hash read for the draft is the base for the compare-and-swap.
+            // An explicit --expect was already checked above; both forms make
+            // an external edit during the editor session a stale-base failure.
+            expectedContentHash: expected ?? draftHash,
           })
 
           return { note: saved, changed: true as const }

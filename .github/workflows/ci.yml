@@ -12,12 +12,6 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
-      # Test fixtures use /tmp/opencode as their temp root by design; hosted
-      # runners start without it, so mkdtemp there fails with ENOENT.
-      - run: mkdir -p /tmp/opencode
       - run: bun install --frozen-lockfile
       - run: bun run db:check
-      - run: bun run lint
-      - run: bun run typecheck
-      - run: bun test
-      - run: bun run web:build
+      - run: bun run check

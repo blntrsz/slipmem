@@ -29,7 +29,7 @@ Status summary:
 ## 1. Real startup database import (MIGRATE-01 / G5)
 
 Test:
-`packages/core/src/migration/migration-current-database.test.ts`
+`packages/server/src/migration-current-database.test.ts`
 
 What it does:
 

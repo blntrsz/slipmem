@@ -9,6 +9,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { MarkdownError } from "./errors.js"
 import {
@@ -20,7 +21,7 @@ import {
   resolveNoteRoot,
 } from "./root.js"
 
-const temporaryRoot = (): string => mkdtempSync("/tmp/opencode/slipmem-root-")
+const temporaryRoot = (): string => mkdtempSync(join(tmpdir(), "slipmem-root-"))
 
 const cleanup = (path: string): void => {
   rmSync(path, { recursive: true, force: true })
@@ -221,18 +222,19 @@ describe("note root initialization", () => {
   })
 
   test("backup and index directories are outside the root and per-root keyed", () => {
-    const root = "/tmp/opencode/example/.slipmem"
-    const other = "/tmp/opencode/other/.slipmem"
+    const base = join(tmpdir(), "slipmem-root-paths")
+    const root = join(base, "example", ".slipmem")
+    const other = join(base, "other", ".slipmem")
     const env = {
-      XDG_STATE_HOME: "/tmp/opencode/state",
-      XDG_CACHE_HOME: "/tmp/opencode/cache",
+      XDG_STATE_HOME: join(base, "state"),
+      XDG_CACHE_HOME: join(base, "cache"),
     }
 
     const backup = defaultBackupDirectory(root, env)
     const cache = defaultIndexCacheDirectory(root, env)
 
-    expect(backup.startsWith("/tmp/opencode/state/slipmem/trash/")).toBe(true)
-    expect(cache.startsWith("/tmp/opencode/cache/slipmem/index/")).toBe(true)
+    expect(backup.startsWith(`${join(base, "state", "slipmem", "trash")}/`)).toBe(true)
+    expect(cache.startsWith(`${join(base, "cache", "slipmem", "index")}/`)).toBe(true)
     expect(backup).not.toBe(defaultBackupDirectory(other, env))
     expect(cache).not.toBe(defaultIndexCacheDirectory(other, env))
   })

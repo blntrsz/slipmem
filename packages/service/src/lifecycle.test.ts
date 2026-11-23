@@ -1,14 +1,22 @@
 import { initializeNoteRoot } from "@slipmem/core"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import { existsSync, mkdirSync, writeFileSync } from "node:fs"
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { inspectService, startService, stopService } from "./lifecycle"
 import {
   acquireServiceOwner,
   serviceDirectory,
+  serviceLogPath,
   serviceOwnerPath,
   serviceStartLockPath,
   serviceStatePath,
@@ -21,7 +29,7 @@ import {
  * No ambient provider credential is inherited and no real provider is called.
  */
 
-const rootPrefix = "/tmp/opencode/slipmem-service-"
+const rootPrefix = join(tmpdir(), "slipmem-service-")
 
 const providerEnvKeys = [
   "SLIPMEM_AUTO_MEMORY",
@@ -283,6 +291,39 @@ test(
       expect(status.ready).toBe(false)
       expect(existsSync(serviceStatePath(root))).toBe(false)
       expect(existsSync(serviceOwnerPath(root))).toBe(false)
+      expect(existsSync(serviceStartLockPath(root))).toBe(false)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  20_000,
+)
+
+test(
+  "a symlinked service log fails closed without truncating the target",
+  async () => {
+    const { directory, root } = await makeRoot()
+    const outsideLog = join(directory, "outside.log")
+    const sentinel = "sentinel log contents\n"
+    writeFileSync(outsideLog, sentinel)
+    mkdirSync(join(root, ".state", "service"), { recursive: true })
+    symlinkSync(outsideLog, serviceLogPath(root))
+
+    try {
+      await expect(
+        startService({
+          root,
+          env: baseEnv(root, {
+            SLIPMEM_CHAT_PROVIDER: "openai-compatible",
+            SLIPMEM_CHAT_MODEL: "offline-service-test-model",
+            SLIPMEM_CHAT_BASE_URL: "http://127.0.0.1:9/v1",
+            SLIPMEM_RECALL_PROVIDER: "off",
+          }),
+          timeoutMs: 5_000,
+        }),
+      ).rejects.toThrow(/service log/i)
+
+      expect(readFileSync(outsideLog, "utf8")).toBe(sentinel)
       expect(existsSync(serviceStartLockPath(root))).toBe(false)
     } finally {
       await rm(directory, { recursive: true, force: true })

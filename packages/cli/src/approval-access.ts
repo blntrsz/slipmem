@@ -6,7 +6,7 @@ import {
 } from "@slipmem/core"
 import { Effect } from "effect"
 import { openRepository, type CliContext } from "./context.js"
-import { withSearchIndex } from "./index-access.js"
+import { withResilientSearchIndex } from "./index-access.js"
 
 export interface ApprovalAccessOptions {
   /**
@@ -33,7 +33,7 @@ export const withApprovalService = <A>(
     const refreshIndex =
       options.refreshIndex === true
         ? () =>
-            withSearchIndex(context, root, (index) =>
+            withResilientSearchIndex(context, root, (index) =>
               index.refresh().pipe(Effect.asVoid),
             )
         : undefined

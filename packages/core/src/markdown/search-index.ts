@@ -1,15 +1,20 @@
 import type { Note } from "@slipmem/schemas/note"
 import { Markdown } from "@slipmem/schemas/markdown"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Semaphore } from "effect"
 import { Database, type SQLQueryBindings } from "bun:sqlite"
 import {
   chmodSync,
+  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
+  openSync,
   readdirSync,
+  readSync,
+  statSync,
+  unlinkSync,
 } from "node:fs"
-import { join, resolve } from "node:path"
+import { dirname, join, resolve } from "node:path"
 import { createHash } from "node:crypto"
 import {
   extractInternalMarkdownLinks,
@@ -65,7 +70,7 @@ export interface MarkdownSearchInput {
 }
 
 export interface MarkdownSearchHit {
-  readonly note: Note.Info
+  readonly note: Markdown.NoteProjection
   readonly id: string
   readonly path: string
   readonly score: number
@@ -140,7 +145,7 @@ export interface MarkdownSearchIndexShape {
   ) => Effect.Effect<ReadonlyArray<MarkdownSearchHit>, MarkdownError>
   readonly searchNotes: (
     input: MarkdownSearchInput,
-  ) => Effect.Effect<ReadonlyArray<Note.Info>, MarkdownError>
+  ) => Effect.Effect<ReadonlyArray<Markdown.NoteProjection>, MarkdownError>
   readonly listTags: (
     input?: ListTagsInput,
   ) => Effect.Effect<ReadonlyArray<TagSummary>, MarkdownError>
@@ -185,11 +190,223 @@ interface SearchRow extends NoteRow {
 const indexError = (path: string, message: string): MarkdownError =>
   markdownError({ area: "index", code: "index-error", path, message })
 
+/**
+ * SQLite reports a file with an invalid header or damaged pages through these
+ * messages. Only these failures are safe to repair automatically: a permission
+ * or directory error must not cause the cache to be deleted.
+ */
+const CORRUPTION_PATTERN =
+  /(?:file is not a database|database disk image is malformed|malformed database schema|sqlite_corrupt|sqlite_notadb|database corruption)/i
+
+export const isIndexCorruptionError = (cause: unknown): boolean =>
+  CORRUPTION_PATTERN.test(
+    cause instanceof Error ? cause.message : String(cause),
+  )
+
+/**
+ * SQLite reports a replaced or unlinked database file as `DBMOVED`. It is not
+ * corruption: another process may have repaired the cache and the path can now
+ * point at a healthy replacement. Reopen it instead of deleting anything.
+ */
+const DATABASE_MOVED_PATTERN =
+  /(?:database (?:file )?(?:has been|was|has) moved|sqlite_dbmoved)/i
+
+export const isIndexDatabaseMovedError = (cause: unknown): boolean =>
+  DATABASE_MOVED_PATTERN.test(
+    cause instanceof Error ? cause.message : String(cause),
+  )
+
+interface IndexFileIdentity {
+  readonly dev: number
+  readonly ino: number
+}
+
+/** Identity of the file currently at the cache path, or null when absent. */
+const indexFileIdentity = (path: string): IndexFileIdentity | null => {
+  try {
+    const stats = statSync(path)
+    return { dev: stats.dev, ino: stats.ino }
+  } catch {
+    return null
+  }
+}
+
+const sameIndexFile = (
+  expected: IndexFileIdentity,
+  actual: IndexFileIdentity | null,
+): boolean =>
+  actual !== null && actual.dev === expected.dev && actual.ino === expected.ino
+
+/**
+ * True when the cache path no longer names the file this handle opened. A
+ * missing file counts: the next open recreates the disposable cache.
+ */
+const indexFileReplaced = (
+  expected: IndexFileIdentity | undefined,
+  path: string,
+): boolean =>
+  expected !== undefined && !sameIndexFile(expected, indexFileIdentity(path))
+
+const SQLITE_HEADER_BYTES = 16
+const SQLITE_HEADER = Buffer.from("SQLite format 3\u0000", "latin1")
+const INDEX_SIDECARS = ["", "-wal", "-shm", "-journal"] as const
+
+/**
+ * Reads the SQLite header without opening a database. This is the only check a
+ * documented repair command needs before it is safe to remove a corrupt file;
+ * opening a damaged database first can fail before the recovery path starts.
+ */
+const readIndexHeader = (path: string): Buffer | null => {
+  let descriptor: number | undefined
+  try {
+    descriptor = openSync(path, "r")
+    const header = Buffer.alloc(SQLITE_HEADER_BYTES)
+    const read = readSync(descriptor, header, 0, SQLITE_HEADER_BYTES, 0)
+    return header.subarray(0, read)
+  } catch {
+    // Unreadable is not the same as corrupt. The open path reports it with the
+    // operating-system error instead of deleting a file we could not inspect.
+    return null
+  } finally {
+    if (descriptor !== undefined) {
+      closeSync(descriptor)
+    }
+  }
+}
+
+/**
+ * Detects a corrupt or truncated index file by its on-disk header. A missing or
+ * empty file is a normal cache miss; an unreadable file is left for the open
+ * path to report.
+ */
+export const indexFileIsCorrupt = (
+  config: MarkdownSearchIndexConfig,
+): boolean => {
+  const path = indexPath(config)
+  let stats
+  try {
+    stats = lstatSync(path)
+  } catch {
+    return false
+  }
+  if (!stats.isFile() || stats.size === 0) {
+    return false
+  }
+  const header = readIndexHeader(path)
+  if (header === null) {
+    return false
+  }
+  return (
+    header.length !== SQLITE_HEADER_BYTES || !header.equals(SQLITE_HEADER)
+  )
+}
+
+/**
+ * Removes the disposable SQLite files without opening them. The cache directory
+ * is preserved, matching the documented `cache clear` contract.
+ */
+export const repairSearchIndexCache = (
+  config: MarkdownSearchIndexConfig,
+  expected?: IndexFileIdentity,
+): Effect.Effect<
+  {
+    readonly path: string
+    readonly removed: boolean
+    readonly replaced: boolean
+  },
+  MarkdownError
+> => {
+  const path = indexPath(config)
+  return Effect.try({
+    try: () => {
+      const locationError = indexLocationError(config)
+      if (locationError !== null) {
+        throw locationError
+      }
+
+      // A caller that owns an open handle passes its inode identity. If the
+      // path now names a different file, another process installed a healthy
+      // replacement: never delete it, and let the caller reopen instead.
+      if (expected !== undefined && !sameIndexFile(expected, indexFileIdentity(path))) {
+        return { path, removed: false, replaced: true }
+      }
+
+      let removed = false
+      for (const suffix of INDEX_SIDECARS) {
+        const candidate = `${path}${suffix}`
+        let stats
+        try {
+          stats = lstatSync(candidate)
+        } catch {
+          continue
+        }
+        if (stats.isSymbolicLink()) {
+          throw indexError(
+            candidate,
+            "The index file must not be a symbolic link; remove it and rebuild the index.",
+          )
+        }
+        if (!stats.isFile()) {
+          throw indexError(
+            candidate,
+            "The index path is not a regular file; remove it and rebuild the index.",
+          )
+        }
+        unlinkSync(candidate)
+        removed = true
+      }
+      return { path, removed, replaced: false }
+    },
+    catch: (cause) =>
+      cause instanceof MarkdownError
+        ? cause
+        : indexError(
+            path,
+            `Could not remove the unreadable search index: ${cause instanceof Error ? cause.message : String(cause)}`,
+          ),
+  })
+}
+
+/**
+ * Header-level repair shared by the documented CLI recovery commands. It never
+ * opens the index, so a file that SQLite would reject is removed first.
+ */
+export const repairCorruptSearchIndex = (
+  config: MarkdownSearchIndexConfig,
+): Effect.Effect<{ readonly path: string; readonly repaired: boolean }, MarkdownError> =>
+  indexFileIsCorrupt(config)
+    ? repairSearchIndexCache(config).pipe(
+        Effect.map((result) => ({
+          path: result.path,
+          repaired: result.removed,
+        })),
+      )
+    : Effect.succeed({ path: indexPath(config), repaired: false })
+
 const cacheDirectory = (config: MarkdownSearchIndexConfig): string =>
   resolve(config.cacheDir ?? defaultIndexCacheDirectory(config.root))
 
 const indexPath = (config: MarkdownSearchIndexConfig): string =>
   join(cacheDirectory(config), INDEX_FILENAME)
+
+/**
+ * Finds the first component that exists so a not-yet-created cache path can be
+ * checked for an impossible parent such as a regular file or a non-directory
+ * symlink. This is a configuration error, not recoverable cache damage.
+ */
+const nearestExistingAncestor = (path: string): string | null => {
+  let current = resolve(path)
+  for (;;) {
+    if (existsSync(current)) {
+      return current
+    }
+    const next = dirname(current)
+    if (next === current) {
+      return null
+    }
+    current = next
+  }
+}
 
 /**
  * The disposable index may not be redirected into the note root through a
@@ -231,6 +448,24 @@ const validateLocation = (
     )
   }
 
+  const existingAncestor = nearestExistingAncestor(cacheDir)
+  if (existingAncestor !== null) {
+    let isDirectory = false
+    try {
+      // Follow a safe ancestor symlink: only the final cache directory itself
+      // is forbidden from being a link. A file ancestor can never hold a cache.
+      isDirectory = statSync(existingAncestor).isDirectory()
+    } catch {
+      isDirectory = false
+    }
+    if (!isDirectory) {
+      return indexError(
+        cacheDir,
+        `The index cache path '${cacheDir}' is inside '${existingAncestor}', which is not a directory. Point cacheDir at a real directory outside the note root.`,
+      )
+    }
+  }
+
   const databasePath = join(cacheDir, INDEX_FILENAME)
   if (existsSync(databasePath) && lstatSync(databasePath).isSymbolicLink()) {
     return indexError(
@@ -240,6 +475,21 @@ const validateLocation = (
   }
 
   return null
+}
+
+/**
+ * Shared construction-time guard for both the eager and resilient index. A
+ * configuration or symlink error fails the host layer; a damaged index file
+ * does not, because that is recoverable derived data.
+ */
+const indexLocationError = (
+  config: MarkdownSearchIndexConfig,
+): MarkdownError | null => {
+  const root = resolve(config.root)
+  if (isSymbolicLinkPath(root)) {
+    return rootSymlinkError(root)
+  }
+  return validateLocation(root, cacheDirectory(config))
 }
 
 const ensureUserOnlyDirectory = (path: string): void => {
@@ -492,7 +742,7 @@ const tagText = (tags: ReadonlyArray<string>): string =>
 const parseTags = (tags: string): ReadonlyArray<string> =>
   tags.length === 0 ? [] : tags.trim().split(/\s+/)
 
-const rowToInfo = (row: NoteRow): Note.Info => {
+const rowToProjection = (row: NoteRow): Markdown.NoteProjection => {
   switch (row.type) {
     case "fleeting":
       return {
@@ -646,14 +896,11 @@ export const makeMarkdownSearchIndex = (
     // The repository rejects a linked note root, but the index can be
     // constructed directly. Indexing through a link would bind the cache to the
     // link path while reading a different real directory, so reject it here too.
-    if (isSymbolicLinkPath(root)) {
-      return yield* Effect.fail(rootSymlinkError(root))
-    }
-    const path = indexPath(config)
-    const locationError = validateLocation(root, cacheDirectory(config))
+    const locationError = indexLocationError(config)
     if (locationError !== null) {
       return yield* Effect.fail(locationError)
     }
+    const path = indexPath(config)
     const database = yield* Effect.try({
       try: () => openDatabase(root, path),
       catch: (cause) =>
@@ -761,7 +1008,7 @@ export const makeMarkdownSearchIndex = (
       readonly contentHash: string
       readonly size: number
       readonly mtimeMs: number
-      readonly info: Note.Info
+      readonly projection: Markdown.NoteProjection
     }): NoteRow => ({
       id: note.id,
       path: note.path,
@@ -770,8 +1017,8 @@ export const makeMarkdownSearchIndex = (
       body: note.body,
       reference: note.metadata.reference ?? null,
       tags: tagText(note.metadata.tags ?? []),
-      created_at: note.info.createdAt,
-      updated_at: note.info.updatedAt,
+      created_at: note.projection.createdAt,
+      updated_at: note.projection.updatedAt,
       mtime_ms: note.mtimeMs,
       size: note.size,
       content_hash: note.contentHash,
@@ -979,7 +1226,7 @@ export const makeMarkdownSearchIndex = (
         )
         .slice(0, limit)
         .map(({ row, score }) => ({
-          note: rowToInfo(row),
+          note: rowToProjection(row),
           id: row.id,
           path: row.path,
           score,
@@ -1020,7 +1267,7 @@ export const makeMarkdownSearchIndex = (
         .all(...values)
 
       return rows.map((row) => ({
-        note: rowToInfo(row),
+        note: rowToProjection(row),
         id: row.id,
         path: row.path,
         score: -row.rank,
@@ -1209,6 +1456,177 @@ export const makeMarkdownSearchIndex = (
     }
   })
 
+/**
+ * Lazy, self-healing index service for hosts where notes and approvals must
+ * remain available even when the disposable cache is damaged.
+ *
+ * Construction never opens SQLite. The first operation opens the index; if the
+ * file is corrupt (an invalid header, damaged pages, or a corrupt sidecar), the
+ * files are removed and the index is rebuilt once. Another process may replace
+ * the cache; the handle verifies the on-disk inode before each operation and
+ * reopens a replacement without deleting it. Operations after that retry are
+ * serialized so concurrent HTTP requests cannot race the repair. Only the
+ * derived cache is affected: note files and approval state are untouched.
+ */
+export const makeMarkdownSearchIndexResilient = (
+  config: MarkdownSearchIndexConfig,
+): Effect.Effect<MarkdownSearchIndexShape, MarkdownError> =>
+  Effect.gen(function* () {
+    // Configuration and symlink errors still fail the host layer; only a
+    // damaged index file is recoverable. No SQLite handle is opened here.
+    const locationError = indexLocationError(config)
+    if (locationError !== null) {
+      return yield* Effect.fail(locationError)
+    }
+    const root = resolve(config.root)
+    const path = indexPath(config)
+    const semaphore = Semaphore.makeUnsafe(1)
+    let current: MarkdownSearchIndexShape | undefined
+    let currentIdentity: IndexFileIdentity | undefined
+    let closed = false
+
+    const closeCurrent = (): Effect.Effect<void> =>
+      Effect.suspend(() => {
+        const index = current
+        current = undefined
+        currentIdentity = undefined
+        return index === undefined ? Effect.void : index.close()
+      })
+
+    const repair = (
+      expected?: IndexFileIdentity,
+    ): Effect.Effect<
+      { readonly path: string; readonly removed: boolean; readonly replaced: boolean },
+      MarkdownError
+    > =>
+      closeCurrent().pipe(
+        Effect.flatMap(() => repairSearchIndexCache(config, expected)),
+      )
+
+    const recoveryError = (error: MarkdownError): MarkdownError =>
+      isIndexCorruptionError(error)
+        ? indexError(
+            path,
+            `The search index is unreadable: ${error.message} Run 'slipmem cache clear' or 'slipmem check --rebuild-index' to rebuild it.`,
+          )
+        : error
+
+    const openFresh = (): Effect.Effect<MarkdownSearchIndexShape, MarkdownError> =>
+      makeMarkdownSearchIndex(config).pipe(
+        Effect.tap((index) =>
+          Effect.sync(() => {
+            current = index
+            currentIdentity = indexFileIdentity(path) ?? undefined
+          }),
+        ),
+      )
+
+    const open = (
+      allowRepair = true,
+    ): Effect.Effect<MarkdownSearchIndexShape, MarkdownError> => {
+      if (current !== undefined) {
+        return Effect.succeed(current)
+      }
+      if (closed) {
+        return Effect.fail(indexError(path, "The search index is closed."))
+      }
+      const before = indexFileIdentity(path)
+      return openFresh().pipe(
+        Effect.catch((error) => {
+          if (!isIndexCorruptionError(error)) {
+            return Effect.fail(error)
+          }
+          const after = indexFileIdentity(path)
+          // If the path changed while we tried to open it, another process
+          // installed or removed the cache. Retry the replacement without
+          // deleting a file we do not own.
+          const replaced =
+            before === null ? after !== null : !sameIndexFile(before, after)
+          if (replaced || !allowRepair) {
+            return openFresh().pipe(Effect.mapError(recoveryError))
+          }
+          return repair(before ?? undefined).pipe(
+            Effect.flatMap((result) =>
+              result.replaced
+                ? openFresh().pipe(Effect.mapError(recoveryError))
+                : openFresh(),
+            ),
+            Effect.mapError(recoveryError),
+          )
+        }),
+      )
+    }
+
+    const withOpen = <A>(
+      operation: (
+        index: MarkdownSearchIndexShape,
+      ) => Effect.Effect<A, MarkdownError>,
+    ): Effect.Effect<A, MarkdownError> =>
+      semaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const replacedCurrent = indexFileReplaced(currentIdentity, path)
+          if (replacedCurrent) {
+            // The file at the path is no longer the inode this handle opened.
+            // Close it before using stale data; the next open targets the
+            // replacement. Never delete the replacement here.
+            yield* closeCurrent()
+          }
+          const index = yield* open(!replacedCurrent)
+          const openedIdentity = currentIdentity
+          return yield* operation(index).pipe(
+            Effect.catch((error) => {
+              const replaced = indexFileReplaced(openedIdentity, path)
+              if (replaced || isIndexDatabaseMovedError(error)) {
+                return Effect.gen(function* () {
+                  yield* closeCurrent()
+                  const reopened = yield* open(false)
+                  return yield* operation(reopened)
+                })
+              }
+              if (!isIndexCorruptionError(error)) {
+                return Effect.fail(error)
+              }
+              if (openedIdentity === undefined) {
+                // Without a stable inode identity we cannot prove that the
+                // file we are about to remove is the one this handle opened.
+                return Effect.fail(recoveryError(error))
+              }
+              return Effect.gen(function* () {
+                const repaired = yield* repair(openedIdentity)
+                const reopened = yield* open(!repaired.replaced)
+                return yield* operation(reopened)
+              })
+            }),
+          )
+        }),
+      )
+
+    return {
+      root,
+      path,
+      get mode(): SearchIndexMode {
+        return current?.mode ?? "linear"
+      },
+      refresh: () => withOpen((index) => index.refresh()),
+      rebuild: () => withOpen((index) => index.rebuild()),
+      clear: () => withOpen((index) => index.clear()),
+      search: (input) => withOpen((index) => index.search(input)),
+      searchNotes: (input) => withOpen((index) => index.searchNotes(input)),
+      listTags: (input) => withOpen((index) => index.listTags(input)),
+      backlinks: (noteId, limit) =>
+        withOpen((index) => index.backlinks(noteId, limit)),
+      snapshot: () => withOpen((index) => index.snapshot()),
+      status: () => withOpen((index) => index.status()),
+      close: () =>
+        semaphore.withPermits(1)(
+          Effect.suspend(() => {
+            closed = true
+            return closeCurrent()
+          }),
+        ),
+    }
+  })
+
 /** Scoped Layer that closes the SQLite handle when the scope ends. */
 export const MarkdownSearchIndexLive = (
   config: MarkdownSearchIndexConfig,
@@ -1232,6 +1650,28 @@ export const MarkdownSearchIndexFromRepository = (
       const repository = yield* MarkdownNoteRepository
       return yield* Effect.acquireRelease(
         makeMarkdownSearchIndex({ ...options, root: repository.root }),
+        (index) => index.close(),
+      )
+    }),
+  )
+
+/**
+ * Resilient variant of {@link MarkdownSearchIndexFromRepository}. It keeps the
+ * same service type, so every existing consumer works unchanged, but a broken
+ * cache degrades only index operations instead of failing the host layer.
+ */
+export const MarkdownSearchIndexResilientFromRepository = (
+  options: Omit<MarkdownSearchIndexConfig, "root"> = {},
+): Layer.Layer<MarkdownSearchIndex, MarkdownError, MarkdownNoteRepository> =>
+  Layer.effect(
+    MarkdownSearchIndex,
+    Effect.gen(function* () {
+      const repository = yield* MarkdownNoteRepository
+      return yield* Effect.acquireRelease(
+        makeMarkdownSearchIndexResilient({
+          ...options,
+          root: repository.root,
+        }),
         (index) => index.close(),
       )
     }),

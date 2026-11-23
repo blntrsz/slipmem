@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { createHash } from "node:crypto"
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { CliContext } from "./context.js"
 import { runInitiativeCli } from "./initiative-cli.js"
@@ -21,7 +31,7 @@ interface Fixture {
 }
 
 const fixture = (): Fixture => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-initiative-cli-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-initiative-cli-"))
   cleanup.push(base)
   const root = join(base, ".slipmem")
   mkdirSync(root, { recursive: true })
@@ -56,6 +66,43 @@ const fixture = (): Fixture => {
 
 const json = <A>(lines: ReadonlyArray<string>): A =>
   JSON.parse(lines.join("")) as A
+
+const initializeGit = (base: string): void => {
+  const git = (...args: ReadonlyArray<string>): string =>
+    execFileSync("git", args, {
+      cwd: base,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim()
+  git("init", "-b", "main")
+  git("config", "user.email", "test@example.com")
+  git("config", "user.name", "Test")
+  git("add", "src", "docs")
+  git("commit", "-m", "initial")
+}
+
+const draftWithPin = (
+  pin: Record<string, unknown>,
+): Record<string, unknown> => ({
+  title: "Initiative command path",
+  scope: {
+    summary: "Use a nested initiative record, not a note.",
+    intendedBehavior: "Provide pin, create, verify, scope, and promote.",
+    sourcePath: "docs/scope.md",
+  },
+  milestones: [
+    {
+      title: "Command path",
+      intendedBehavior: "The minimal path is executable and honest.",
+      assertions: [
+        {
+          claim: "The feature source line is pinned.",
+          supports: [pin],
+        },
+      ],
+    },
+  ],
+})
 
 describe("initiative CLI", () => {
   test("pins source, creates, verifies, and promotes through a usable path", async () => {
@@ -260,6 +307,174 @@ describe("initiative CLI", () => {
     ).toBe(0)
     const created = json<{ initiative: { id: string } }>(item.stdout)
     expect(created.initiative.id).toStartWith("initiative-")
+  })
+
+  test("text output exposes a stale projection", async () => {
+    const item = fixture()
+    initializeGit(item.base)
+
+    expect(
+      await runInitiativeCli(
+        ["pin", "src/feature.ts", "--kind", "code", "--lines", "1-1", "--json"],
+        item.context,
+      ),
+    ).toBe(0)
+    const pinned = json<{ pin: Record<string, unknown> }>(item.stdout)
+    writeFileSync(
+      join(item.base, "draft.json"),
+      JSON.stringify(draftWithPin(pinned.pin), null, 2),
+      "utf8",
+    )
+
+    item.stdout.length = 0
+    expect(
+      await runInitiativeCli(
+        ["create", "--draft", "draft.json", "--json"],
+        item.context,
+      ),
+    ).toBe(0)
+    const created = json<{
+      initiative: {
+        id: string
+        milestones: ReadonlyArray<{
+          assertions: ReadonlyArray<{ id: string }>
+        }>
+      }
+    }>(item.stdout)
+    const assertionId = created.initiative.milestones[0]!.assertions[0]!.id
+
+    item.stdout.length = 0
+    expect(
+      await runInitiativeCli(
+        ["promote", created.initiative.id, assertionId, "--json"],
+        item.context,
+      ),
+    ).toBe(0)
+    const promoted = json<{
+      promotion: { evidenceDigest: string }
+      projection: { status: string }
+    }>(item.stdout)
+    expect(promoted.projection.status).toBe("created")
+
+    const noteName = readdirSync(item.root).find((name) => name.endsWith(".md"))
+    expect(noteName).toBeDefined()
+    const notePath = join(item.root, noteName!)
+    writeFileSync(
+      notePath,
+      readFileSync(notePath, "utf8").replaceAll(
+        promoted.promotion.evidenceDigest,
+        "0".repeat(64),
+      ),
+      "utf8",
+    )
+
+    item.stdout.length = 0
+    expect(
+      await runInitiativeCli(
+        ["project", created.initiative.id, assertionId],
+        item.context,
+      ),
+    ).toBe(0)
+    expect(item.stdout.join("")).toContain("(stale)")
+
+    item.stdout.length = 0
+    expect(
+      await runInitiativeCli(
+        ["reconcile", created.initiative.id],
+        item.context,
+      ),
+    ).toBe(0)
+    expect(item.stdout.join("")).toContain("(stale)")
+  })
+
+  test("text output reports a committed promotion with a pending projection", async () => {
+    const item = fixture()
+    initializeGit(item.base)
+
+    expect(
+      await runInitiativeCli(
+        ["pin", "src/feature.ts", "--kind", "code", "--lines", "1-1", "--json"],
+        item.context,
+      ),
+    ).toBe(0)
+    const pinned = json<{ pin: Record<string, unknown> }>(item.stdout)
+    writeFileSync(
+      join(item.base, "draft.json"),
+      JSON.stringify(draftWithPin(pinned.pin), null, 2),
+      "utf8",
+    )
+
+    item.stdout.length = 0
+    expect(
+      await runInitiativeCli(
+        ["create", "--draft", "draft.json", "--json"],
+        item.context,
+      ),
+    ).toBe(0)
+    const created = json<{
+      initiative: {
+        id: string
+        milestones: ReadonlyArray<{
+          assertions: ReadonlyArray<{ id: string }>
+        }>
+      }
+    }>(item.stdout)
+    const assertionId = created.initiative.milestones[0]!.assertions[0]!.id
+
+    const promotionId = `promotion-${assertionId}`
+    const receipts = join(item.root, ".state", "initiative-projections")
+    mkdirSync(receipts, { recursive: true })
+    const createdAt = new Date(item.context.now()).toISOString()
+    writeFileSync(
+      join(
+        receipts,
+        `${createHash("sha256")
+          .update(
+            `${created.initiative.id}\0${assertionId}\0${promotionId}`,
+          )
+          .digest("hex")
+          .slice(0, 32)}.json`,
+      ),
+      `${JSON.stringify(
+        {
+          schema: "slipmem.initiative-projection-receipt.v1",
+          promotionId,
+          initiativeId: created.initiative.id,
+          assertionId,
+          evidenceDigest: "a".repeat(64),
+          status: "pending",
+          createdAt,
+          updatedAt: createdAt,
+          pid: process.pid + 1,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    )
+
+    item.stdout.length = 0
+    expect(
+      await runInitiativeCli(
+        ["promote", created.initiative.id, assertionId],
+        item.context,
+      ),
+    ).toBe(0)
+    const output = item.stdout.join("")
+    expect(output).toContain("main note projection: pending")
+    expect(output).toContain("Promotion is committed")
+    expect(
+      readdirSync(item.root).filter((name) => name.endsWith(".md")),
+    ).toEqual([])
+
+    item.stdout.length = 0
+    expect(
+      await runInitiativeCli(
+        ["reconcile", created.initiative.id],
+        item.context,
+      ),
+    ).toBe(0)
+    expect(item.stdout.join("")).toContain("pending")
   })
 
   test("missing required options fail as usage errors", async () => {

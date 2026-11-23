@@ -2,7 +2,7 @@ import { Markdown } from "@slipmem/schemas/markdown"
 import { Effect, Option, Schema } from "effect"
 import {
   existsSync,
-  mkdirSync,
+  lstatSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -11,7 +11,8 @@ import {
 } from "node:fs"
 import { join } from "node:path"
 import { atomicWriteFile } from "../markdown/atomic.js"
-import { stateDirectory } from "../markdown/root.js"
+import { MarkdownError } from "../markdown/errors.js"
+import { ensureStateSubdirectory, stateDirectory } from "../markdown/root.js"
 import { type ApprovalError, approvalError } from "./errors.js"
 
 export const PENDING_DIRECTORY = "pending"
@@ -245,6 +246,42 @@ const readProposalFile = (
   expectedId?: string,
 ): Effect.Effect<ApprovalProposal, ApprovalError> =>
   Effect.gen(function* () {
+    let stats: ReturnType<typeof lstatSync>
+    try {
+      stats = lstatSync(path)
+    } catch (cause) {
+      return yield* Effect.fail(
+        approvalError({
+          code: "proposal-read-failed",
+          path,
+          message: `Could not inspect the proposal file: ${
+            cause instanceof Error ? cause.message : String(cause)
+          }`,
+          ...(expectedId === undefined ? {} : { proposalId: expectedId }),
+        }),
+      )
+    }
+    if (stats.isSymbolicLink()) {
+      return yield* Effect.fail(
+        invalid(
+          path,
+          "Proposal files must not be symbolic links.",
+          undefined,
+          expectedId,
+        ),
+      )
+    }
+    if (!stats.isFile()) {
+      return yield* Effect.fail(
+        invalid(
+          path,
+          "A proposal entry must be a regular file.",
+          undefined,
+          expectedId,
+        ),
+      )
+    }
+
     let raw: string
     try {
       raw = readFileSync(path, "utf8")
@@ -316,15 +353,18 @@ export const makeProposalStore = (
       nowMs: now(),
     })
 
+    // `.state/` and every internal child must be created through the root
+    // helpers. A lexical `mkdir` would follow a symlinked `.state/pending` and
+    // let proposal data escape the repository.
     const ensureDirectory = (): Effect.Effect<void, ApprovalError> =>
       Effect.try({
         try: () => {
-          mkdirSync(directory, { recursive: true, mode: 0o700 })
+          ensureStateSubdirectory(root, PENDING_DIRECTORY)
         },
         catch: (cause) =>
           approvalError({
             code: "proposal-write-failed",
-            path: directory,
+            path: cause instanceof MarkdownError ? cause.path : directory,
             message: `Could not create the pending proposal directory: ${cause instanceof Error ? cause.message : String(cause)}`,
           }),
       })
@@ -385,6 +425,7 @@ export const makeProposalStore = (
     ): Effect.Effect<Option.Option<ApprovalProposal>, ApprovalError> =>
       Effect.gen(function* () {
         yield* assertProposalId(proposalId)
+        yield* ensureDirectory()
         const path = fileFor(directory, proposalId)
         if (!existsSync(path)) {
           return Option.none()
@@ -453,6 +494,7 @@ export const makeProposalStore = (
     ): Effect.Effect<boolean, ApprovalError> =>
       Effect.gen(function* () {
         yield* assertProposalId(proposalId)
+        yield* ensureDirectory()
         const path = fileFor(directory, proposalId)
         if (!existsSync(path)) {
           return false
@@ -506,7 +548,11 @@ export const makeProposalStore = (
         }
 
         try {
-          mkdirSync(quarantineDirectory, { recursive: true, mode: 0o700 })
+          ensureStateSubdirectory(
+            root,
+            QUARANTINE_DIRECTORY,
+            PENDING_DIRECTORY,
+          )
           const base = name.slice(0, -PENDING_SUFFIX.length)
           let target = join(quarantineDirectory, name)
           for (let suffix = 2; existsSync(target); suffix++) {
@@ -530,6 +576,14 @@ export const makeProposalStore = (
     const boundQuarantine = (): void => {
       let names: ReadonlyArray<string>
       try {
+        // Validate every component before listing or unlinking. Otherwise a
+        // symlinked quarantine directory would let this bounded-retention
+        // cleanup delete JSON files outside the repository.
+        ensureStateSubdirectory(
+          root,
+          QUARANTINE_DIRECTORY,
+          PENDING_DIRECTORY,
+        )
         names = readdirSync(quarantineDirectory).filter((name) =>
           name.endsWith(PENDING_SUFFIX),
         )

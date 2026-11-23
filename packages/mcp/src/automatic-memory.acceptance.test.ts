@@ -693,11 +693,8 @@ test(
   "offline runtime generates immediately, recalls through chat without Jev, and dedupes on restart",
   async () => {
     const nonce = crypto.randomUUID().slice(0, 8)
-    const tempBase = existsSync("/tmp/opencode")
-      ? "/tmp/opencode"
-      : tmpdir()
     const base = await mkdtemp(
-      join(tempBase, `slipmem-auto-memory-acceptance-${nonce}-`),
+      join(tmpdir(), `slipmem-auto-memory-acceptance-${nonce}-`),
     )
     const root = join(base, ".slipmem")
     const homeDir = join(base, "home")

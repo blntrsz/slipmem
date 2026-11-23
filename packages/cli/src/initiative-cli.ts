@@ -7,6 +7,7 @@ import {
   type InitiativeAssertionInput,
   type InitiativeDraftInput,
   type InitiativeError,
+  type InitiativeProjectionResult,
   type InitiativeRecord,
   type MarkdownError,
 } from "@slipmem/core"
@@ -140,6 +141,14 @@ const serviceFor = (
     })
     return { service, resolved, evidenceRoot }
   })
+
+const projectionSummary = (
+  projection: Pick<
+    InitiativeProjectionResult,
+    "status" | "stale" | "reason"
+  >,
+): string =>
+  `${projection.status}${projection.stale === true ? " (stale)" : ""}${projection.reason === undefined ? "" : ` (${projection.reason})`}`
 
 const projectPath = (
   evidenceRoot: string,
@@ -452,7 +461,7 @@ const definitions: Readonly<Record<string, CommandSpec>> = {
           )
           writeLine(
             context.io,
-            `  main note projection: ${result.projection.status}${result.projection.reason === undefined ? "" : ` (${result.projection.reason})`}${result.projection.noteId === undefined ? "" : ` ${result.projection.noteId}`}`,
+            `  main note projection: ${projectionSummary(result.projection)}${result.projection.noteId === undefined ? "" : ` ${result.projection.noteId}`}`,
           )
           if (result.projection.status === "skipped") {
             writeLine(
@@ -460,11 +469,30 @@ const definitions: Readonly<Record<string, CommandSpec>> = {
               "  No note was written to the main store without a landed, main-reachable snapshot.",
             )
           }
+          if (result.projection.status === "pending") {
+            writeLine(
+              context.io,
+              "  Promotion is committed. Another process owns a fresh projection receipt; retry later or run the reconcile command.",
+            )
+          }
+          if (result.projection.status === "failed") {
+            writeLine(
+              context.io,
+              `  Promotion is committed, but projection failed: ${result.projection.error?.message ?? result.projection.reason ?? "unknown error"}`,
+            )
+            writeLine(
+              context.io,
+              "  Fix the cause, then run the reconcile command.",
+            )
+          }
           writeLine(
             context.io,
             "  Advisory: promotion records pinned evidence, not semantic truth.",
           )
         }
+        // The promotion itself is committed. Projection is a separate,
+        // structured outcome (`pending`/`failed`), so this stays a successful
+        // command while still disclosing the projection state above.
         return 0
       }),
   },
@@ -485,7 +513,7 @@ const definitions: Readonly<Record<string, CommandSpec>> = {
         } else {
           writeLine(
             context.io,
-            `Projection ${result.status} for ${result.assertionId}${result.reason === undefined ? "" : ` (${result.reason})`}`,
+            `Projection ${projectionSummary(result)} for ${result.assertionId}`,
           )
           if (result.noteId !== undefined) {
             writeLine(context.io, `  ${result.noteId}`)
@@ -512,7 +540,7 @@ const definitions: Readonly<Record<string, CommandSpec>> = {
             const result = item.result
             writeLine(
               context.io,
-              `  ${item.initiativeId} / ${item.assertionId}: ${result.status}${result.reason === undefined ? "" : ` (${result.reason})`}${result.noteId === undefined ? "" : ` ${result.noteId}`}`,
+              `  ${item.initiativeId} / ${item.assertionId}: ${projectionSummary(result)}${result.noteId === undefined ? "" : ` ${result.noteId}`}`,
             )
           }
         }

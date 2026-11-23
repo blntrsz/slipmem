@@ -8,7 +8,7 @@ import { numberOption, stringOption } from "../args.js"
 import { resolveRoot } from "../context.js"
 import { usageError } from "../errors.js"
 import { makeExcerpt } from "../excerpt.js"
-import { withSearchIndex } from "../index-access.js"
+import { withResilientSearchIndex } from "../index-access.js"
 import { citationPath, parseLimit, parseNoteType } from "../note-values.js"
 import { writeJson, writeLine } from "../output.js"
 import type { CommandDefinition } from "./command.js"
@@ -67,17 +67,20 @@ export const searchCommand: CommandDefinition = {
       })
 
       const resolved = yield* resolveRoot(context, stringOption(parsed, "dir"))
-      const result = yield* withSearchIndex(context, resolved.root, (index) =>
-        Effect.gen(function* () {
-          yield* index.refresh()
-          const hits = yield* index.search({
-            query,
-            limit,
-            ...(type === undefined ? {} : { kinds: [type] }),
-            ...(tag === undefined ? {} : { tag }),
-          })
-          return { hits, mode: index.mode, path: index.path }
-        }),
+      const result = yield* withResilientSearchIndex(
+        context,
+        resolved.root,
+        (index) =>
+          Effect.gen(function* () {
+            yield* index.refresh()
+            const hits = yield* index.search({
+              query,
+              limit,
+              ...(type === undefined ? {} : { kinds: [type] }),
+              ...(tag === undefined ? {} : { tag }),
+            })
+            return { hits, mode: index.mode, path: index.path }
+          }),
       )
 
       if (parsed.options.json === true) {

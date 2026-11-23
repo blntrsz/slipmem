@@ -3,21 +3,23 @@ import {
   atomicWriteFile,
   isPathInside,
 } from "@slipmem/core"
+import {
+  DEFAULT_RUN_LEASE_STALE_MS,
+  RUN_LEASE_FILENAME,
+  inspectRunLease,
+  runLeasePath,
+  tryAcquireRunLeaseSync,
+} from "@slipmem/core/runtime"
 import { Effect } from "effect"
 import {
-  closeSync,
   existsSync,
   lstatSync,
   mkdirSync,
-  openSync,
   readFileSync,
   realpathSync,
   statSync,
-  unlinkSync,
-  utimesSync,
-  writeSync,
 } from "node:fs"
-import { createHash, randomUUID } from "node:crypto"
+import { createHash } from "node:crypto"
 import { join, resolve } from "node:path"
 import type { ParsedMarkdownNote } from "@slipmem/core"
 import type { CaptureEvidence } from "./evidence.js"
@@ -32,8 +34,9 @@ export const GIT_CAPTURE_CHECKPOINT_VERSION = 1
  * file. CLI consolidation participates in the same lease instead of using a
  * separate lock, so both owners can never consolidate one note root at once.
  */
-export const AUTOMATIC_MEMORY_LEASE_FILENAME = "automatic-memory.lease"
-export const DEFAULT_CONSOLIDATION_LEASE_STALE_MS = 10 * 60_000
+export const AUTOMATIC_MEMORY_LEASE_FILENAME = RUN_LEASE_FILENAME
+export const DEFAULT_CONSOLIDATION_LEASE_STALE_MS =
+  DEFAULT_RUN_LEASE_STALE_MS
 
 const SHA1_OR_SHA256 = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/
 const SHA256 = /^[0-9a-f]{64}$/
@@ -405,72 +408,6 @@ export interface ConsolidationLock {
   readonly release: () => void
 }
 
-interface ConsolidationLeaseRecord {
-  readonly pid: number
-  readonly token: string
-  readonly createdAt: string
-}
-
-const consolidationLeasePath = (root: string): string =>
-  join(resolve(root), STATE_DIRECTORY, AUTOMATIC_MEMORY_LEASE_FILENAME)
-
-const isProcessAlive = (pid: number): boolean => {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false
-  }
-  try {
-    process.kill(pid, 0)
-    return true
-  } catch (cause) {
-    return (
-      typeof cause === "object" &&
-      cause !== null &&
-      "code" in cause &&
-      (cause as { code?: unknown }).code === "EPERM"
-    )
-  }
-}
-
-const readConsolidationLease = (
-  path: string,
-): ConsolidationLeaseRecord | null => {
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<ConsolidationLeaseRecord>
-    return typeof parsed.pid === "number" &&
-      typeof parsed.token === "string" &&
-      typeof parsed.createdAt === "string"
-      ? { pid: parsed.pid, token: parsed.token, createdAt: parsed.createdAt }
-      : null
-  } catch {
-    return null
-  }
-}
-
-/**
- * Mirrors the served runtime lease recovery: a dead owner is stale
- * immediately, while a live or unreadable owner only ages out after the
- * bounded lease age so a mid-write file is not stolen.
- */
-const consolidationLeaseIsStale = (
-  path: string,
-  staleMs: number,
-): boolean => {
-  let mtimeMs: number
-  try {
-    mtimeMs = lstatSync(path).mtimeMs
-  } catch {
-    return true
-  }
-  const record = readConsolidationLease(path)
-  if (record === null) {
-    return Date.now() - mtimeMs > staleMs
-  }
-  if (!isProcessAlive(record.pid)) {
-    return true
-  }
-  return Date.now() - mtimeMs > staleMs
-}
-
 const liveConsolidationLeaseError = (path: string): GitCaptureError =>
   gitCaptureError({
     code: "consolidation-locked",
@@ -489,18 +426,13 @@ export interface ConsolidationLeaseStatus {
 export const inspectConsolidationLease = (
   root: string,
 ): ConsolidationLeaseStatus => {
-  const path = consolidationLeasePath(root)
-  if (!existsSync(path)) {
-    return { path, live: false }
-  }
-  const record = readConsolidationLease(path)
+  const status = inspectRunLease(root, {
+    staleMs: DEFAULT_CONSOLIDATION_LEASE_STALE_MS,
+  })
   return {
-    path,
-    live: !consolidationLeaseIsStale(
-      path,
-      DEFAULT_CONSOLIDATION_LEASE_STALE_MS,
-    ),
-    ...(record === null ? {} : { pid: record.pid }),
+    path: status.path,
+    live: status.live,
+    ...(status.pid === undefined ? {} : { pid: status.pid }),
   }
 }
 
@@ -527,82 +459,30 @@ export const acquireConsolidationLock = (
   if ("error" in ensured) {
     return { error: ensured.error }
   }
-  const path = consolidationLeasePath(root)
-  const token = randomUUID()
-  const staleMs = DEFAULT_CONSOLIDATION_LEASE_STALE_MS
-
-  const create = (): { readonly lock: ConsolidationLock } | { readonly error: GitCaptureError } => {
-    let descriptor: number
-    try {
-      descriptor = openSync(path, "wx", 0o600)
-    } catch (cause) {
-      const code = (cause as NodeJS.ErrnoException).code
-      if (code !== "EEXIST") {
-        return {
-          error: gitCaptureError({
-            code: "consolidation-locked",
-            path,
-            message: `Could not acquire the shared consolidation lease: ${cause instanceof Error ? cause.message : String(cause)}`,
-          }),
-        }
-      }
-      if (!consolidationLeaseIsStale(path, staleMs)) {
-        return { error: liveConsolidationLeaseError(path) }
-      }
-      try {
-        unlinkSync(path)
-      } catch {
-        return { error: liveConsolidationLeaseError(path) }
-      }
-      return create()
+  const path = runLeasePath(root)
+  try {
+    const lease = tryAcquireRunLeaseSync(root, {
+      staleMs: DEFAULT_CONSOLIDATION_LEASE_STALE_MS,
+      now,
+    })
+    if (lease === null) {
+      return { error: liveConsolidationLeaseError(path) }
     }
-
-    try {
-      writeSync(
-        descriptor,
-        JSON.stringify({
-          pid: process.pid,
-          token,
-          createdAt: new Date(now()).toISOString(),
-        }),
-      )
-    } finally {
-      closeSync(descriptor)
-    }
-
-    const heartbeat = setInterval(() => {
-      const current = readConsolidationLease(path)
-      if (current === null || current.token !== token) {
-        clearInterval(heartbeat)
-        return
-      }
-      try {
-        const at = new Date()
-        utimesSync(path, at, at)
-      } catch {
-        // The next acquire/release observes the real condition.
-      }
-    }, Math.max(25, Math.floor(staleMs / 3)))
-    heartbeat.unref?.()
-
     return {
       lock: {
-        path,
-        release: () => {
-          clearInterval(heartbeat)
-          const current = readConsolidationLease(path)
-          if (current !== null && current.token !== token) {
-            return
-          }
-          try {
-            unlinkSync(path)
-          } catch {
-            // Releasing is best effort; a stale lease is recoverable.
-          }
-        },
+        path: lease.path,
+        release: lease.releaseUnsafe,
       },
     }
+  } catch (cause) {
+    return {
+      error: gitCaptureError({
+        code: "consolidation-locked",
+        path,
+        message: `Could not acquire the shared consolidation lease: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+      }),
+    }
   }
-
-  return create()
 }

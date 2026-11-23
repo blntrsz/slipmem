@@ -6,6 +6,7 @@ import { Note } from "@slipmem/schemas/note"
 import { PermanentNote } from "@slipmem/schemas/permanent-note"
 import { Effect, Layer, Schema } from "effect"
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { FleetingNoteTable } from "../fleeting-note/fleeting-note.sql"
 import { LiteratureNoteTable } from "../literature-note/literature-note.sql"
@@ -213,7 +214,7 @@ const markdownReads = async (
   seedValues: ReadonlyArray<Seed>,
   options: { readonly forceLinearFallback?: boolean } = {},
 ): Promise<{ reads: Reads; cleanup: () => void }> => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-note-parity-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-note-parity-"))
   const root = join(base, ".slipmem")
   const backupDir = join(base, "backups")
   const cacheDir = join(base, "cache")

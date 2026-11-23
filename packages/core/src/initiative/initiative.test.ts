@@ -9,6 +9,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Exit } from "effect"
 import { makeMarkdownNoteRepository, scanMarkdownRoot } from "../markdown/repository.js"
@@ -38,7 +39,7 @@ const fixture = (): {
   readonly evidenceRoot: string
   readonly clock: { value: number }
 } => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-initiative-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-initiative-"))
   cleanup.push(base)
   const root = join(base, ".slipmem")
   mkdirSync(root, { recursive: true })
@@ -611,6 +612,172 @@ describe("initiative records", () => {
     const retry = await Effect.runPromise(landed.promote(record.id, assertion.id))
     expect(retry.created).toBe(false)
     expect(retry.projection.status).toBe("existing")
+    expect(await notesFor(fixtureRoot)).toHaveLength(1)
+  })
+
+  test("report a committed promotion while a live projection receipt is pending", async () => {
+    const fixtureRoot = fixture()
+    const unversioned = await serviceFor(fixtureRoot)
+    const codePin = await pin(fixtureRoot, {
+      kind: "code",
+      path: "src/feature.ts",
+      lineStart: 1,
+      lineEnd: 1,
+    })
+    const record = await Effect.runPromise(
+      unversioned.create({
+        title: "Pending projection",
+        scope: {
+          summary: "A committed promotion can have a pending projection.",
+          intendedBehavior: "Never hide a committed promotion behind an error.",
+        },
+        milestones: [
+          {
+            title: "Pending",
+            intendedBehavior: "Report pending projection distinctly.",
+            assertions: [{ claim: "Pending claim", supports: [codePin] }],
+          },
+        ],
+      }),
+    )
+    const assertion = record.milestones[0]!.assertions[0]!
+    const first = await Effect.runPromise(
+      unversioned.promote(record.id, assertion.id),
+    )
+    expect(first.projection.status).toBe("skipped")
+
+    initializeGit(fixtureRoot.base)
+    const landed = await serviceFor(fixtureRoot, {
+      mainRef: "main",
+      requireMain: true,
+    })
+
+    const receipts = join(
+      fixtureRoot.root,
+      ".state",
+      "initiative-projections",
+    )
+    mkdirSync(receipts, { recursive: true })
+    const receiptPath = join(
+      receipts,
+      `${createHash("sha256")
+        .update(`${record.id}\0${assertion.id}\0${first.promotion.id}`)
+        .digest("hex")
+        .slice(0, 32)}.json`,
+    )
+    // Regression: liveness must follow `updatedAt`. A takeover preserves the
+    // old `createdAt` while refreshing `updatedAt`, so an old `createdAt`
+    // must not make this receipt look stale.
+    const createdAt = new Date(FIXED_NOW - 3_600_000).toISOString()
+    const updatedAt = new Date(FIXED_NOW).toISOString()
+    writeFileSync(
+      receiptPath,
+      `${JSON.stringify(
+        {
+          schema: "slipmem.initiative-projection-receipt.v1",
+          promotionId: first.promotion.id,
+          initiativeId: record.id,
+          assertionId: assertion.id,
+          evidenceDigest: first.promotion.evidenceDigest,
+          status: "pending",
+          createdAt,
+          updatedAt,
+          pid: process.pid + 1,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    )
+
+    const promoted = await Effect.runPromise(
+      landed.promote(record.id, assertion.id),
+    )
+    expect(promoted.created).toBe(false)
+    expect(promoted.promotion.snapshot?.reachableFromMain).toBe(true)
+    expect(promoted.projection.status).toBe("pending")
+    expect(promoted.projection.reason).toBe("projection-in-progress")
+    expect(promoted.projection.error?.code).toBe("projection-in-progress")
+    expect(await notesFor(fixtureRoot)).toEqual([])
+
+    const live = JSON.parse(readFileSync(receiptPath, "utf8")) as {
+      readonly pid: number
+      readonly createdAt: string
+      readonly updatedAt: string
+      readonly status: string
+    }
+    expect(live.pid).toBe(process.pid + 1)
+    expect(live.createdAt).toBe(createdAt)
+    expect(live.updatedAt).toBe(updatedAt)
+    expect(live.status).toBe("pending")
+
+    // Reconcile must not take over a fresh receipt owned by another process.
+    const reconciled = await Effect.runPromise(landed.reconcile(record.id))
+    expect(reconciled.items).toHaveLength(1)
+    expect(reconciled.items[0]?.result.status).toBe("pending")
+    expect(reconciled.items[0]?.result.reason).toBe("projection-in-progress")
+    expect(await notesFor(fixtureRoot)).toEqual([])
+
+    // Once the receipt is stale, reconcile still recovers it.
+    fixtureRoot.clock.value = FIXED_NOW + 30_001
+    const recovered = await Effect.runPromise(landed.reconcile(record.id))
+    expect(recovered.items[0]?.result.status).toBe("created")
+    expect(await notesFor(fixtureRoot)).toHaveLength(1)
+  })
+
+  test("report a committed promotion when projection fails", async () => {
+    const fixtureRoot = fixture()
+    initializeGit(fixtureRoot.base)
+    const service = await serviceFor(fixtureRoot, {
+      mainRef: "main",
+      requireMain: true,
+    })
+    const codePin = await pin(fixtureRoot, {
+      kind: "code",
+      path: "src/feature.ts",
+      lineStart: 1,
+      lineEnd: 1,
+    })
+    const record = await Effect.runPromise(
+      service.create({
+        title: "Failed projection",
+        scope: {
+          summary: "A committed promotion can have a failed projection.",
+          intendedBehavior: "Report failure distinctly from the promotion.",
+        },
+        milestones: [
+          {
+            title: "Failure",
+            intendedBehavior: "Keep the committed promotion.",
+            assertions: [{ claim: "Failure claim", supports: [codePin] }],
+          },
+        ],
+      }),
+    )
+    const assertion = record.milestones[0]!.assertions[0]!
+    mkdirSync(join(fixtureRoot.root, ".state"), { recursive: true })
+    writeFileSync(
+      join(fixtureRoot.root, ".state", "initiative-projections"),
+      "not a directory",
+      "utf8",
+    )
+
+    const promoted = await Effect.runPromise(
+      service.promote(record.id, assertion.id),
+    )
+    expect(promoted.created).toBe(true)
+    expect(promoted.record.promotions).toHaveLength(1)
+    expect(promoted.projection.status).toBe("failed")
+    expect(promoted.projection.reason).toBe("projection-failed")
+    expect(promoted.projection.error?.code).toBe("projection-failed")
+    expect(promoted.projection.error?.message).toContain(
+      "projection receipt directory",
+    )
+    expect(await notesFor(fixtureRoot)).toEqual([])
+
+    rmSync(join(fixtureRoot.root, ".state", "initiative-projections"))
+    const recovered = await Effect.runPromise(service.reconcile(record.id))
+    expect(recovered.items[0]?.result.status).toBe("created")
     expect(await notesFor(fixtureRoot)).toHaveLength(1)
   })
 

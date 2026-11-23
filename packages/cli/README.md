@@ -40,7 +40,7 @@ SLIPMEM_DIR=/tmp/slipmem-demo bun run slipmem -- new --type permanent \
 | `search <query> [--type <type>] [--tag <tag>] [--limit <n>]` | Refresh the disposable index, then run bounded ranked search. |
 | `tags [--query <tag>] [--limit <n>]` | List derived tag slugs and note counts. |
 | `check [--rebuild-index]` | Validate filenames, metadata, limits, duplicate IDs, conflict markers, internal link targets, non-note files, and index drift. |
-| `cache clear` | Clear only the derived search index through the core index API; notes and local state are untouched. |
+| `cache clear` | Clear only the derived search index through the core index API; notes and local state are untouched. A corrupt index file is removed and recreated empty, and `--json` reports `repaired`. |
 | `capture git --before <sha> --after <sha> [--repo <path>] [--consolidate]` | Verify one main-push range, extract bounded evidence-pinned fleeting sources, and write an idempotent checkpoint. Inherits `SLIPMEM_CHAT_*`, with optional `SLIPMEM_CAPTURE_*` overrides. See [`docs/git-capture.md`](../../docs/git-capture.md). |
 | `graph [<note-id>] [--from <id>] [--to <id>] [--kind <kind>] [--status current\|stale\|missing] [--no-links] [--limit <n>]` | Project typed maintenance relations plus disposable Markdown links; read-only and version-aware. |
 | `initiative <create\|list\|show\|scope\|verify\|promote\|project\|reconcile\|pin\|milestone\|assertion> ...` | Manage durable initiative records under `.slipmem/initiatives/`, advisory code/test evidence, and one-assertion-at-a-time promotion/projection into permanent notes. |
@@ -108,10 +108,12 @@ manual import. `check --rebuild-index` is the full recovery path when the index
 is missing or stale.
 
 `cache clear` deletes only the derived rows through the shared core index API.
-It never removes note files, `.state/`, or the cache directory. It is safe
-before an index exists, and the next `search`, `tags`, or
-`check --rebuild-index` repopulates it. Manual cache-directory removal remains
-an emergency fallback when no slipmem process is running.
+It never removes note files, `.state/`, or the cache directory. A corrupt index
+file is removed and recreated empty; a corrupt header is detected without
+opening SQLite, and `--json` reports `repaired: true`. It is safe before an
+index exists, and the next `search`, `tags`, or `check --rebuild-index`
+repopulates it. Manual cache-directory removal remains an emergency fallback
+when no slipmem process is running.
 
 `check` never renames, repairs, or resolves anything. Errors make it exit `1`;
 warnings such as non-note files or slug drift do not.

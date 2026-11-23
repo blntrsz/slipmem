@@ -39,10 +39,10 @@ export type McpHttpRoutes = Layer.Layer<
   HttpRouter.HttpRouter | MarkdownNoteRepository | MarkdownSearchIndex
 >
 
-export const makeMcpHttp = (options: McpServerOptions): McpHttpRoutes => {
-  const { registrations } = makeMcpSharedRegistrationsLayer(options)
-
-  return McpServer.layerHttp({
+export const makeMcpHttpRoutes = <A, E, R>(
+  registrations: Layer.Layer<A, E, R>,
+) =>
+  McpServer.layerHttp({
     name: mcpServerName,
     version: mcpServerVersion,
     instructions: mcpInstructions,
@@ -54,4 +54,9 @@ export const makeMcpHttp = (options: McpServerOptions): McpHttpRoutes => {
     ],
     registrations,
   })
+
+export const makeMcpHttp = (options: McpServerOptions): McpHttpRoutes => {
+  const { registrations } = makeMcpSharedRegistrationsLayer(options)
+
+  return makeMcpHttpRoutes(registrations)
 }

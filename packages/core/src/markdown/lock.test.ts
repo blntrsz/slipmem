@@ -10,11 +10,12 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import type { MarkdownError } from "./errors.js"
 import { withRepositoryLock } from "./lock.js"
 
-const temporaryRoot = (): string => mkdtempSync("/tmp/opencode/slipmem-lock-")
+const temporaryRoot = (): string => mkdtempSync(join(tmpdir(), "slipmem-lock-"))
 
 const cleanup = (path: string): void => {
   rmSync(path, { recursive: true, force: true })

@@ -3,7 +3,7 @@ import {
   MigrationImportError,
   MigrationSourceError,
   type MigrationImportReport,
-} from "@slipmem/core"
+} from "@slipmem/core/legacy/migration"
 import { Effect } from "effect"
 import { booleanOption, stringOption } from "../args.js"
 import { resolveRoot } from "../context.js"

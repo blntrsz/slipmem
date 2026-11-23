@@ -1,6 +1,6 @@
 import { Effect, Layer, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
-import { PRIMARY_CHAT_ENV_NAMES } from "@slipmem/mcp"
+import { PRIMARY_CHAT_ENV_NAMES } from "@slipmem/core/runtime"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash, timingSafeEqual } from "node:crypto"
 import {

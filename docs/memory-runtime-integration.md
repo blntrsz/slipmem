@@ -2,7 +2,9 @@
 
 Status: implementation note for agents touching automatic memory, capture, or
 the HTTP/stdio serve paths, 2026-11-22. The authoritative behavior is in
-`packages/mcp/src/automatic-memory.ts` and its tests.
+`packages/core/src/runtime/automatic-memory.ts` and its tests.
+`packages/mcp/src/automatic-memory.ts` is a compatibility re-export; MCP owns
+only the `submitMcp` approval projection and its registrations.
 
 ## Primary chat model
 
@@ -113,8 +115,10 @@ rather than a duplicate model call.
 
 ## Coordination pointers
 
-- `packages/mcp/src/layer.ts` wraps the shared repository and provides the same
-  wrapped graph to tools and the worker.
+- `packages/core/src/runtime/serving.ts` builds the shared repository/index/
+  worker/lifecycle graph; `packages/mcp/src/runtime.ts` adds only the MCP
+  approval projection and registrations. `packages/mcp/src/layer.ts` retains
+  thin compatibility wrappers for older hosts.
 - `MaintenanceRunResult.examinedSources` is the worker-to-lifecycle handoff for
   receipts. Do not replace it with a repository scan taken outside `run()`: that
   is the whole-snapshot bug that made backlogs larger than the source limit

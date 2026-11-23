@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Markdown } from "@slipmem/schemas/markdown"
-import { Effect, Exit } from "effect"
+import { Note } from "@slipmem/schemas/note"
+import { Effect, Exit, Schema } from "effect"
 import { readFileSync } from "node:fs"
 import { basename, join } from "node:path"
 import { MarkdownError } from "./errors.js"
@@ -78,6 +79,17 @@ describe("Markdown note parser", () => {
       expect(parsed.metadata.tags ?? []).toEqual(fixture.tags)
       expect(parsed.metadata.reference ?? null).toBe(fixture.reference)
       expect(parsed.body).toContain(fixture.bodyIncludes)
+      expect(parsed.projection).toEqual(parsed.info)
+      // The canonical projection must stay wire-compatible with the legacy
+      // Note.Info schema the CLI, MCP, and HTTP surfaces still publish.
+      expect(
+        Schema.decodeUnknownOption(Note.Info)(parsed.projection)._tag,
+      ).toBe("Some")
+      expect(parsed.projection.content).toBe(parsed.body)
+      expect(parsed.projection.type).toBe(fixture.type)
+      expect(parsed.projection.createdAt).toBe(Date.parse(fixture.createdAt))
+      expect(parsed.projection.updatedAt).toBe(Date.parse(fixture.updatedAt))
+      expect(String(parsed.projection.id)).toBe(fixture.id)
       expect(parsed.info.content).toBe(parsed.body)
       expect(parsed.info.type).toBe(fixture.type)
       expect(parsed.info.createdAt).toBe(Date.parse(fixture.createdAt))
@@ -87,10 +99,38 @@ describe("Markdown note parser", () => {
       expect(parsed.size).toBeGreaterThan(0)
 
       if (fixture.type === "literature") {
+        expect(parsed.projection).toMatchObject({ reference: fixture.reference })
         expect(parsed.info).toMatchObject({ reference: fixture.reference })
       }
     })
   }
+
+  test("parses a generated filename for a date-prefixed title", async () => {
+    // Regression: `noteFilename` must not emit a legacy-looking ID with an
+    // impossible timestamp, because this parser would reject its own output.
+    const filename = Markdown.noteFilename({
+      title: "20260230193045 impossible date",
+    })
+    expect(Markdown.isNoteFilename(filename)).toBe(true)
+    const id = Markdown.noteIdFromFilename(filename)!
+    const content =
+      "---\n" +
+      "schema: 1\n" +
+      `id: ${id}\n` +
+      "type: permanent\n" +
+      'title: "20260230193045 impossible date"\n' +
+      'createdAt: "2026-11-17T19:30:45Z"\n' +
+      'updatedAt: "2026-11-17T19:30:45Z"\n' +
+      "---\n\n" +
+      "Body.\n"
+
+    const parsed = await run(
+      parseMarkdownNote({ path: join(notesRoot, filename), content }),
+    )
+
+    expect(parsed.id).toBe(id)
+    expect(String(parsed.projection.id)).toBe(id)
+  })
 
   test("preserves unknown frontmatter keys across a write/read round trip", async () => {
     const fixture = manifest.valid.find(

@@ -282,26 +282,46 @@ export const createNote = (type: NoteType, draft: NoteDraft) =>
     }),
   )
 
-export const updateNote = (id: string, draft: NoteDraft) =>
+export const updateNote = (
+  id: string,
+  draft: NoteDraft,
+  expectedContentHash?: string,
+) =>
   mutationTimeout(
     Effect.gen(function* () {
       const request = yield* HttpClientRequest.bodyJson(
         HttpClientRequest.put(`/api/notes/${encodeURIComponent(id)}`),
         draft,
       )
-      const body = yield* sendJson(request, NoteResponse)
+      const conditional =
+        expectedContentHash === undefined
+          ? request
+          : HttpClientRequest.setHeader(
+              request,
+              "if-match",
+              `"${expectedContentHash}"`,
+            )
+      const body = yield* sendJson(conditional, NoteResponse)
       return body.note
     }),
   )
 
-export const deleteNote = (id: string) =>
+export const deleteNote = (id: string, expectedContentHash?: string) =>
   mutationTimeout(
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient
       const request = HttpClientRequest.make("DELETE")(
         `/api/notes/${encodeURIComponent(id)}`,
       )
-      const response = yield* client.execute(request)
+      const conditional =
+        expectedContentHash === undefined
+          ? request
+          : HttpClientRequest.setHeader(
+              request,
+              "if-match",
+              `"${expectedContentHash}"`,
+            )
+      const response = yield* client.execute(conditional)
       const body = yield* decodeResponse(DeleteResponse, response)
       if (body.id !== id) {
         return yield* Effect.fail(unexpectedResponse(response.status))

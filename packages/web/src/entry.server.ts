@@ -1,17 +1,16 @@
-import { Effect, Layer } from "effect"
+import { Effect } from "effect"
 import { Server } from "foldkit/experimental"
 
 import {
   formatAutomaticMemoryNotice,
   formatGitIngressNotice,
-  makeApiHandler,
   makeGitIngressLayer,
-  makeMcpHttp,
   resolveAutomaticMemoryRuntime,
   resolveGitIngressConfig,
   resolveNoteRootPath,
   resolveRecallProvider,
 } from "@slipmem/server"
+import { makeServingApiHandler } from "@slipmem/server/serving-runtime"
 
 import { init, view } from "./main"
 
@@ -30,7 +29,7 @@ type ServerGlobals = typeof globalThis & {
   __slipmemNoticesPrinted?: boolean
 }
 
-type ApiHandler = ReturnType<typeof makeApiHandler>
+type ApiHandler = ReturnType<typeof makeServingApiHandler>
 
 const serverGlobals = globalThis as ServerGlobals
 
@@ -107,8 +106,8 @@ if (previousApi !== undefined) {
 // Provider resolution happens before the handler is built so an invalid or
 // incomplete automatic-memory/chat configuration fails startup exactly like the
 // stdio entry point. A programmatic host can still inject a fixture by calling
-// `makeMcpHttp`/`makeAutomaticMemoryLayer` directly instead of using this
-// environment-driven entry.
+// `makeServingRuntime`/`makeAutomaticMemoryLayer` directly instead of using
+// this environment-driven entry.
 const resolveStartup = () => {
   try {
     return {
@@ -145,30 +144,25 @@ if (serverGlobals.__slipmemNoticesPrinted !== true) {
   }
 }
 
-const mcpRoutes = makeMcpHttp({
-  root: noteRoot,
-  automaticMemory,
-  ...(recallProvider.evaluator === undefined
-    ? {}
-    : { recallEvaluator: recallProvider.evaluator }),
-})
-
 // The Git ingress is absent unless it resolved an explicit token, trusted
 // worktree, command, and capture model. It is a separate surface; it never
 // widens the unauthenticated JSON API or the MCP endpoint.
 const extraRoutes =
   gitIngress.enabled === true
-    ? Layer.merge(
-        mcpRoutes,
-        makeGitIngressLayer({
-          config: gitIngress,
-          noteRoot,
-          maintenanceEnabled: automaticMemory.enabled,
-        }),
-      )
-    : mcpRoutes
+    ? makeGitIngressLayer({
+        config: gitIngress,
+        noteRoot,
+        maintenanceEnabled: automaticMemory.enabled,
+      })
+    : undefined
 
-const api = makeApiHandler(noteRoot, { extraRoutes })
+const api = makeServingApiHandler(noteRoot, {
+  automaticMemory,
+  ...(recallProvider.evaluator === undefined
+    ? {}
+    : { recallEvaluator: recallProvider.evaluator }),
+  ...(extraRoutes === undefined ? {} : { extraRoutes }),
+})
 serverGlobals.__slipmemApiHandler = api
 
 // The handler exposes the application-layer build outcome. Awaiting it turns a

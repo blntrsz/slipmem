@@ -910,9 +910,26 @@ export const makeInitiativeService = (
       }
     }
 
+    /**
+     * A receipt is live when another process started or refreshed a pending
+     * projection recently. Liveness follows `updatedAt`, not `createdAt`: a
+     * takeover preserves `createdAt` while refreshing `updatedAt`, so an old
+     * `createdAt` would keep an already-taken-over receipt looking stale.
+     * Pending receipts have no heartbeat, so staleness is inferred from age.
+     */
+    const receiptIsLive = (
+      receipt: InitiativeProjectionReceipt,
+      timestamp: string,
+    ): boolean => {
+      if (receipt.status !== "pending" || receipt.pid === process.pid) {
+        return false
+      }
+      const age = Date.parse(timestamp) - Date.parse(receipt.updatedAt)
+      return Number.isFinite(age) && age < PROJECTION_PENDING_MS
+    }
+
     const beginReceipt = (
       promotion: InitiativePromotion,
-      takeoverPending: boolean,
     ): Effect.Effect<
       { readonly path: string; readonly receipt: InitiativeProjectionReceipt },
       InitiativeError
@@ -924,14 +941,7 @@ export const makeInitiativeService = (
         const timestamp = nowIso(now)
 
         if (existing !== null) {
-          if (
-            !takeoverPending &&
-            existing.status === "pending" &&
-            existing.pid !== process.pid &&
-            Number.isFinite(Date.parse(timestamp) - Date.parse(existing.createdAt)) &&
-            Date.parse(timestamp) - Date.parse(existing.createdAt) <
-              PROJECTION_PENDING_MS
-          ) {
+          if (receiptIsLive(existing, timestamp)) {
             return yield* Effect.fail(
               serviceError(
                 "projection-in-progress",
@@ -970,12 +980,7 @@ export const makeInitiativeService = (
         }
 
         const raced = readReceipt(path)
-        if (
-          !takeoverPending &&
-          raced !== null &&
-          raced.status === "pending" &&
-          raced.pid !== process.pid
-        ) {
+        if (raced !== null && receiptIsLive(raced, timestamp)) {
           return yield* Effect.fail(
             serviceError(
               "projection-in-progress",
@@ -1118,7 +1123,23 @@ export const makeInitiativeService = (
           }
         }
 
-        const begun = yield* beginReceipt(promotion, takeoverPending)
+        // Reconcile recovers stale receipts, but a live pending receipt belongs
+        // to another process and must not be taken over. Report it as pending
+        // instead of aborting the whole reconcile report.
+        const begun = yield* beginReceipt(promotion).pipe(
+          Effect.catch((error) =>
+            takeoverPending && error.code === "projection-in-progress"
+              ? Effect.succeed(null)
+              : Effect.fail(error),
+          ),
+        )
+        if (begun === null) {
+          return {
+            ...projectionResult(promotion),
+            status: "pending",
+            reason: "projection-in-progress",
+          }
+        }
         const rescan = yield* repository.scan().pipe(Effect.mapError(fromMarkdown))
         const raced = findProjectionNotes(rescan.notes, identity)[0]
         if (raced !== undefined) {
@@ -1672,11 +1693,27 @@ export const makeInitiativeService = (
 
         // Note creation must happen outside the initiative write lock: the
         // Markdown repository takes the same repository lock for create.
+        // The promotion is already committed here, so a projection failure is
+        // reported as a distinct projection state instead of hiding the
+        // committed promotion behind an error.
         const projection = yield* projectPromotion(
           locked.record,
           locked.milestone,
           locked.assertion,
           locked.promotion,
+        ).pipe(
+          Effect.catch(
+            (error): Effect.Effect<InitiativeProjectionResult> =>
+              Effect.succeed({
+                ...projectionResult(locked.promotion),
+                status:
+                  error.code === "projection-in-progress"
+                    ? ("pending" as const)
+                    : ("failed" as const),
+                reason: error.code,
+                error: { code: error.code, message: error.message },
+              }),
+          ),
         )
 
         return {

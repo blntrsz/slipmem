@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto"
 import {
   closeSync,
+  constants,
+  lstatSync,
   openSync,
   readFileSync,
   statSync,
   unlinkSync,
-  writeFileSync,
   writeSync,
 } from "node:fs"
 import { dirname, resolve } from "node:path"
@@ -379,8 +380,38 @@ const waitForReady = async (
   }
 }
 
+/**
+ * Open the child's log in one truncating, no-follow step. `O_NOFOLLOW` refuses
+ * a planted `service.log` symlink instead of truncating or appending through
+ * it, so a link cannot redirect the log outside the audited service directory.
+ */
+const openServiceLog = (path: string): number => {
+  try {
+    return openSync(
+      path,
+      constants.O_APPEND |
+        constants.O_CREAT |
+        constants.O_TRUNC |
+        constants.O_WRONLY |
+        constants.O_NOFOLLOW,
+      0o600,
+    )
+  } catch (cause) {
+    throw new ServiceError(
+      "io",
+      `Could not prepare the service log at ${path}: ${
+        cause instanceof Error ? cause.message : String(cause)
+      }`,
+      { cause },
+    )
+  }
+}
+
 const readLogTail = (path: string, limit = 4_000): string => {
   try {
+    if (lstatSync(path).isSymbolicLink()) {
+      return ""
+    }
     const contents = readFileSync(path, "utf8")
     return contents.length <= limit ? contents : contents.slice(-limit)
   } catch {
@@ -445,20 +476,9 @@ const startLocked = async (
 
   ensureServiceDirectory(root)
   const logPath = serviceLogPath(root)
-  try {
-    writeFileSync(logPath, "", { mode: 0o600 })
-  } catch (cause) {
-    throw new ServiceError(
-      "io",
-      `Could not prepare the service log at ${logPath}: ${
-        cause instanceof Error ? cause.message : String(cause)
-      }`,
-      { cause },
-    )
-  }
+  const logDescriptor = openServiceLog(logPath)
 
   const entrypoint = resolve(import.meta.dir, "server.ts")
-  const logDescriptor = openSync(logPath, "a", 0o600)
   let child: ReturnType<typeof Bun.spawn>
   try {
     child = Bun.spawn({

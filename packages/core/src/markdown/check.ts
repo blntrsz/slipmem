@@ -682,14 +682,20 @@ const collisionSuffix = /-\d+$/
  */
 const slugMatchesTitle = (title: string, id: string): boolean => {
   const slug = Markdown.noteSlugFromId(id)
-  const expected = Markdown.slugifyTitle(title)
-  if (slug === expected) {
+  // New files use `noteSlugForTitle`, which avoids creating legacy-looking
+  // timestamp prefixes. Existing files may still carry the raw title slug, so
+  // accept both forms rather than reporting false drift after an upgrade.
+  const expected = [
+    Markdown.noteSlugForTitle(title),
+    Markdown.slugifyTitle(title),
+  ]
+  if (expected.includes(slug)) {
     return true
   }
 
   const collision = collisionSuffix.exec(slug)
   return (
-    collision !== null && slug.slice(0, collision.index) === expected
+    collision !== null && expected.includes(slug.slice(0, collision.index))
   )
 }
 

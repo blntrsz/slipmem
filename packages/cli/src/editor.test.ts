@@ -6,6 +6,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import type { CliContext } from "./context.js"
 import { editorShellScript, openProcessEditor } from "./context.js"
@@ -101,7 +102,7 @@ const exitWithin = async (
 const contextWithEditor = (
   openEditor: (path: string, signal?: AbortSignal) => Promise<number>,
 ): CliContext => ({
-  cwd: "/tmp/opencode",
+  cwd: tmpdir(),
   env: {},
   io: { out: () => {}, err: () => {} },
   now: Date.now,

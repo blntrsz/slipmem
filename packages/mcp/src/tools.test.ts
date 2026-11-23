@@ -842,6 +842,11 @@ test("MCP writes, edits, search ranking/filtering/refresh, and tag counts", asyn
     interface TagRow {
       readonly tag: string
       readonly noteCount: number
+      readonly byType: {
+        readonly fleeting: number
+        readonly literature: number
+        readonly permanent: number
+      }
       readonly examples: ReadonlyArray<{ readonly id: string; readonly title: string }>
     }
     const tagRows = (result: { readonly structuredContent?: unknown }) =>
@@ -852,7 +857,11 @@ test("MCP writes, edits, search ranking/filtering/refresh, and tag counts", asyn
       "inbox",
       "recall",
     ])
-    expect(tagRows(tags)[0]).toMatchObject({ tag: "shared", noteCount: 3 })
+    expect(tagRows(tags)[0]).toMatchObject({
+      tag: "shared",
+      noteCount: 3,
+      byType: { fleeting: 1, literature: 1, permanent: 1 },
+    })
     expect(tagRows(tags)[0]!.examples).toHaveLength(3)
     expect(
       new Set(tagRows(tags)[0]!.examples.map((example) => example.id)),

@@ -10,6 +10,7 @@ import {
   approveProposal,
   deleteNote,
   rejectProposal,
+  updateNote,
 } from "./api"
 
 const jsonResponse = (
@@ -98,6 +99,70 @@ test("delete requires a true, matching success body", async () => {
     Effect.succeed(jsonResponse(request, { deleted: true, id: "another" })),
   )
   expect(mismatch).toBeInstanceOf(ApiError)
+})
+
+test("conditional mutations send the loaded hash as If-Match", async () => {
+  const note = {
+    type: "permanent",
+    id: noteId,
+    title: "Bounded recall",
+    content: "Every recall operation has a hard maximum.",
+    tags: [],
+    path: `/notes/${noteId}.md`,
+    contentHash: "b".repeat(64),
+    createdAt: 1,
+    updatedAt: 2,
+  }
+  const seen: Array<string | undefined> = []
+
+  await expect(
+    run(
+      updateNote(noteId, { title: "Changed", content: "Body", tags: [] }, "a".repeat(64)),
+      (request) => {
+        seen.push(request.headers["if-match"])
+        return Effect.succeed(jsonResponse(request, { note }))
+      },
+    ),
+  ).resolves.toMatchObject({ id: noteId })
+
+  await expect(
+    run(deleteNote(noteId, "a".repeat(64)), (request) => {
+      seen.push(request.headers["if-match"])
+      return Effect.succeed(jsonResponse(request, { deleted: true, id: noteId }))
+    }),
+  ).resolves.toBe(true)
+
+  expect(seen).toEqual([`"${"a".repeat(64)}"`, `"${"a".repeat(64)}"`])
+
+  await run(
+    updateNote(noteId, { title: "Changed", content: "Body", tags: [] }),
+    (request) => {
+      seen.push(request.headers["if-match"])
+      return Effect.succeed(jsonResponse(request, { note }))
+    },
+  )
+  expect(seen.at(-1)).toBeUndefined()
+})
+
+test("a stale conditional mutation surfaces the server conflict", async () => {
+  const conflict = await failureOf(
+    updateNote(noteId, { title: "Changed", content: "Body", tags: [] }, "stale"),
+    (request) =>
+      Effect.succeed(
+        jsonResponse(
+          request,
+          {
+            error:
+              "The note changed after this operation was prepared, so its base content hash no longer matches.",
+            code: "stale-base",
+          },
+          409,
+        ),
+      ),
+  )
+  expect(conflict).toBeInstanceOf(ApiError)
+  expect(conflict).toMatchObject({ status: 409 })
+  expect((conflict as ApiError).message).toContain("base content hash")
 })
 
 test("approve and reject validate their success bodies and proposal id", async () => {

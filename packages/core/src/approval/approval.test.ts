@@ -10,6 +10,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { MarkdownError, markdownError } from "../markdown/errors.js"
 import {
@@ -47,7 +48,7 @@ const createFixture = async (
     readonly refreshIndex?: () => Effect.Effect<void, MarkdownError>
   } = {},
 ): Promise<Fixture> => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-approval-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-approval-"))
   const root = join(base, ".slipmem")
   const backup = join(base, "backups")
   mkdirSync(root, { recursive: true })

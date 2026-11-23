@@ -27,7 +27,7 @@ export {
   type AutomaticMemoryRuntime,
   type PrimaryChatModel,
   type RecallProviderRuntime,
-} from "@slipmem/mcp"
+} from "@slipmem/core/runtime"
 export {
   formatGitIngressNotice,
   GIT_INGRESS_ENV,
@@ -42,10 +42,3 @@ export {
   type GitIngressRunResult,
   type GitIngressRunner,
 } from "./git-ingress"
-export { makeDatabaseLayer } from "./database"
-export {
-  makeMigrationsLayer,
-  MigrationError,
-  resolveMigrationsFolder,
-  runMigrations,
-} from "./migrations"

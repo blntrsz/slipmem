@@ -1,10 +1,7 @@
-export {
-  makeNoteDatabaseLayer,
-  NoteDatabaseLive,
-  NoteDatabaseService,
-  type NoteDatabase,
-  type NoteDatabaseConfig,
-} from "./note-database"
+// The canonical read projection for active Markdown notes. It intentionally
+// mirrors the existing wire shape; callers should migrate from the legacy
+// `Note.Info` name without changing their JSON output.
+export type { NoteProjection } from "@slipmem/schemas/markdown"
 
 export {
   atomicWriteFile,
@@ -14,24 +11,31 @@ export {
   DEFAULT_LOCK_STALE_MS,
   defaultBackupDirectory,
   defaultIndexCacheDirectory,
+  ensureStateDirectory,
+  ensureStateSubdirectory,
   findAncestorNoteRoot,
   findGitRoot,
   indexDatabasePath,
   indexExists,
+  indexFileIsCorrupt,
   indexFingerprints,
   INDEX_FILENAME,
   INDEX_SCHEMA_VERSION,
   initializeNoteRoot,
+  isIndexCorruptionError,
+  isIndexDatabaseMovedError,
   isPathInside,
   listNoteFilenames,
   listRootEntries,
   LOCK_FILENAME,
   makeMarkdownNoteRepository,
   makeMarkdownSearchIndex,
+  makeMarkdownSearchIndexResilient,
   MarkdownError,
   MarkdownSearchIndex,
   MarkdownSearchIndexFromRepository,
   MarkdownSearchIndexLive,
+  MarkdownSearchIndexResilientFromRepository,
   MAX_FRONTMATTER_BYTES,
   MAX_SEARCH_QUERY_LENGTH,
   MAX_SEARCH_TOKENS,
@@ -46,6 +50,8 @@ export {
   parseMarkdownNote,
   readNoteFile,
   renderNoteDocument,
+  repairCorruptSearchIndex,
+  repairSearchIndexCache,
   resolveNoteRoot,
   scanMarkdownRoot,
   splitNoteDocument,
@@ -95,108 +101,23 @@ export {
   FleetingNoteNotFound,
   FleetingNoteService,
 } from "./fleeting-note/fleeting-note.service"
-export { SQLiteFleetingNoteService } from "./fleeting-note/sqlite-fleeting-note.service"
 
 export {
   LiteratureNoteNotFound,
   LiteratureNoteService,
 } from "./literature-note/literature-note.service"
-export { SQLiteLiteratureNoteService } from "./literature-note/sqlite-literature-note.service"
 
 export {
   PermanentNoteNotFound,
   PermanentNoteService,
 } from "./permanent-note/permanent-note.service"
-export { SQLitePermanentNoteService } from "./permanent-note/sqlite-permanent-note.service"
 
 export { NoteService } from "./note/note.service"
-export { SQLiteNoteService } from "./note/SQLite-note.service"
 export { MarkdownNoteService } from "./note/markdown-note.service"
 
-export {
-  DEFAULT_MIGRATION_SCOPE,
-  IMPORT_PROVENANCE_SOURCE,
-  inspectLegacyRow,
-  LEGACY_NOTE_TABLE_DEFINITIONS,
-  legacyNoteTableDefinition,
-  MIGRATION_PLAN_SCHEMA,
-  MigrationSourceError,
-  NOTE_TABLE_NAMES,
-  planMigration,
-  type LegacyNoteTableDefinition,
-  type LegacyRowInspection,
-  type LegacyRowInspectionInput,
-  type LegacyRowMapping,
-  type MigrationFilenameCollision,
-  type MigrationIssueCode,
-  type MigrationIssueProblem,
-  type MigrationIssueSeverity,
-  type MigrationNotePreservation,
-  type MigrationPlan,
-  type MigrationPlanCounts,
-  type MigrationPlanIssue,
-  type MigrationPlanOptions,
-  type MigrationRowSource,
-  type MigrationSourceErrorCode,
-  type MigrationSourceInfo,
-  type MigrationSourceShape,
-  type MigrationSourceTable,
-  type MigrationTableShape,
-  type NoteTableName,
-  type PlannedMigrationNote,
-  type PreservedValue,
-  type SqliteValue,
-} from "./migration/migration-plan"
-
-export {
-  defaultMigrationNoteSerializer,
-  importMigration,
-  MIGRATION_BACKUP_FILENAME,
-  MIGRATION_IMPORT_SCHEMA,
-  MIGRATION_MANIFEST_FILENAME,
-  MIGRATION_QUARANTINE_DIRECTORY,
-  MIGRATION_STATE_SUBDIRECTORY,
-  MigrationImportError,
-  type MigrationBackupReport,
-  type MigrationImportCounts,
-  type MigrationImportErrorCode,
-  type MigrationImportedNote,
-  type MigrationImportedNoteStatus,
-  type MigrationImportOptions,
-  type MigrationImportReport,
-  type MigrationImportStatus,
-  type MigrationImportWarning,
-  type MigrationInterruptedRun,
-  type MigrationManifestIssue,
-  type MigrationNoteSerializer,
-  type MigrationPreservedValue,
-  type MigrationQuarantineFile,
-  type MigrationQuarantineReport,
-  type MigrationRootReport,
-  type MigrationSourceCheck,
-  type MigrationSourceFileFingerprint,
-  type MigrationSqliteValue,
-  type MigrationVerificationNote,
-  type MigrationVerificationReport,
-} from "./migration/migration-import"
-
-export {
-  getLegacyNote,
-  LEGACY_READ_COMPATIBILITY,
-  LEGACY_READ_DEFAULT_LIMIT,
-  LEGACY_READ_MAX_ID_LENGTH,
-  LEGACY_READ_MAX_LIMIT,
-  LEGACY_READ_MAX_OFFSET,
-  LEGACY_READ_SCHEMA,
-  listLegacyNotes,
-  type LegacyGetOptions,
-  type LegacyGetReport,
-  type LegacyListOptions,
-  type LegacyListReport,
-  type LegacyReadRow,
-  type LegacyReadSource,
-  type LegacyReadWarning,
-} from "./migration/legacy-read"
+// Legacy SQLite note CRUD and migration/read compatibility are intentionally
+// absent from this barrel. Import them only from `@slipmem/core/legacy/sqlite`
+// or `@slipmem/core/legacy/migration`.
 
 // Approval and wiki are additive core services. They consume the narrow parts
 // of `MarkdownNoteRepository` they need and do not change SQLite behavior.

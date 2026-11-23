@@ -10,6 +10,8 @@ The adapter turns one verified main-branch push delta into bounded, evidence-
 backed fleeting notes and a durable checkpoint. It is for a GitHub Actions job
 or any CI runner that can pass the push event's exact `before` and `after`
 commits. It is not a Git hook and it does not commit, fetch, reset, or push.
+Its Git access is read-only; the only writes are fleeting source notes and a
+checkpoint under the note root.
 
 ## Safety contract
 
@@ -131,8 +133,9 @@ slipmem capture git \
 - `--dir` is the normal global note-root option.
 - `--consolidate` is optional and off by default. Without it, capture writes
   durable fleeting sources and a checkpoint; the configured memory runtime
-  picks them up on its next durable scan. With it, capture is rejected if the
-  shared `automatic-memory.lease` is held by a live consolidator.
+  picks them up on its next startup recovery pass or watcher wake. With it,
+  capture is rejected if the shared `automatic-memory.lease` is held by a live
+  consolidator.
 - Use `--consolidate=false` explicitly only for readability. `--consolidate`
   without a value enables the one-shot path.
 
@@ -231,10 +234,10 @@ The capture adapter does **not** own consolidation by default. It:
 3. writes idempotent fleeting sources and the checkpoint.
 
 A runtime that owns the authoritative note root can pick those sources up on its
-next startup or periodic durable scan, using the same permanent-maintenance
-machinery. No queue signal is required by this slice because the source notes
-are the durable jobs. The opt-in HTTP ingress uses this same path: its capture
-command template
+next startup recovery pass or through a watcher wake, using the same
+permanent-maintenance machinery. No queue signal is required by this slice
+because the source notes are the durable jobs. The opt-in HTTP ingress uses this
+same path: its capture command template
 (`... capture git --before {before} --after {after} --repo {repository}`)
 receives the server's note root through `SLIPMEM_DIR`, and the in-process
 maintenance watcher drains the durable sources. Omit `--consolidate` in that
@@ -250,7 +253,8 @@ repository mutation lock and is not held during source writes.
 
 Use exactly one consolidation owner:
 
-- **runtime-owned mode:** do not pass `--consolidate`; let the runtime scan;
+- **runtime-owned mode:** do not pass `--consolidate`; let the runtime drain the
+  durable sources;
 - **CLI-owned mode:** ensure no long-lived runtime is configured for the same
   note root, and pass `--consolidate` when immediate draining is required.
 
@@ -336,7 +340,7 @@ Notes:
 - a signed GitHub webhook receiver or signature verifier (the authenticated
   ingress is a separate, opt-in SHA-forwarding endpoint, not a webhook);
 - a cross-process job queue or signal protocol (durable notes plus runtime
-  scanning are the first-slice handoff);
+  startup recovery and watcher wakes are the first-slice handoff);
 - a workflow file, committed secret, or live deployment;
 - automatic commit, push, checkout, fetch, reset, or history rewriting;
 - merging, splitting, deleting, or reclassifying notes from a Git capture.

@@ -6,8 +6,12 @@
     ".": "./src/index.ts",
     "./approval": "./src/approval/index.ts",
     "./initiative": "./src/initiative/index.ts",
+    "./legacy/migration": "./src/legacy/migration.ts",
+    "./legacy/sqlite": "./src/legacy/sqlite.ts",
     "./maintenance": "./src/maintenance/index.ts",
     "./model": "./src/model/openai-compatible-transport.ts",
+    "./runtime": "./src/runtime/index.ts",
+    "./tags": "./src/tags/index.ts",
     "./wiki": "./src/wiki/index.ts"
   },
   "dependencies": {

@@ -39,6 +39,7 @@ export type MarkdownErrorCode =
   | "repository-locked"
   | "repository-root-missing"
   | "stale-base"
+  | "target-exists"
   | "write-failed"
   | "backup-failed"
   | "index-error"

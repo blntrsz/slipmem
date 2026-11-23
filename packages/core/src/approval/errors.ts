@@ -17,6 +17,8 @@ export type ApprovalErrorCode =
   | "stale-base"
   | "repository-failure"
   | "apply-failed"
+  | "apply-conflict"
+  | "apply-unknown"
   | "policy-invalid"
 
 export interface ApprovalErrorFields {

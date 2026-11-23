@@ -6,6 +6,7 @@ import {
   readFileSync,
   rmSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   makeMarkdownNoteRepository,
@@ -34,7 +35,7 @@ interface Fixture {
 }
 
 const createFixture = async (): Promise<Fixture> => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-maintenance-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-maintenance-"))
   const root = join(base, ".slipmem")
   mkdirSync(root, { recursive: true })
   const clock = { value: FIXED_NOW }

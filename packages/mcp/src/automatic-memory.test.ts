@@ -9,8 +9,15 @@ import {
   type MaintenanceRunResult,
   type ParsedMarkdownNote,
 } from "@slipmem/core"
-import { Duration, Effect, Layer, Queue, Ref } from "effect"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { Duration, Effect, Exit, Layer, Queue, Ref } from "effect"
+import {
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises"
 import { join } from "node:path"
 import {
   DEFAULT_RECALL_JEV_MODEL,
@@ -973,6 +980,53 @@ test("the run lease serializes consolidators and recovers a dead owner", async (
       withRunLease(disposable.root, Effect.void, { pollMs: 5 }),
     )
     expect(await Effect.runPromise(Ref.get(completed))).toBe(2)
+  } finally {
+    await removeDisposableRoot(disposable)
+  }
+})
+
+test("automatic-memory receipts and the run lease refuse a symlinked state directory", async () => {
+  const disposable = await makeDisposableRoot()
+  const outside = join(disposable.directory, "outside")
+  const state = join(disposable.root, ".state")
+  const clock = makeTestClock()
+  const runs = await Effect.runPromise(Ref.make(0))
+  const run = () =>
+    Ref.update(runs, (value) => value + 1).pipe(Effect.as(noopResult))
+
+  try {
+    await mkdir(outside, { recursive: true })
+    await rm(state, { recursive: true, force: true })
+    await symlink(outside, state)
+
+    // The lease is the first durable state write in a pass. It must fail at the
+    // audited `.state/` boundary instead of creating the lease at the target.
+    const exit = await Effect.runPromiseExit(
+      withRunLease(disposable.root, Effect.void, { pollMs: 5 }),
+    )
+    expect(Exit.isFailure(exit)).toBe(true)
+
+    // The full lifecycle reports the failure and never records a receipt in
+    // the directory the symlink points at.
+    const signal = await testSignal()
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            runtimeLayer({
+              root: disposable.root,
+              now: clock.now,
+              runtime: runtimeWith(testProvider),
+              signal,
+              run,
+            }),
+          )
+          yield* Effect.sleep(Duration.millis(80))
+        }),
+      ),
+    )
+
+    expect(await readdir(outside)).toEqual([])
   } finally {
     await removeDisposableRoot(disposable)
   }

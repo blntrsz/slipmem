@@ -1,6 +1,9 @@
 export * as Markdown from "./markdown.js"
 
 import { Schema } from "effect"
+import { FleetingNote } from "./fleeting-note.js"
+import { LiteratureNote } from "./literature-note.js"
+import { PermanentNote } from "./permanent-note.js"
 
 // Phase 0 contract: the Markdown repository is the source of truth. These
 // constants and pure helpers are the single definition of filenames, tag
@@ -183,6 +186,33 @@ export const noteIdFromFilename = (filename: string): string | null =>
 export const noteSlugFromId = (id: string): string =>
   LEGACY_TIMESTAMP_PREFIX_PATTERN.test(id) ? id.slice(15) : id
 
+/**
+ * The creation-time slug for a new note.
+ *
+ * A title can normalize to something that looks like a legacy
+ * timestamp-prefixed ID, for example `20260230193045-not-a-real-date`. The
+ * filename validator deliberately rejects an impossible legacy timestamp, so a
+ * generator that used the raw title slug would produce a file its own reader
+ * cannot open. New notes also should not claim a creation time in their name:
+ * that is frontmatter's job. Prefixing every legacy-looking slug with `note-`
+ * gives a deterministic, valid descriptive name in both cases.
+ */
+const NOTE_FALLBACK_PREFIX = "note-"
+
+export const noteSlugForTitle = (title: string): string => {
+  const slug = slugifyTitle(title)
+  return LEGACY_TIMESTAMP_PREFIX_PATTERN.test(slug)
+    ? `${NOTE_FALLBACK_PREFIX}${truncateSlug(
+        slug,
+        MAX_SLUG_LENGTH - NOTE_FALLBACK_PREFIX.length,
+      )}`
+    : slug
+}
+
+/** The collision-free base filename for a newly created note title. */
+export const noteBaseFilename = (title: string): string =>
+  `${noteSlugForTitle(title)}.md`
+
 export interface NoteFilenameInput {
   readonly title: string
   /** Existing filenames, including the target directory. */
@@ -192,9 +222,10 @@ export interface NoteFilenameInput {
 /**
  * Builds a descriptive note filename and resolves title collisions with a
  * numeric suffix. The creation time lives in frontmatter, not in the filename.
+ * The result always passes `isNoteFilename`.
  */
 export const noteFilename = ({ title, taken }: NoteFilenameInput): string => {
-  const slug = slugifyTitle(title)
+  const slug = noteSlugForTitle(title)
   const filenames = new Set(taken ?? [])
   const first = `${slug}.md`
 
@@ -291,6 +322,53 @@ export const NoteMetadata = Schema.Struct({
     },
   ),
 ).annotate({ identifier: "Markdown.NoteMetadata" })
+
+// Canonical read projection for an active Markdown note.
+//
+// This is the same JSON shape the CLI, MCP, and HTTP surfaces have always
+// emitted, but it is derived from Markdown metadata and body rather than the
+// retired SQLite `Note.Info` rows. Keeping the shape identical is what makes
+// the model migration wire-compatible: callers can move to the projection
+// without changing their output.
+export interface FleetingNoteProjection extends Schema.Schema.Type<typeof FleetingNoteProjection> {}
+export const FleetingNoteProjection = Schema.Struct({
+  type: Schema.Literal("fleeting"),
+  id: FleetingNote.ID,
+  title: Schema.String,
+  content: Schema.String,
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+}).annotate({ identifier: "Markdown.FleetingNoteProjection" })
+
+export interface LiteratureNoteProjection extends Schema.Schema.Type<typeof LiteratureNoteProjection> {}
+export const LiteratureNoteProjection = Schema.Struct({
+  type: Schema.Literal("literature"),
+  id: LiteratureNote.ID,
+  title: Schema.String,
+  content: Schema.String,
+  reference: Schema.String,
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+}).annotate({ identifier: "Markdown.LiteratureNoteProjection" })
+
+export interface PermanentNoteProjection extends Schema.Schema.Type<typeof PermanentNoteProjection> {}
+export const PermanentNoteProjection = Schema.Struct({
+  type: Schema.Literal("permanent"),
+  id: PermanentNote.ID,
+  title: Schema.String,
+  content: Schema.String,
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+}).annotate({ identifier: "Markdown.PermanentNoteProjection" })
+
+export const NoteProjection = Schema.Union([
+  FleetingNoteProjection,
+  LiteratureNoteProjection,
+  PermanentNoteProjection,
+])
+  .annotate({ identifier: "Markdown.NoteProjection" })
+  .pipe(Schema.toTaggedUnion("type"))
+export type NoteProjection = typeof NoteProjection.Type
 
 export const ApprovalOperation = Schema.Literals([
   "create",

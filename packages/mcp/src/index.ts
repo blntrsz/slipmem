@@ -13,6 +13,8 @@ export {
   DEFAULT_RUN_LEASE_STALE_MS,
   formatAutomaticMemoryNotice,
   makeAutomaticMemoryLayer,
+  makeMaintenanceLayer,
+  makeMaintenanceWorkerLayer,
   makeRawWriteRepositoryLayer,
   makeRawWriteSignalLayer,
   PRIMARY_CHAT_ENV_NAMES,
@@ -36,5 +38,12 @@ export {
   makeMcpRegistrationsLayer,
   makeMcpSharedRegistrationsLayer,
 } from "./layer"
+export {
+  makeServingRegistrationsLayer,
+  makeServingRuntime,
+  type ServingRuntime,
+  type ServingRuntimeError,
+  type ServingRuntimeServices,
+} from "./runtime"
 export { McpNoteRegistrations, McpNoteTools } from "./tools"
 export { makeServerLayer } from "./server"

@@ -26,7 +26,13 @@ bun run web
 
 `bun run web` serves the Foldkit UI, the canonical ID-based JSON API under
 `/api`, and the HTTP MCP endpoint at `/mcp` in one process. The repository's
-`opencode.json` registers the stdio MCP server for OpenCode.
+`opencode.json` registers the stdio MCP server for OpenCode; that serve path
+also needs the chat-model environment described below or startup fails.
+
+The one-shot CLI commands above stay local and need no model. `bun run web` is a
+serving process and requires the explicit chat-model configuration described in
+[Web and network posture](#web-and-network-posture); missing or partial
+configuration stops startup.
 
 ## Shared background service (optional)
 
@@ -133,11 +139,16 @@ a warning. Mutations are same-origin only and require JSON; no CORS access is
 enabled. Note text is untrusted data and is rendered as text/Markdown, never
 trusted HTML.
 
-Agent writes use a local approval policy: MCP mutations become pending
-proposals that a human approves or rejects at `/review`. That is not
-authentication and not an OS sandbox. It does not stop another local process
-that can reach the loopback port from reading or writing notes; the loopback
-bind and file permissions are the real boundary.
+Agent writes use a local approval policy. MCP permanent creates, updates, and
+reclassifications, plus all MCP deletes, become pending proposals that a human
+approves or rejects at `/review`; MCP fleeting and literature creates and
+updates are direct. The exact matrix is in
+[`packages/mcp/README.md`](packages/mcp/README.md#approval-and-write-policy),
+which also documents the unsafe trusted-automation direct-write escape hatch,
+and in the [operator guide](docs/operator-guide.md#write-approval-policy). That
+is not authentication and not an OS sandbox. It does not stop another local
+process that can reach the loopback port from reading or writing notes; the
+loopback bind and file permissions are the real boundary.
 
 Extractive tag pages are always available and quote their cited sources.
 Synthesized mode is opt-in and only works when this process has an explicitly
@@ -147,9 +158,10 @@ explicit unsafe override that runs it with the slipmem user's full filesystem
 privileges. The Health page reports whether synthesis is configured and the
 web UI does not advertise it otherwise.
 
-Serving is model-backed and queue-driven. The MCP stdio server, the HTTP `/mcp`
-endpoint, the web server, and `slipmem service` require an explicit
-OpenAI-compatible chat model
+**Serving requires an explicit model.** Serving is model-backed and
+queue-driven. The MCP stdio server, the HTTP `/mcp` endpoint, the web server
+(`bun run web` and `bun run web:serve`), and `slipmem service` require an
+explicit OpenAI-compatible chat model
 (`SLIPMEM_CHAT_PROVIDER`, `SLIPMEM_CHAT_MODEL`, `SLIPMEM_CHAT_BASE_URL`, and an
 optional `SLIPMEM_CHAT_API_KEY`); there is no default provider, URL, or model,
 and a missing or partial configuration stops startup. The old
@@ -165,12 +177,14 @@ of silently falling back.
 
 Capture paths that feed the queue are: direct fleeting writes through the CLI
 or MCP; `slipmem capture git`, which turns a verified `before..after` main-push
-delta into evidence-pinned fleeting sources and a local checkpoint without
-modifying the source checkout (it inherits the primary chat model
-configuration, with optional `SLIPMEM_CAPTURE_*` overrides); and an optional
-separately authenticated
+delta into evidence-pinned fleeting sources and a local checkpoint while using
+only read-only Git object queries and without modifying the source checkout (it
+inherits the primary chat model configuration, with optional `SLIPMEM_CAPTURE_*`
+overrides); and an optional separately authenticated
 `/api/hooks/git-push` ingress that accepts only exact commit SHAs and runs that
-capture command against a trusted local checkout. None of these deploys a Git
+capture command against a trusted local checkout. Capture's writes are limited
+to the fleeting notes and checkpoint under the note root. None of these paths
+commits, pushes, checks out, fetches, resets, rewrites history, or deploys a Git
 hook or workflow by itself. Initiatives are separate durable planning records
 under `.slipmem/initiatives/`. The records stay outside normal recall;
 `slipmem initiative` tracks scope, milestones, and assertions; on request, it
@@ -192,4 +206,7 @@ handoff is in [`docs/git-ingress.md`](docs/git-ingress.md).
 See [`packages/server/README.md`](packages/server/README.md),
 [`packages/web/README.md`](packages/web/README.md), and
 [`docs/mvp-plan.md`](docs/mvp-plan.md) for the API, UI routes, approval flow,
-tag pages, and acceptance criteria.
+tag pages, and acceptance criteria. The `docs/mvp-*-evidence.md` pages and
+sections 0-10 of the [acceptance matrix](docs/mvp-acceptance-matrix.md) are
+frozen evidence at named commits, not current behavior; this README and the
+[operator guide](docs/operator-guide.md) describe the current tree.

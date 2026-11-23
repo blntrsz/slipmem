@@ -280,9 +280,13 @@ resolves anything.
 
 `--rebuild-index` rebuilds the disposable index first and then checks drift.
 This is the normal recovery command after an external edit, a manual note move,
-or a deleted cache. `cache clear` deletes only index rows through the shared
-core API; it never deletes note files, `.state`, or the cache directory itself.
-The next `search`, `tags`, or `check --rebuild-index` repopulates it.
+or a deleted cache. A corrupt index file is removed before SQLite is opened when
+its header is damaged, so the command can repair the damage it is asked to
+report. `cache clear` normally deletes only index rows through the shared core
+API; it never deletes note files, `.state`, or the cache directory itself. A
+corrupt index file is removed and recreated empty, and `--json` reports
+`repaired: true`. The next `search`, `tags`, or `check --rebuild-index`
+repopulates it.
 
 ### Deleting and retiring notes
 
@@ -341,9 +345,11 @@ bun run slipmem -- check --rebuild-index
 
 `cache clear` uses the shared core index API to delete only the derived rows. It
 does not remove note files, `.state/`, or the cache directory, and it is safe to
-run before an index exists. The next `search`, `tags`, or
-`check --rebuild-index` repopulates the index from notes. `check --rebuild-index`
-is the full rebuild-and-check path.
+run before an index exists. A corrupt index file is removed and recreated empty;
+a corrupt header is detected without opening SQLite, and `--json` reports
+`repaired: true`. The next `search`, `tags`, or `check --rebuild-index`
+repopulates the index from notes. `check --rebuild-index` is the full
+rebuild-and-check path.
 
 Manual removal is still documented as an emergency fallback, with no slipmem CLI
 or web/MCP process running:
@@ -397,7 +403,10 @@ Common `check` outcomes:
 
 slipmem never runs `git init`, `git add`, `git commit`, `git push`,
 `git reset`, or history-rewriting commands. Git is the operator's backup and
-collaboration tool.
+collaboration tool. The capture adapter is the one place slipmem runs Git
+commands; it uses only read-only object queries (`rev-parse`, `cat-file`,
+`merge-base`, `diff`) and never commits, pushes, fetches, checks out, resets, or
+rewrites history.
 
 ### Back up
 
@@ -735,6 +744,19 @@ an immediate `check` does not report drift. If the cache cannot be refreshed,
 the note change still stands and the result warns you to run
 `check --rebuild-index`; the index is never allowed to undo a durable approval.
 
+Before touching a note, `approve` records a durable intent under
+`.slipmem/.state/apply-intent/` and a per-proposal decision claim under
+`.slipmem/.state/approval-claim/`. The claim makes apply and reject mutually
+exclusive: after one decision is claimed, the opposite decision fails with
+`proposal-not-found` rather than reporting a success it did not perform. If
+`approve` reports `status: "applied"` with a `cleanup` warning, the note change
+is already durable; rerun `approve <proposal-id>` to finish removing the
+proposal, intent, and claim. If it reports `apply-conflict` or `apply-unknown`,
+inspect the note and the JSON under `.state/apply-intent/` and
+`.state/approval-claim/` before retrying. Do not delete or edit a note based only
+on a warning; a leftover apply claim deliberately blocks reject until the apply
+is reconciled.
+
 The local web UI exposes the same review queue, and the Markdown API exposes the
 same human operations:
 
@@ -922,12 +944,14 @@ and the note root itself is excluded from the captured delta.
 
 Capture writes fleeting source notes directly through the CLI repository with
 provenance `source: cli` and actor `slipmem-git-capture`; it does not create
-approval proposals. Consolidation is left to the configured memory runtime
-unless `--consolidate` is supplied; that flag is for an offline/CI run that owns
-the note root and does not race a serving process. It participates in the same
-`.slipmem/.state/automatic-memory.lease`, so it is rejected while a live runtime
-or CLI consolidation owns the root. Capture is a local adapter: it does not
-deploy a workflow, subscribe to Git, or update authoritative notes by itself.
+approval proposals. Its Git access is read-only, and its only writes are those
+notes and the checkpoint under the note root. Consolidation is left to the
+configured memory runtime unless `--consolidate` is supplied; that flag is for
+an offline/CI run that owns the note root and does not race a serving process.
+It participates in the same `.slipmem/.state/automatic-memory.lease`, so it is
+rejected while a live runtime or CLI consolidation owns the root. Capture is a
+local adapter: it does not deploy a workflow, subscribe to Git, or update
+authoritative notes by itself.
 Point `--dir` at the authoritative note root, or configure the authenticated
 ingress below. The capture contract is in
 [`docs/git-capture.md`](git-capture.md); the authenticated handoff is in
@@ -1231,7 +1255,7 @@ optional Git ingress has its own bearer token, but that does not authenticate
 | `legacy` says the source is missing | The default SQLite database was moved or never created | Pass `--db` or set `SLIPMEM_DB_PATH`; the read-only view never creates a source |
 | `legacy show` returns not found | Legacy IDs are unique per table | Pass the correct `--type`; IDs can repeat across fleeting, permanent, and literature |
 | `legacy` rejects `--dir` | It is a database-only compatibility view | Use `--db` or the environment variables; `--dir` is for Markdown note commands |
-| Index seems empty after `cache clear` | The clear command intentionally deletes only derived rows | Run `search` or `check --rebuild-index` to repopulate from notes |
+| Index seems empty after `cache clear` | The clear command intentionally deletes only derived rows, or a corrupt index file was removed and recreated empty | Run `search` or `check --rebuild-index` to repopulate from notes |
 | `source-changed` before notes | A writer changed the database before the backup or writes | Stop writers, verify the source, rerun; no notes were written |
 | `source-changed` after notes | The final source fingerprint changed after writes | Inspect the manifest; valid notes, backup, and quarantine remain; stop writers before any retry |
 | `interrupted-run` / `interrupted-run-active` | An earlier import left a `running` manifest, or its owner is still alive | Review "Interrupted runs"; merge imports missing rows, and never stop a live owner by deleting its manifest |
@@ -1241,10 +1265,11 @@ optional Git ingress has its own bearer token, but that does not authenticate
 There is no remaining planned command in this workstream. `cache clear` and the
 default migration source resolution are available and covered by CLI tests.
 
-Known documentation gaps to resolve at final update:
+Known documentation gaps and scope caveats:
 
-- The root README and package READMEs still describe the SQLite-first runtime
-  and are owned elsewhere.
+- Historical `docs/mvp-*-evidence.md` pages and the acceptance matrix sections
+  0-10 are frozen snapshots at named commits. They are evidence, not current
+  guidance; this guide and the root README describe the current tree.
 - The browser UI page routes, approval API, and `/mcp` mount were verified
   locally; any later UI or transport changes must be rechecked before this guide
   is treated as final.

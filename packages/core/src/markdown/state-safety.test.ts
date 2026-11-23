@@ -8,6 +8,7 @@ import {
   rmSync,
   symlinkSync,
 } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { MarkdownError } from "./errors.js"
 import { importMigration } from "../migration/migration-import.js"
@@ -17,7 +18,7 @@ import {
   initializeNoteRoot,
 } from "./root.js"
 
-const temporaryRoot = (): string => mkdtempSync("/tmp/opencode/slipmem-state-")
+const temporaryRoot = (): string => mkdtempSync(join(tmpdir(), "slipmem-state-"))
 const temporaryDirectories: Array<string> = []
 
 afterEach(() => {

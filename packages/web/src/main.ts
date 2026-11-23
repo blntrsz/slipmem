@@ -120,12 +120,19 @@ export const EditorState = defineTaggedUnion({
     type: Markdown.NoteType,
     maybeId: Schema.Option(Schema.String),
     form: NoteForm,
+    /**
+     * The content hash of the version loaded into the form. It travels with
+     * the save command so the server can reject a write that would overwrite a
+     * newer external edit.
+     */
+    expectedContentHash: Schema.optional(Schema.String),
   },
   Saving: {
     requestId: Schema.Int,
     type: Markdown.NoteType,
     maybeId: Schema.Option(Schema.String),
     form: NoteForm,
+    expectedContentHash: Schema.optional(Schema.String),
   },
 })
 export type EditorState = typeof EditorState.Type
@@ -133,6 +140,8 @@ export type EditorState = typeof EditorState.Type
 export const DeleteRequest = Schema.Struct({
   requestId: Schema.Int,
   noteId: Schema.String,
+  /** The content hash shown on the confirmation page. */
+  expectedContentHash: Schema.optional(Schema.String),
 })
 export type DeleteRequest = typeof DeleteRequest.Type
 
@@ -327,14 +336,15 @@ export const SaveNote = Command.define("SaveNote", {
     noteId: Schema.Option(Schema.String),
     type: Markdown.NoteType,
     form: NoteForm,
+    expectedContentHash: Schema.optional(Schema.String),
   },
   messages: [Message.SucceededSaveNote, Message.FailedSaveNote],
-  execute: ({ requestId, noteId, type, form }) => {
+  execute: ({ requestId, noteId, type, form, expectedContentHash }) => {
     const draft = draftFromForm(type, form)
 
     const save = Option.match(noteId, {
       onNone: () => createNote(type, draft),
-      onSome: (id) => updateNote(id, draft),
+      onSome: (id) => updateNote(id, draft, expectedContentHash),
     })
 
     return save.pipe(
@@ -353,10 +363,14 @@ export const SaveNote = Command.define("SaveNote", {
 })
 
 export const DeleteNote = Command.define("DeleteNote", {
-  args: { requestId: Schema.Int, noteId: Schema.String },
+  args: {
+    requestId: Schema.Int,
+    noteId: Schema.String,
+    expectedContentHash: Schema.optional(Schema.String),
+  },
   messages: [Message.SucceededDeleteNote, Message.FailedDeleteNote],
-  execute: ({ requestId, noteId }) =>
-    deleteNote(noteId).pipe(
+  execute: ({ requestId, noteId, expectedContentHash }) =>
+    deleteNote(noteId, expectedContentHash).pipe(
       Effect.map(() => Message.SucceededDeleteNote({ requestId, noteId })),
       Effect.catch((error) =>
         Effect.succeed(
@@ -645,12 +659,41 @@ const editorForRoute = (route: AppRoute): EditorState =>
     NotFound: () => EditorState.Closed(),
   })
 
+/**
+ * Switching note type on `/new` changes the query string but not the page, so
+ * the reader's draft is still the draft they are editing. Rebuilding the
+ * editor from the route alone would discard it, so carry the typed form and
+ * change only the type. A closed editor, an editor holding a saved note, or a
+ * save still in flight keeps the fresh route editor: only a new-note draft is
+ * the reader's own text on this page.
+ */
+const editorForRouteChange = (model: Model, route: AppRoute): EditorState => {
+  const fresh = editorForRoute(route)
+  if (!isRoute(route, "NewNote") || !isRoute(model.route, "NewNote")) {
+    return fresh
+  }
+
+  return EditorState.match(model.editor, {
+    Closed: () => fresh,
+    Saving: () => fresh,
+    Open: ({ maybeId, form }) =>
+      Option.isSome(maybeId)
+        ? fresh
+        : EditorState.match(fresh, {
+            Open: ({ type }) =>
+              EditorState.Open({ type, maybeId: Option.none(), form }),
+            Closed: () => fresh,
+            Saving: () => fresh,
+          }),
+  })
+}
+
 type UpdateReturn = Update.Return<Model, Message>
 
 const enterRoute = (model: Model, route: AppRoute, options: { readonly cancelPrevious?: boolean } = {}): UpdateReturn => {
   const base = modifyFields(model, {
     route: () => route,
-    editor: () => editorForRoute(route),
+    editor: () => editorForRouteChange(model, route),
     lastError: () => Option.none(),
   })
 
@@ -810,14 +853,20 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url) => {
 const withForm = (editor: EditorState, change: Partial<NoteForm>): EditorState =>
   EditorState.match(editor, {
     Closed: () => editor,
-    Open: ({ type, maybeId, form }) =>
-      EditorState.Open({ type, maybeId, form: { ...form, ...change } }),
-    Saving: ({ requestId, type, maybeId, form }) =>
+    Open: ({ type, maybeId, form, expectedContentHash }) =>
+      EditorState.Open({
+        type,
+        maybeId,
+        form: { ...form, ...change },
+        ...(expectedContentHash === undefined ? {} : { expectedContentHash }),
+      }),
+    Saving: ({ requestId, type, maybeId, form, expectedContentHash }) =>
       EditorState.Saving({
         requestId,
         type,
         maybeId,
         form: { ...form, ...change },
+        ...(expectedContentHash === undefined ? {} : { expectedContentHash }),
       }),
   })
 
@@ -846,7 +895,7 @@ const submitEditor = (model: Model): UpdateReturn =>
   EditorState.match<UpdateReturn>(model.editor, {
     Closed: () => ({ model }),
     Saving: () => ({ model }),
-    Open: ({ type, maybeId, form }) => {
+    Open: ({ type, maybeId, form, expectedContentHash }) => {
       const maybeError = formError(type, form)
       if (Option.isSome(maybeError)) {
         return {
@@ -859,11 +908,30 @@ const submitEditor = (model: Model): UpdateReturn =>
       const requestId = model.saveRequestId + 1
       return {
         model: modifyFields(model, {
-          editor: () => EditorState.Saving({ requestId, type, maybeId, form }),
+          editor: () =>
+            EditorState.Saving({
+              requestId,
+              type,
+              maybeId,
+              form,
+              ...(expectedContentHash === undefined
+                ? {}
+                : { expectedContentHash }),
+            }),
           saveRequestId: () => requestId,
           lastError: () => Option.none(),
         }),
-        commands: [SaveNote({ requestId, noteId: maybeId, type, form })],
+        commands: [
+          SaveNote({
+            requestId,
+            noteId: maybeId,
+            type,
+            form,
+            ...(expectedContentHash === undefined
+              ? {}
+              : { expectedContentHash }),
+          }),
+        ],
       }
     },
   })
@@ -901,6 +969,29 @@ const noteTypeOption = (
       Match.orElse(() => Option.none<Markdown.NoteType>()),
     ),
   )
+
+/**
+ * The type filter belongs to the search URL, so re-submitting from the search
+ * page keeps it; dropping it silently changed the results under the reader.
+ * Every other page starts an unfiltered search: the notes-list filter is a
+ * different view and is not carried across.
+ */
+const searchTypeFromRoute = (
+  route: AppRoute,
+): Markdown.NoteType | undefined =>
+  AppRoute.match(route, {
+    Search: ({ type }) => Option.getOrUndefined(noteTypeOption(type)),
+    Home: () => undefined,
+    NewNote: () => undefined,
+    NoteDetail: () => undefined,
+    EditNote: () => undefined,
+    DeleteNote: () => undefined,
+    Tags: () => undefined,
+    Wiki: () => undefined,
+    Review: () => undefined,
+    Health: () => undefined,
+    NotFound: () => undefined,
+  })
 
 const isDeleteRouteFor = (route: AppRoute, noteId: string): boolean =>
   AppRoute.match(route, {
@@ -1111,7 +1202,10 @@ export const update = (model: Model, message: Message) =>
           url:
             model.searchInput.trim() === ""
               ? "/search"
-              : searchHref(model.searchInput.trim()),
+              : searchHref(
+                  model.searchInput.trim(),
+                  searchTypeFromRoute(model.route),
+                ),
         }),
       ],
     }),
@@ -1162,14 +1256,35 @@ export const update = (model: Model, message: Message) =>
             return { model }
           }
           const requestId = model.deleteRequestId + 1
+          // The confirmation page rendered a specific loaded version. Send its
+          // hash so a concurrent external edit is a conflict instead of an
+          // unnoticed overwrite.
+          const expectedContentHash = Option.flatMap(
+            AsyncData.getData(model.note),
+            (maybeNote) => maybeNote,
+          ).pipe(Option.map((loaded) => loaded.contentHash))
           return {
             model: modifyFields(model, {
               deleteRequestId: () => requestId,
               deleteRequest: () =>
-                Option.some({ requestId, noteId }),
+                Option.some({
+                  requestId,
+                  noteId,
+                  ...(Option.isSome(expectedContentHash)
+                    ? { expectedContentHash: expectedContentHash.value }
+                    : {}),
+                }),
               lastError: () => Option.none(),
             }),
-            commands: [DeleteNote({ requestId, noteId })],
+            commands: [
+              DeleteNote({
+                requestId,
+                noteId,
+                ...(Option.isSome(expectedContentHash)
+                  ? { expectedContentHash: expectedContentHash.value }
+                  : {}),
+              }),
+            ],
           }
         },
         Home: () => ({ model }),
@@ -1258,6 +1373,7 @@ export const update = (model: Model, message: Message) =>
                     type: value.type,
                     maybeId: Option.some(value.id),
                     form: noteFormFromNote(value),
+                    expectedContentHash: value.contentHash,
                   }),
               }),
             }),
@@ -1338,6 +1454,9 @@ export const update = (model: Model, message: Message) =>
                   type: saving.type,
                   maybeId: saving.maybeId,
                   form: saving.form,
+                  ...(saving.expectedContentHash === undefined
+                    ? {}
+                    : { expectedContentHash: saving.expectedContentHash }),
                 }),
             }),
           lastError: () => Option.some(message),
@@ -1934,7 +2053,7 @@ const homeView = (model: Model, h: HtmlBuilder<Message>): Html =>
     NoteDetail: () => noteDetailView(model, h),
     EditNote: () => editorView(model, h),
     DeleteNote: () => deleteView(model, h),
-    Search: () => searchView(model, h),
+    Search: ({ q, type }) => searchView(model, { q, type }, h),
     Tags: () => tagsView(model, h),
     Wiki: () => wikiView(model, h),
     Review: () => reviewView(model, h),
@@ -2297,8 +2416,47 @@ const searchResults = (
       ),
   })
 
-const searchView = (model: Model, h: HtmlBuilder<Message>): Html =>
-  h.section(
+const searchFilterLinks = (
+  query: string,
+  selected: Markdown.NoteType | undefined,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const link = (label: string, value?: Markdown.NoteType): Html =>
+    h.a(
+      [
+        h.Href(searchHref(query, value)),
+        h.Class(
+          selected === value
+            ? "rounded-lg bg-emerald-500 px-3 py-1.5 text-sm font-semibold text-slate-950"
+            : "rounded-lg bg-slate-800 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-700",
+        ),
+      ],
+      [label],
+    )
+
+  return h.nav(
+    [h.Class("flex flex-wrap gap-2"), h.AriaLabel("Filter by type")],
+    [
+      link("All"),
+      link("Fleeting", "fleeting"),
+      link("Permanent", "permanent"),
+      link("Literature", "literature"),
+    ],
+  )
+}
+
+const searchView = (
+  model: Model,
+  route: {
+    readonly q: Option.Option<string>
+    readonly type: Option.Option<string>
+  },
+  h: HtmlBuilder<Message>,
+): Html => {
+  const query = Option.getOrElse(route.q, () => "").trim()
+  const selected = Option.getOrUndefined(noteTypeOption(route.type))
+
+  return h.section(
     [h.Class("flex flex-col gap-4")],
     [
       h.div(
@@ -2329,6 +2487,10 @@ const searchView = (model: Model, h: HtmlBuilder<Message>): Html =>
           h.button([h.Type("submit"), h.Class(primaryButtonClass)], ["Search"]),
         ],
       ),
+      // The type filter lives in the URL. Show it, so a filtered result set is
+      // never presented as an unfiltered one, and offer the links that change
+      // it. Without a query there is nothing to filter.
+      query === "" ? h.empty : searchFilterLinks(query, selected, h),
       AsyncData.match(model.search, {
         onIdle: () => status("Enter a query to search the local index.", h),
         onLoading: () => status("Searching...", h),
@@ -2343,6 +2505,7 @@ const searchView = (model: Model, h: HtmlBuilder<Message>): Html =>
       }),
     ],
   )
+}
 
 const tagBreakdown = (item: ApiTag): string => {
   const parts = [

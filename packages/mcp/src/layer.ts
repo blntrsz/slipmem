@@ -1,8 +1,7 @@
 import {
   MarkdownNoteRepositoryLive,
   MarkdownSearchIndex,
-  MarkdownSearchIndexFromRepository,
-  PermanentMaintenanceWorkerLive,
+  MarkdownSearchIndexResilientFromRepository,
   PromptRecallServiceLive,
   type MarkdownError,
 } from "@slipmem/core"
@@ -10,13 +9,14 @@ import { WikiServiceLive } from "@slipmem/core/wiki"
 import { Effect, Layer } from "effect"
 import { McpApprovalServiceLive } from "./approval"
 import {
-  makeAutomaticMemoryLayer,
+  makeMaintenanceLayer,
   makeRawWriteRepositoryLayer,
   makeRawWriteSignalLayer,
   resolveAutomaticMemoryRuntime,
   resolveRecallProvider,
 } from "./automatic-memory"
 import type { McpServerOptions } from "./config"
+import { makeServingRegistrationsLayer } from "./runtime"
 import { McpNoteRegistrations } from "./tools"
 
 /**
@@ -86,7 +86,7 @@ export const makeMarkdownServicesLayer = (options: McpServerOptions) => {
     Layer.provide(baseRepository),
   )
 
-  const index = MarkdownSearchIndexFromRepository(
+  const index = MarkdownSearchIndexResilientFromRepository(
     options.cacheDir === undefined ? {} : { cacheDir: options.cacheDir },
   ).pipe(Layer.provide(services))
 
@@ -128,62 +128,24 @@ export const makeMcpSharedRegistrationsLayer = (options: McpServerOptions) => {
     )
   }
 
-  const worker = PermanentMaintenanceWorkerLive({
-    provider: provider.maintenance,
-    ...(options.now === undefined ? {} : { now: options.now }),
-  }).pipe(Layer.provide(services), Layer.orDie)
+  const graph = makeMaintenanceLayer(
+    provider,
+    automaticMemory,
+    options.now === undefined ? {} : { now: options.now },
+  ).pipe(Layer.provideMerge(services))
 
   return {
     automaticMemory,
-    registrations: Layer.merge(
-      McpNoteRegistrations,
-      makeAutomaticMemoryLayer(automaticMemory),
-    ).pipe(Layer.provide(Layer.merge(services, worker))),
+    registrations: McpNoteRegistrations.pipe(Layer.provide(graph)),
   }
 }
 
 /**
  * The common runtime composition for both MCP transports.
  *
- * Tool registrations and the opt-in event-driven maintenance lifecycle share
- * one repository/index graph. The lifecycle is forked into the server layer's
- * scope, so HTTP handler disposal and stdio SIGINT/SIGTERM both stop it. Raw
- * writes and the note-root watcher signal the same scoped queue.
+ * This now delegates to the shared serving runtime so stdio and HTTP cannot
+ * drift: one repository, one disposable index, one approval graph, and one
+ * opt-in event-driven maintenance lifecycle.
  */
-export const makeMcpRegistrationsLayer = (options: McpServerOptions) => {
-  const automaticMemory =
-    options.automaticMemory ??
-    resolveAutomaticMemoryRuntime(options.env ?? process.env)
-  const services = makeMarkdownServicesLayer(options)
-
-  if (!automaticMemory.enabled) {
-    return {
-      automaticMemory,
-      registrations: McpNoteRegistrations.pipe(Layer.provide(services)),
-    }
-  }
-
-  const provider = automaticMemory.provider
-  if (provider === undefined) {
-    throw new Error(
-      "Automatic memory is enabled but no maintenance provider was resolved.",
-    )
-  }
-
-  // `provideMerge` keeps the repository, index, approval, recall, and wiki
-  // services and adds the worker to the same graph. The maintenance worker is
-  // not an MCP tool; it writes with provenance source "maintenance" and never
-  // receives approval or delete capabilities.
-  const runtime = PermanentMaintenanceWorkerLive({
-    provider: provider.maintenance,
-    ...(options.now === undefined ? {} : { now: options.now }),
-  }).pipe(Layer.provideMerge(services), Layer.orDie)
-
-  return {
-    automaticMemory,
-    registrations: Layer.merge(
-      McpNoteRegistrations,
-      makeAutomaticMemoryLayer(automaticMemory),
-    ).pipe(Layer.provide(runtime)),
-  }
-}
+export const makeMcpRegistrationsLayer = (options: McpServerOptions) =>
+  makeServingRegistrationsLayer(options)

@@ -1125,7 +1125,7 @@ export const planMigration = (options: MigrationPlanOptions): MigrationPlan => {
   const collisions: Array<MigrationFilenameCollision> = []
 
   for (const candidate of candidates) {
-    const baseFilename = `${Markdown.slugifyTitle(candidate.title)}.md`
+    const baseFilename = Markdown.noteBaseFilename(candidate.title)
     const filename = Markdown.noteFilename({
       title: candidate.title,
       taken,

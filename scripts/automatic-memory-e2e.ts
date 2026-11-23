@@ -1278,9 +1278,7 @@ const main = async (): Promise<void> => {
   check(transport === "stdio" || transport === "http", `Unknown SLIPMEM_E2E_TRANSPORT=${transport}.`)
 
   const nonce = crypto.randomUUID().slice(0, 8)
-  const tempBase =
-    env.SLIPMEM_E2E_TMP_BASE?.trim() ||
-    (existsSync("/tmp/opencode") ? "/tmp/opencode" : tmpdir())
+  const tempBase = env.SLIPMEM_E2E_TMP_BASE?.trim() || tmpdir()
   const base = await mkdtemp(join(tempBase, `slipmem-auto-memory-e2e-${nonce}-`))
   const root = join(base, ".slipmem")
   const cacheDir = join(base, "cache")

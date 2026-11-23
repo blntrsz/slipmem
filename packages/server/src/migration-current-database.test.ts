@@ -1,5 +1,17 @@
 import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
+import {
+  checkNoteRoot,
+  FleetingNoteService,
+  LiteratureNoteService,
+  PermanentNoteService,
+  readNoteFile,
+} from "@slipmem/core"
+import {
+  getLegacyNote,
+  importMigration,
+  listLegacyNotes,
+} from "@slipmem/core/legacy/migration"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { Effect } from "effect"
 import { createHash } from "node:crypto"
@@ -10,16 +22,12 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { makeDatabaseLayer } from "../../../server/src/database.ts"
-import { FleetingNoteService } from "../fleeting-note/fleeting-note.service.js"
-import { LiteratureNoteService } from "../literature-note/literature-note.service.js"
-import { checkNoteRoot } from "../markdown/check.js"
-import { readNoteFile } from "../markdown/paths.js"
-import { PermanentNoteService } from "../permanent-note/permanent-note.service.js"
-import { getLegacyNote, listLegacyNotes } from "./legacy-read.js"
-import { importMigration } from "./migration-import.js"
+import { makeDatabaseLayer } from "./database.js"
 
-const fixtureRoot = join(import.meta.dir, "../../fixtures/phase0/migration")
+const fixtureRoot = join(
+  import.meta.dir,
+  "../../core/fixtures/phase0/migration",
+)
 const temporaryDirectories: Array<string> = []
 const FIXED_NOW = 1794943845000
 

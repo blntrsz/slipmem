@@ -1,7 +1,7 @@
 // Initiative records are durable planning bookkeeping, deliberately separate
 // from notes. They live in a nested directory under the note root, so the note
 // scanner, search index, recall, and approval queue never see them as notes.
-import type { InitiativeError } from "./errors.js"
+import type { InitiativeError, InitiativeErrorCode } from "./errors.js"
 
 export const INITIATIVE_SCHEMA = "slipmem.initiative.v1"
 export const INITIATIVE_DIRECTORY = "initiatives"
@@ -281,9 +281,12 @@ export interface PromoteAssertionResult {
   readonly promotion: InitiativePromotion
   readonly record: InitiativeRecord
   /**
-   * Projection into the flat permanent-note store. `skipped` with
-   * `reason: "unversioned"` means no main note was written because the
-   * promotion has no trusted, main-reachable snapshot.
+   * Projection into the flat permanent-note store. The promotion itself is
+   * committed before projection, so `pending` and `failed` describe a
+   * committed promotion whose note projection did not complete; `error`
+   * carries the actionable cause. `skipped` with `reason: "unversioned"` means
+   * no main note was written because the promotion has no trusted,
+   * main-reachable snapshot.
    */
   readonly projection: InitiativeProjectionResult
 }
@@ -292,6 +295,13 @@ export type InitiativeProjectionStatus =
   | "created"
   | "existing"
   | "skipped"
+  /**
+   * A promotion is committed but another live process owns a fresh pending
+   * receipt. Retry the projection (or reconcile) once it finishes.
+   */
+  | "pending"
+  /** A promotion is committed but the projection attempt failed. */
+  | "failed"
 
 export interface InitiativeProjectionEvidence {
   readonly kind: EvidenceKind
@@ -333,6 +343,11 @@ export interface InitiativeProjectionMarker {
   readonly evidence: ReadonlyArray<InitiativeProjectionEvidence>
 }
 
+export interface InitiativeProjectionFailure {
+  readonly code: InitiativeErrorCode
+  readonly message: string
+}
+
 export interface InitiativeProjectionResult {
   readonly status: InitiativeProjectionStatus
   readonly advisory: true
@@ -345,6 +360,12 @@ export interface InitiativeProjectionResult {
   readonly notePath?: string
   readonly noteContentHash?: string
   readonly receipt?: InitiativeProjectionReceipt
+  /**
+   * Present when the promotion was committed but its projection did not
+   * complete. `status` is `pending` for a live pending receipt owned by another
+   * process, and `failed` for any other projection error.
+   */
+  readonly error?: InitiativeProjectionFailure
 }
 
 export type InitiativeProjectionReceiptStatus = "pending" | "projected"

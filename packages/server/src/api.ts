@@ -13,6 +13,10 @@ import {
   type MarkdownNoteRepositoryShape,
   type ParsedMarkdownNote,
 } from "@slipmem/core"
+import {
+  aggregateTagInventory,
+  emptyTagTypeCounts,
+} from "@slipmem/core/tags"
 import { Data, Effect, Layer, Match, Option, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 
@@ -33,14 +37,31 @@ export class ApiError extends Data.TaggedError("ApiError")<{
 const fail = (status: number, code: string, message: string) =>
   Effect.fail(new ApiError({ status, code, message }))
 
-const json = (body: unknown, status = 200) =>
+const json = (
+  body: unknown,
+  status = 200,
+  headers: Readonly<Record<string, string>> = {},
+) =>
   HttpServerResponse.jsonUnsafe(body, {
     status,
     headers: {
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
+      ...headers,
     },
   })
+
+/**
+ * Item reads expose the whole-file content hash as a strong ETag. A client can
+ * return it with `If-Match` on update/delete to make the write conditional on
+ * the version it actually read.
+ */
+const noteJson = (note: ParsedMarkdownNote, status = 200) => {
+  const apiNote = toApiNote(note)
+  return json({ note: apiNote }, status, {
+    etag: `"${apiNote.contentHash}"`,
+  })
+}
 
 const errorResponse = (error: ApiError) =>
   json(
@@ -53,6 +74,7 @@ const markdownStatus = (error: MarkdownError): number =>
     Match.when("not-found", () => 404),
     Match.when("repository-root-missing", () => 503),
     Match.when("repository-locked", () => 409),
+    Match.when("stale-base", () => 409),
     Match.when("file-too-large", () => 413),
     Match.when("frontmatter-too-large", () => 413),
     Match.when("write-failed", () => 500),
@@ -84,6 +106,8 @@ const approvalStatus = (error: ApprovalError): number =>
     Match.when("proposal-read-failed", () => 500),
     Match.when("repository-failure", () => 500),
     Match.when("apply-failed", () => 500),
+    Match.when("apply-conflict", () => 409),
+    Match.when("apply-unknown", () => 409),
     Match.orElse(() => 400),
   )
 
@@ -428,6 +452,49 @@ const readJsonBody = (
     return body as Readonly<Record<string, unknown>>
   })
 
+/**
+ * DELETE may carry a JSON guard body even though the method normally has none.
+ * An absent or empty body is the legacy unconditional form; any non-empty body
+ * must still be a JSON object with an explicit content type, so a body guard
+ * cannot be silently ignored by the wrong content type.
+ */
+const readOptionalJsonBody = (
+  request: HttpServerRequest.HttpServerRequest,
+): Effect.Effect<Readonly<Record<string, unknown>>, ApiError> =>
+  Effect.gen(function* () {
+    yield* assertSameOrigin(request)
+
+    const declaredLength = Number(request.headers["content-length"] ?? "0")
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
+      return yield* Effect.fail(bodyTooLarge())
+    }
+
+    const text = yield* readBodyText(request)
+    if (text.trim() === "") {
+      return {}
+    }
+    if (!isJsonContentType(request.headers["content-type"])) {
+      return yield* fail(
+        415,
+        "invalid-content-type",
+        "A DELETE body must use application/json.",
+      )
+    }
+
+    let body: unknown
+    try {
+      body = JSON.parse(text)
+    } catch {
+      return yield* fail(400, "invalid-body", "Invalid JSON body.")
+    }
+
+    if (typeof body !== "object" || body === null || Array.isArray(body)) {
+      return yield* fail(400, "invalid-body", "Expected a JSON object.")
+    }
+
+    return body as Readonly<Record<string, unknown>>
+  })
+
 const defaultActor = (): string | undefined => {
   const actor = process.env.SLIPMEM_ACTOR?.trim()
   return actor === undefined || actor.length === 0 ? undefined : actor
@@ -508,6 +575,173 @@ const noteNotFound = (id: string): ApiError =>
     message: `Note not found: ${id}`,
   })
 
+const revisionBodyFields = [
+  "revision",
+  "contentHash",
+  "expectedContentHash",
+] as const
+
+/**
+ * Reads the optional base revision from the request. `revision` is the
+ * canonical body field; the two hash aliases match the item response and the
+ * core repository option so existing clients can adopt the guard without
+ * reshaping their payload. All supplied forms must agree.
+ */
+const bodyRevision = (
+  body: Readonly<Record<string, unknown>>,
+): Effect.Effect<string | undefined, ApiError> => {
+  const supplied: string[] = []
+  for (const field of revisionBodyFields) {
+    if (!Object.prototype.hasOwnProperty.call(body, field)) {
+      continue
+    }
+    const value = body[field]
+    if (typeof value !== "string" || value.trim() === "") {
+      return fail(
+        400,
+        "invalid-revision",
+        `${field} must be a non-empty note revision string.`,
+      )
+    }
+    supplied.push(value.trim())
+  }
+
+  if (new Set(supplied).size > 1) {
+    return fail(
+      400,
+      "conflicting-revision",
+      "The request supplies more than one different note revision.",
+    )
+  }
+  return Effect.succeed(supplied[0])
+}
+
+const revisionQueryFields = [
+  "revision",
+  "contentHash",
+  "expectedContentHash",
+] as const
+
+/**
+ * Every supplied query alias is collected, not just the first one. An empty
+ * alias (`?revision=`) is a malformed guard rather than "no guard", and
+ * aliases that disagree fail closed instead of silently choosing one.
+ */
+const queryRevision = (
+  url: URL,
+): Effect.Effect<string | undefined, ApiError> => {
+  const supplied: string[] = []
+  for (const field of revisionQueryFields) {
+    if (!url.searchParams.has(field)) {
+      continue
+    }
+    for (const raw of url.searchParams.getAll(field)) {
+      const value = raw.trim()
+      if (value === "") {
+        return fail(
+          400,
+          "invalid-revision",
+          `${field} must be a non-empty note revision string.`,
+        )
+      }
+      supplied.push(value)
+    }
+  }
+
+  if (new Set(supplied).size > 1) {
+    return fail(
+      400,
+      "conflicting-revision",
+      "The request supplies more than one different note revision.",
+    )
+  }
+  return Effect.succeed(supplied[0])
+}
+
+/**
+ * Accepts exactly one strong validator: `*` or one entity-tag token. The token
+ * may be quoted (the form emitted by `noteJson`) or bare (a compatibility form
+ * for clients that pass `ApiNote.contentHash` directly). Weak `W/` validators
+ * and comma-separated OR-lists are rejected because the repository CAS compares
+ * one hash; accepting either would silently weaken the guard.
+ */
+const ifMatchRevision = (
+  request: HttpServerRequest.HttpServerRequest,
+): Effect.Effect<string | undefined, ApiError> => {
+  const raw = request.headers["if-match"]
+  if (raw === undefined) {
+    return Effect.succeed(undefined)
+  }
+  const trimmed = raw.trim()
+  if (trimmed === "*") {
+    return Effect.succeed(undefined)
+  }
+
+  const entries = trimmed
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0)
+  if (entries.length !== 1) {
+    return fail(
+      400,
+      "invalid-revision",
+      "If-Match must contain exactly one strong note revision.",
+    )
+  }
+
+  let revision = entries[0]!
+  if (revision.slice(0, 2).toLowerCase() === "w/") {
+    return fail(
+      400,
+      "invalid-revision",
+      "If-Match does not accept weak validators; send the strong content hash.",
+    )
+  }
+  if (
+    revision.length >= 2 &&
+    revision.startsWith('"') &&
+    revision.endsWith('"')
+  ) {
+    revision = revision.slice(1, -1)
+  }
+  if (revision.length === 0) {
+    return fail(
+      400,
+      "invalid-revision",
+      "If-Match must name a non-empty note revision.",
+    )
+  }
+  return Effect.succeed(revision)
+}
+
+/**
+ * Combines the header, body, and query revision forms. Supplying the same
+ * revision through more than one form is allowed; disagreement fails closed so
+ * a caller cannot accidentally weaken the guard.
+ */
+const expectedRevision = (
+  request: HttpServerRequest.HttpServerRequest,
+  body: Readonly<Record<string, unknown>> | undefined,
+  url: URL,
+): Effect.Effect<string | undefined, ApiError> =>
+  Effect.gen(function* () {
+    const header = yield* ifMatchRevision(request)
+    const fromBody = body === undefined ? undefined : yield* bodyRevision(body)
+    const fromQuery = yield* queryRevision(url)
+    const supplied = [header, fromBody, fromQuery].filter(
+      (value): value is string => value !== undefined,
+    )
+
+    if (new Set(supplied).size > 1) {
+      return yield* fail(
+        400,
+        "conflicting-revision",
+        "The request supplies more than one different note revision.",
+      )
+    }
+    return supplied[0]
+  })
+
 const getNoteOfType = (
   repository: MarkdownNoteRepositoryShape,
   id: string,
@@ -571,18 +805,33 @@ export const MarkdownApiRoutes = Layer.unwrap(
           void url
           // Refresh first so a note written by the CLI or an editor is counted.
           // The index is disposable; the note files remain the source of truth.
-          yield* index.refresh()
-          const status = yield* index.status()
+          // If the cache cannot be opened even after its repair attempt, the
+          // service is still usable for notes and approvals, so report the
+          // index as unavailable instead of failing the health request.
+          const indexHealth = yield* Effect.gen(function* () {
+            yield* index.refresh()
+            const status = yield* index.status()
+            return {
+              mode: status.mode as string,
+              path: status.path,
+              noteCount: status.noteCount,
+            }
+          }).pipe(
+            Effect.catch((error) =>
+              Effect.succeed({
+                mode: "unavailable",
+                path: index.path,
+                noteCount: 0,
+                warning: error.message,
+              }),
+            ),
+          )
           const synthesis = yield* synthesisCapability(process.env)
           return json({
             ok: true,
             service: "slipmem",
             noteRoot: repository.root,
-            index: {
-              mode: status.mode,
-              path: status.path,
-              noteCount: status.noteCount,
-            },
+            index: indexHealth,
             wiki: { synthesis },
           })
         }),
@@ -611,7 +860,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
           const params = yield* HttpRouter.params
           const id = yield* parseNoteId(params.id)
           const note = yield* getNote(repository, id)
-          return json({ note: toApiNote(note) })
+          return noteJson(note)
         }),
       )
 
@@ -623,7 +872,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
           const type = yield* parseType(params.type)
           const id = yield* parseNoteId(params.id)
           const note = yield* getNoteOfType(repository, id, type)
-          return json({ note: toApiNote(note) })
+          return noteJson(note)
         }),
       )
 
@@ -643,7 +892,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
             ...(input.tags === undefined ? {} : { tags: input.tags }),
             provenance: webProvenance(),
           })
-          return json({ note: toApiNote(note) }, 201)
+          return noteJson(note, 201)
         }),
       )
 
@@ -663,12 +912,14 @@ export const MarkdownApiRoutes = Layer.unwrap(
     ) =>
       route(
         Effect.gen(function* () {
+          const url = requestUrl(request)
           if (type !== undefined) {
             // Compatibility routes must not mutate a note through the wrong
             // type name.
             yield* getNoteOfType(repository, id, type)
           }
           const body = yield* readJsonBody(request)
+          const expected = yield* expectedRevision(request, body, url)
           const input = yield* readUpdateBody(body)
           const note = yield* repository.update({
             id,
@@ -679,9 +930,12 @@ export const MarkdownApiRoutes = Layer.unwrap(
               ? {}
               : { reference: input.reference }),
             ...(input.tags === undefined ? {} : { tags: input.tags }),
+            ...(expected === undefined
+              ? {}
+              : { expectedContentHash: expected }),
             provenance: webProvenance(),
           })
-          return json({ note: toApiNote(note) })
+          return noteJson(note)
         }),
       )
 
@@ -711,13 +965,18 @@ export const MarkdownApiRoutes = Layer.unwrap(
     ) =>
       route(
         Effect.gen(function* () {
-          yield* assertSameOrigin(request)
+          const body = yield* readOptionalJsonBody(request)
+          const url = requestUrl(request)
+          const expected = yield* expectedRevision(request, body, url)
           if (type !== undefined) {
             yield* getNoteOfType(repository, id, type)
           } else {
             yield* getNote(repository, id)
           }
-          const deleted = yield* repository.delete(id)
+          const deleted = yield* repository.delete(
+            id,
+            expected === undefined ? {} : { expectedContentHash: expected },
+          )
           const status = yield* index.refresh()
           return json({
             deleted: true,
@@ -799,31 +1058,20 @@ export const MarkdownApiRoutes = Layer.unwrap(
           })
           // Tag counts include every note type. The wiki cites permanent and
           // literature notes by default, so expose a per-type breakdown too;
-          // otherwise a fleeting-only tag looks empty on its tag page.
+          // otherwise a fleeting-only tag looks empty on its tag page. The
+          // breakdown is aggregated by the same pure core helper MCP uses, but
+          // the ordered tag list and counts still come from the refreshed index
+          // so its cache and filters remain authoritative here.
           const scan = yield* repository.scan()
-          const counts = new Map<
-            string,
-            { fleeting: number; literature: number; permanent: number }
-          >()
-          for (const note of scan.notes) {
-            for (const tag of note.metadata.tags ?? []) {
-              const current = counts.get(tag) ?? {
-                fleeting: 0,
-                literature: 0,
-                permanent: 0,
-              }
-              current[note.metadata.type] += 1
-              counts.set(tag, current)
-            }
-          }
+          const byType = new Map(
+            aggregateTagInventory(scan.notes).map(
+              (entry) => [entry.tag, entry.byType] as const,
+            ),
+          )
           return json({
             tags: items.map((item) => ({
               ...item,
-              byType: counts.get(item.tag) ?? {
-                fleeting: 0,
-                literature: 0,
-                permanent: 0,
-              },
+              byType: byType.get(item.tag) ?? emptyTagTypeCounts(),
             })),
           })
         }),

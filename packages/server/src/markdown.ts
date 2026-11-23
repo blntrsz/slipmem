@@ -2,11 +2,11 @@ import {
   ApprovalServiceLive,
   MarkdownNoteRepositoryLive,
   MarkdownSearchIndex,
-  MarkdownSearchIndexFromRepository,
+  MarkdownSearchIndexResilientFromRepository,
   WikiServiceLive,
+  type NoteProjection,
   type ParsedMarkdownNote,
 } from "@slipmem/core"
-import type { Note } from "@slipmem/schemas/note"
 import { Effect, Layer } from "effect"
 
 /**
@@ -32,9 +32,12 @@ export const makeMarkdownLayer = (options: MarkdownLayerOptions) => {
     root: options.root,
     ...(options.now === undefined ? {} : { now: options.now }),
   })
-  const index = MarkdownSearchIndexFromRepository(
+  const index = MarkdownSearchIndexResilientFromRepository(
     options.cacheDir === undefined ? {} : { cacheDir: options.cacheDir },
   )
+  // A damaged cache must not prevent note reads or human approvals from
+  // starting. The resilient index opens lazily and repairs only itself; the
+  // repository and approval queue never depend on a successful SQLite open.
   // Approval refreshes the same index instance the API reads, so a successful
   // human approval is immediately drifted-free for the next `check` or health
   // response. The service treats a cache failure as a warning, not a rollback.
@@ -59,11 +62,12 @@ export const makeMarkdownLayer = (options: MarkdownLayerOptions) => {
 }
 
 /**
- * The JSON representation of a note. It extends the existing `Note.Info`
- * wire union with the metadata the web UI and API clients need to render
- * tags, paths, and citations without a second request.
+ * The JSON representation of a note. It extends the canonical Markdown
+ * projection with the metadata the web UI and API clients need to render
+ * tags, paths, and citations without a second request. The projection keeps
+ * the long-standing wire shape, so existing clients see no change.
  */
-export type ApiNote = Note.Info & {
+export type ApiNote = NoteProjection & {
   readonly tags: ReadonlyArray<string>
   readonly path: string
   readonly contentHash: string
@@ -71,7 +75,7 @@ export type ApiNote = Note.Info & {
 }
 
 export const toApiNote = (note: ParsedMarkdownNote): ApiNote => ({
-  ...note.info,
+  ...note.projection,
   tags: note.metadata.tags ?? [],
   path: note.path,
   contentHash: note.contentHash,

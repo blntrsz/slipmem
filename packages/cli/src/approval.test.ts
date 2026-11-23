@@ -6,7 +6,7 @@ import {
   type MarkdownNoteRepositoryShape,
 } from "@slipmem/core"
 import { Effect } from "effect"
-import { existsSync, rmSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { makeTempBase, parseJson, runCliProcess } from "./test-support.js"
 
@@ -45,6 +45,7 @@ interface ApprovalResult {
     readonly noteId: string
     readonly backupPath?: string
     readonly note?: { readonly id: string; readonly content: string }
+    readonly cleanup?: { readonly status: string; readonly warning?: string }
   }
 }
 
@@ -400,5 +401,35 @@ describe("slipmem review, approve, and reject", () => {
 
     const missing = await run(setupValue, ["show", noteId, "--json"])
     expect(missing.code).toBe(1)
+  }, 30000)
+
+  test("surfaces a cleanup warning after a durable approval", async () => {
+    const setupValue = await setup()
+    const id = await proposalId(setupValue, {
+      operation: "create",
+      type: "permanent",
+      title: "Cleanup warning",
+      content: "The note is durable even when proposal cleanup fails.",
+      actor: "test-agent",
+    })
+    const pending = join(setupValue.root, ".state", "pending")
+    chmodSync(pending, 0o500)
+    try {
+      const approved = await run(setupValue, ["approve", id, "--json"])
+      expect(approved.code).toBe(0)
+      const application = parseJson<ApprovalResult>(approved.stdout).application
+      expect(application.status).toBe("applied")
+      expect(application.cleanup?.status).toBe("pending")
+      expect(application.cleanup?.warning).toContain(
+        "proposal file could not be removed",
+      )
+      expect(approved.stderr).toContain("Warning:")
+      expect(approved.stderr).toContain("cleanup")
+
+      const shown = await run(setupValue, ["show", "cleanup-warning", "--json"])
+      expect(shown.code).toBe(0)
+    } finally {
+      chmodSync(pending, 0o700)
+    }
   }, 30000)
 })

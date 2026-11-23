@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import {
   makeMarkdownNoteRepository,
@@ -27,7 +28,7 @@ interface Fixture {
 }
 
 const createFixture = async (): Promise<Fixture> => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-graph-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-graph-"))
   const root = join(base, ".slipmem")
   mkdirSync(root, { recursive: true })
   const clock = { value: FIXED_NOW }

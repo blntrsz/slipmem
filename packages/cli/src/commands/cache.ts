@@ -1,4 +1,9 @@
-import { indexExists } from "@slipmem/core"
+import {
+  indexExists,
+  isIndexCorruptionError,
+  repairCorruptSearchIndex,
+  repairSearchIndexCache,
+} from "@slipmem/core"
 import { Effect } from "effect"
 import { stringOption } from "../args.js"
 import { indexConfig, resolveRoot } from "../context.js"
@@ -13,8 +18,9 @@ export const cacheCommand: CommandDefinition = {
   usage: "cache clear [--json]",
   details: [
     "Clears only the derived SQLite index through the shared core index API.",
-    "No note file, .state entry, or cache directory is removed. The next",
-    "search, tags, or check --rebuild-index recreates the index from notes.",
+    "A corrupt index file is removed and recreated empty. No note file, .state",
+    "entry, or cache directory is removed. The next search, tags, or",
+    "check --rebuild-index recreates the index from notes.",
   ],
   minPositionals: 1,
   maxPositionals: 1,
@@ -32,13 +38,34 @@ export const cacheCommand: CommandDefinition = {
       }
 
       const resolved = yield* resolveRoot(context, stringOption(parsed, "dir"))
-      const existed = indexExists(indexConfig(context, resolved.root))
-      const result = yield* withSearchIndex(context, resolved.root, (index) =>
-        Effect.gen(function* () {
-          const before = yield* index.status()
-          yield* index.clear()
-          const after = yield* index.status()
-          return { before, after }
+      const config = indexConfig(context, resolved.root)
+      const existed = indexExists(config)
+      // A damaged header is repaired from the filesystem before SQLite is
+      // opened. This is the documented recovery command, so it must not fail on
+      // the same corrupt file it is meant to remove.
+      const initialRepair = yield* repairCorruptSearchIndex(config)
+      let repaired = initialRepair.repaired
+
+      const clearIndex = () =>
+        withSearchIndex(context, resolved.root, (index) =>
+          Effect.gen(function* () {
+            const before = yield* index.status()
+            yield* index.clear()
+            const after = yield* index.status()
+            return { before, after }
+          }),
+        )
+
+      const result = yield* clearIndex().pipe(
+        Effect.catch((error) => {
+          if (!isIndexCorruptionError(error)) {
+            return Effect.fail(error)
+          }
+          return Effect.gen(function* () {
+            const repairedCache = yield* repairSearchIndexCache(config)
+            repaired = repaired || repairedCache.removed
+            return yield* clearIndex()
+          })
         }),
       )
 
@@ -48,6 +75,7 @@ export const cacheCommand: CommandDefinition = {
           root: resolved.root,
           path: result.after.path,
           existed,
+          repaired,
           clearedNotes: result.before.noteCount,
           noteCount: result.after.noteCount,
         })
@@ -60,6 +88,12 @@ export const cacheCommand: CommandDefinition = {
           context.io,
           `  indexed notes: ${result.before.noteCount} -> ${result.after.noteCount}`,
         )
+        if (repaired) {
+          writeLine(
+            context.io,
+            "  repaired a corrupt index file; notes were not changed.",
+          )
+        }
         writeLine(
           context.io,
           "  note files were not changed; the next search or check --rebuild-index repopulates the index.",

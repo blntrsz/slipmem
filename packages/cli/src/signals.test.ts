@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { terminateChild } from "./signals.js"
 
@@ -27,7 +28,7 @@ afterEach(() => {
 const spawnReadyChild = async (
   script: string,
 ): Promise<ReturnType<typeof Bun.spawn>> => {
-  const base = mkdtempSync("/tmp/opencode/slipmem-signals-")
+  const base = mkdtempSync(join(tmpdir(), "slipmem-signals-"))
   bases.push(base)
   const marker = join(base, "ready")
   const child = Bun.spawn({

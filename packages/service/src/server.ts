@@ -1,11 +1,10 @@
 import {
   formatAutomaticMemoryNotice,
-  makeApiHandler,
-  makeMcpHttp,
   resolveAutomaticMemoryRuntime,
   resolveNoteRootPath,
   resolveRecallProvider,
 } from "@slipmem/server"
+import { makeServingApiHandler } from "@slipmem/server/serving-runtime"
 
 import { ServiceError } from "./errors"
 import { serviceHealthResponse } from "./health"
@@ -35,7 +34,7 @@ const parsePort = (raw: string | undefined): number => {
   return port
 }
 
-type ApiHandler = ReturnType<typeof makeApiHandler>
+type ApiHandler = ReturnType<typeof makeServingApiHandler>
 
 const DISPOSE_TIMEOUT_MS = 5_000
 
@@ -73,9 +72,9 @@ const settle = async (
 }
 
 /**
- * `makeApiHandler` builds its layer immediately and exposes `ready` for the
- * build outcome, so the service can wait for the real application graph rather
- * than binding a listener and declaring itself healthy optimistically.
+ * `makeServingApiHandler` builds its layer immediately and exposes `ready` for
+ * the build outcome, so the service can wait for the real application graph
+ * rather than binding a listener and declaring itself healthy optimistically.
  */
 const awaitApplicationReadiness = async (
   handler: ApiHandler,
@@ -162,17 +161,16 @@ const main = async (): Promise<void> => {
   owner = acquireServiceOwner(root)
   instanceId = owner.record.instanceId
 
-  // This is the same canonical API and HTTP MCP composition as the web entry.
-  // It is not a second implementation: one service process owns the one scoped
-  // maintenance worker for this root, independent of any connected client.
-  const extraRoutes = makeMcpHttp({
-    root,
+  // This is the same canonical API and HTTP MCP composition as the web entry,
+  // now built as one shared serving graph. It is not a second implementation:
+  // one service process owns the one scoped maintenance worker for this root,
+  // independent of any connected client.
+  api = makeServingApiHandler(root, {
     automaticMemory,
     ...(recallProvider.evaluator === undefined
       ? {}
       : { recallEvaluator: recallProvider.evaluator }),
   })
-  api = makeApiHandler(root, { extraRoutes })
 
   // Bind before readiness so a concurrent health probe sees an honest
   // "not-ready" instead of guessing from a connection refused. Readiness (and

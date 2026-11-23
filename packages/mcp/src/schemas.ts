@@ -171,9 +171,16 @@ export const TagExample = Schema.Struct({
   title: Schema.String,
 }).annotate({ identifier: "Mcp.TagExample" })
 
+export const TagTypeCounts = Schema.Struct({
+  fleeting: Schema.Int,
+  literature: Schema.Int,
+  permanent: Schema.Int,
+}).annotate({ identifier: "Mcp.TagTypeCounts" })
+
 export const TagSummaryResult = Schema.Struct({
   tag: Schema.String,
   noteCount: Schema.Int,
+  byType: TagTypeCounts,
   examples: Schema.Array(TagExample),
 }).annotate({ identifier: "Mcp.TagSummaryResult" })
 

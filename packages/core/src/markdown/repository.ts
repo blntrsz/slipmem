@@ -1,4 +1,3 @@
-import type { Note } from "@slipmem/schemas/note"
 import { Markdown } from "@slipmem/schemas/markdown"
 import { Context, Effect, Layer, Option } from "effect"
 import {
@@ -68,6 +67,13 @@ export interface CreateMarkdownNoteInput {
   readonly aliases?: ReadonlyArray<string>
   /** Additional frontmatter fields, preserved for compatibility/migration. */
   readonly unknown?: Readonly<Record<string, unknown>>
+  /**
+   * Exact note ID. When set, the create never falls back to a suffixed
+   * filename: it fails with `target-exists` if that ID is already taken. The
+   * allocation and write still happen under the repository lock. Approval
+   * uses this so a proposal cannot silently land under a different ID.
+   */
+  readonly id?: string
   /** Creation time for a normal write is the repository clock. */
   readonly createdAt?: number
   readonly updatedAt?: number
@@ -130,7 +136,7 @@ export interface MarkdownNoteRepositoryShape {
   readonly root: string
   readonly list: (
     input?: ListMarkdownNotesInput,
-  ) => Effect.Effect<ReadonlyArray<Note.Info>, MarkdownError>
+  ) => Effect.Effect<ReadonlyArray<Markdown.NoteProjection>, MarkdownError>
   readonly listNotes: (
     input?: ListMarkdownNotesInput,
   ) => Effect.Effect<ReadonlyArray<ParsedMarkdownNote>, MarkdownError>
@@ -142,7 +148,7 @@ export interface MarkdownNoteRepositoryShape {
   ) => Effect.Effect<Option.Option<ParsedMarkdownNote>, MarkdownError>
   readonly getInfo: (
     id: string,
-  ) => Effect.Effect<Option.Option<Note.Info>, MarkdownError>
+  ) => Effect.Effect<Option.Option<Markdown.NoteProjection>, MarkdownError>
   readonly create: (
     input: CreateMarkdownNoteInput,
   ) => Effect.Effect<ParsedMarkdownNote, MarkdownError>
@@ -176,7 +182,8 @@ const repositoryError = (
     | "not-found"
     | "backup-failed"
     | "write-failed"
-    | "stale-base",
+    | "stale-base"
+    | "target-exists",
   message: string,
 ): MarkdownError =>
   markdownError({ area: "repository", code, path, message })
@@ -391,7 +398,7 @@ export const scanMarkdownRoot = (
       }
     }
 
-    notes.sort((left, right) => byNewest(left.info, right.info))
+    notes.sort((left, right) => byNewest(left.projection, right.projection))
     return { notes, invalid, unexpected }
   })
 
@@ -429,6 +436,15 @@ const assertRoot = (root: string): Effect.Effect<void, MarkdownError> =>
           ),
     ),
   )
+
+const pathOccupied = (path: string): boolean => {
+  try {
+    lstatSync(path)
+    return true
+  } catch {
+    return false
+  }
+}
 
 const isCrossDevice = (cause: unknown): boolean =>
   typeof cause === "object" &&
@@ -550,7 +566,7 @@ export const makeMarkdownNoteRepository = (
           // Newest first, matching the SQLite NoteService ordering. Sorting
           // before the bound is what makes `limit` select the newest notes
           // rather than the first filenames on disk.
-          .sort((left, right) => byNewest(left.info, right.info))
+          .sort((left, right) => byNewest(left.projection, right.projection))
           .slice(0, asListLimit(input.limit))
       })
 
@@ -584,27 +600,80 @@ export const makeMarkdownNoteRepository = (
         return yield* withRepositoryLock(
           root,
           Effect.gen(function* () {
+            const metadataFor = (id: string): Markdown.NoteMetadata => ({
+              schema: Markdown.SCHEMA_VERSION,
+              id,
+              type: input.type,
+              title,
+              createdAt: Markdown.toUtcTimestamp(createdAtMs).isoTimestamp,
+              updatedAt: Markdown.toUtcTimestamp(updatedAtMs).isoTimestamp,
+              ...(tags === undefined || tags.length === 0 ? {} : { tags }),
+              ...(reference === undefined ? {} : { reference }),
+              ...(input.provenance === undefined ? {} : { provenance: input.provenance }),
+              ...(input.legacyId === undefined ? {} : { legacyId: input.legacyId }),
+              ...(input.aliases === undefined || input.aliases.length === 0
+                ? {}
+                : { aliases: input.aliases }),
+            })
+
+            // An exact-ID create is the approval primitive. It must never
+            // allocate a suffixed fallback: landing under another ID would
+            // silently detach the note from the proposal that authorized it.
+            if (input.id !== undefined) {
+              const id = input.id
+              const path = yield* notePath(root, id)
+              if (pathOccupied(path)) {
+                return yield* Effect.fail(
+                  repositoryError(
+                    path,
+                    "target-exists",
+                    `Note '${id}' already exists. An exact-ID create never replaces or renames an existing note.`,
+                  ),
+                )
+              }
+
+              const document = yield* createMarkdownNoteDocument({
+                path,
+                metadata: metadataFor(id),
+                body,
+                unknown: input.unknown ?? {},
+              })
+
+              const write = yield* atomicWriteFile(path, renderDocument(document), {
+                overwrite: false,
+              }).pipe(
+                Effect.match({
+                  onFailure: (error) => ({ _tag: "Left" as const, left: error }),
+                  onSuccess: (result) => ({ _tag: "Right" as const, right: result }),
+                }),
+              )
+
+              if (write._tag === "Left") {
+                // The link(2) create can still lose to a non-slipmem writer.
+                // Report that race as the same explicit conflict.
+                if (pathOccupied(path)) {
+                  return yield* Effect.fail(
+                    repositoryError(
+                      path,
+                      "target-exists",
+                      `Note '${id}' already exists. An exact-ID create never replaces or renames an existing note.`,
+                    ),
+                  )
+                }
+                return yield* Effect.fail(write.left)
+              }
+
+              const stored = yield* readNoteFile(root, id)
+              return stored ?? document
+            }
+
             const taken = new Set(yield* listNoteFilenames(root))
 
             for (let attempt = 0; attempt < 100; attempt++) {
               const filename = Markdown.noteFilename({ title, taken })
               const id = Markdown.noteIdFromFilename(filename)!
               const path = yield* notePath(root, id)
-              const metadata: Markdown.NoteMetadata = {
-                schema: Markdown.SCHEMA_VERSION,
-                id,
-                type: input.type,
-                title,
-                createdAt: Markdown.toUtcTimestamp(createdAtMs).isoTimestamp,
-                updatedAt: Markdown.toUtcTimestamp(updatedAtMs).isoTimestamp,
-                ...(tags === undefined || tags.length === 0 ? {} : { tags }),
-                ...(reference === undefined ? {} : { reference }),
-                ...(input.provenance === undefined ? {} : { provenance: input.provenance }),
-                ...(input.legacyId === undefined ? {} : { legacyId: input.legacyId }),
-                ...(input.aliases === undefined || input.aliases.length === 0
-                  ? {}
-                  : { aliases: input.aliases }),
-              }
+              const metadata = metadataFor(id)
 
               const document = yield* createMarkdownNoteDocument({
                 path,
@@ -688,8 +757,15 @@ export const makeMarkdownNoteRepository = (
             current.path,
             "updatedAt",
             Number.isFinite(nowMs)
-              ? Math.max(nowMs, current.info.updatedAt, current.info.createdAt)
-              : Math.max(current.info.updatedAt, current.info.createdAt),
+              ? Math.max(
+                  nowMs,
+                  current.projection.updatedAt,
+                  current.projection.createdAt,
+                )
+              : Math.max(
+                  current.projection.updatedAt,
+                  current.projection.createdAt,
+                ),
           )
 
           const metadata: Markdown.NoteMetadata = {
@@ -769,7 +845,7 @@ export const makeMarkdownNoteRepository = (
       root,
       list: (input) =>
         listNotes(input).pipe(
-          Effect.map((notes) => notes.map((note) => note.info)),
+          Effect.map((notes) => notes.map((note) => note.projection)),
         ),
       listNotes,
       listTitles: (input) =>
@@ -779,12 +855,13 @@ export const makeMarkdownNoteRepository = (
               id: note.id,
               type: note.metadata.type,
               title: note.metadata.title,
-              updatedAt: note.info.updatedAt,
+              updatedAt: note.projection.updatedAt,
             })),
           ),
         ),
       get,
-      getInfo: (id) => get(id).pipe(Effect.map(Option.map((note) => note.info))),
+      getInfo: (id) =>
+        get(id).pipe(Effect.map(Option.map((note) => note.projection))),
       create,
       update,
       delete: remove,

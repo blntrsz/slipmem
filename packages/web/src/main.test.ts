@@ -152,6 +152,10 @@ const interruptKey = (command: unknown): string | undefined => {
   return typeof key === "string" ? key : undefined
 }
 
+/** Reads the URL a navigation command was built with. */
+const navigateUrl = (command: unknown): string =>
+  (command as { readonly args: { readonly url: string } }).args.url
+
 test("init enters the requested route and issues one bounded load command", () => {
   const home = init(url("/?type=permanent"))
   expect(home.model.route._tag).toBe("Home")
@@ -244,9 +248,49 @@ test("a loaded note opens the edit form with note metadata as text", () => {
       expect(editor.form.title).toBe("A source")
       expect(editor.form.reference).toBe("Book, chapter 2")
       expect(editor.form.tags).toBe("agent-memory")
+      expect(editor.expectedContentHash).toBe(literature.contentHash)
     }),
     Story.Command.expectNone(),
   )
+})
+
+test("a loaded note carries its content hash through save and surfaces a conflict", () => {
+  const loaded = update(
+    baseModel(AppRoute.EditNote({ noteId: literature.id }), {
+      noteRequestId: 1,
+    }),
+    Message.SucceededLoadNote({
+      requestId: 1,
+      note: Option.some(literature),
+    }),
+  )
+  expect(loaded.model.editor).toMatchObject({
+    _tag: "Open",
+    expectedContentHash: literature.contentHash,
+  })
+
+  const submitted = update(loaded.model, Message.SubmittedEditor())
+  expect(submitted.model.editor).toMatchObject({
+    _tag: "Saving",
+    expectedContentHash: literature.contentHash,
+  })
+  expect(submitted.commands ?? []).toHaveLength(1)
+
+  const conflict = "The note changed after it was read."
+  const failed = update(
+    submitted.model,
+    Message.FailedSaveNote({ requestId: 1, message: conflict }),
+  )
+  expect(failed.model.editor).toMatchObject({
+    _tag: "Open",
+    form: {
+      title: literature.title,
+      content: literature.content,
+      reference: "Book, chapter 2",
+    },
+    expectedContentHash: literature.contentHash,
+  })
+  expect(failed.model.lastError).toEqual(Option.some(conflict))
 })
 
 test("a failed edit load shows the error and a retry action", () => {
@@ -406,7 +450,11 @@ test("delete requires the confirmation route, then removes the note from the lis
     Story.model((model) => {
       expect(model.deleteRequestId).toBe(1)
       expect(model.deleteRequest).toEqual(
-        Option.some({ requestId: 1, noteId: fleeting.id }),
+        Option.some({
+          requestId: 1,
+          noteId: fleeting.id,
+          expectedContentHash: fleeting.contentHash,
+        }),
       )
     }),
     Story.Command.expectHas(DeleteNote),
@@ -437,7 +485,11 @@ test("delete completion is correlated and does not navigate a changed route", ()
   expect(duplicate.commands ?? []).toHaveLength(0)
   expect(duplicate.model.deleteRequestId).toBe(1)
   expect(duplicate.model.deleteRequest).toEqual(
-    Option.some({ requestId: 1, noteId: fleeting.id }),
+    Option.some({
+      requestId: 1,
+      noteId: fleeting.id,
+      expectedContentHash: fleeting.contentHash,
+    }),
   )
 
   const wrongRequest = update(
@@ -445,7 +497,11 @@ test("delete completion is correlated and does not navigate a changed route", ()
     Message.SucceededDeleteNote({ requestId: 99, noteId: fleeting.id }),
   )
   expect(wrongRequest.model.deleteRequest).toEqual(
-    Option.some({ requestId: 1, noteId: fleeting.id }),
+    Option.some({
+      requestId: 1,
+      noteId: fleeting.id,
+      expectedContentHash: fleeting.contentHash,
+    }),
   )
 
   const failed = update(
@@ -581,6 +637,76 @@ test("search results render the note ID, path, and excerpt", () => {
     Scene.expect(Scene.role("link", { name: "Bounded recall" })).toExist(),
     Scene.expect(Scene.text(`ID ${permanent.id}`)).toExist(),
     Scene.expect(Scene.text(permanent.path)).toExist(),
+  )
+})
+
+test("submitting the search form keeps the search route's type filter", () => {
+  const filtered = baseModel(
+    AppRoute.Search({ q: Option.some("recall"), type: Option.some("permanent") }),
+    { searchInput: "recall" },
+  )
+  const submitted = update(filtered, Message.SubmittedSearch())
+  const [navigate] = submitted.commands ?? []
+  expect(navigateUrl(navigate)).toBe("/search?q=recall&type=permanent")
+
+  // Clearing the box still starts an unfiltered search.
+  const emptied = update(
+    baseModel(
+      AppRoute.Search({ q: Option.some("recall"), type: Option.some("permanent") }),
+      { searchInput: "   " },
+    ),
+    Message.SubmittedSearch(),
+  )
+  const [clearNavigate] = emptied.commands ?? []
+  expect(navigateUrl(clearNavigate)).toBe("/search")
+
+  // The notes-list filter is a different view and is not carried into search.
+  const fromHome = update(
+    baseModel(AppRoute.Home({ type: Option.some("permanent"), tag: Option.none() }), {
+      searchInput: "recall",
+    }),
+    Message.SubmittedSearch(),
+  )
+  const [homeNavigate] = fromHome.commands ?? []
+  expect(navigateUrl(homeNavigate)).toBe("/search?q=recall")
+})
+
+test("the search page shows the active type filter and links that keep the query", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(
+        AppRoute.Search({ q: Option.some("recall"), type: Option.some("permanent") }),
+        { search: AsyncData.Success({ data: [] }) },
+      ),
+    ),
+    Scene.expect(Scene.role("link", { name: "All" })).toHaveAttr(
+      "href",
+      "/search?q=recall",
+    ),
+    Scene.expect(Scene.role("link", { name: "Fleeting" })).toHaveAttr(
+      "href",
+      "/search?q=recall&type=fleeting",
+    ),
+    Scene.expect(Scene.role("link", { name: "Permanent" })).toHaveAttr(
+      "href",
+      "/search?q=recall&type=permanent",
+    ),
+    Scene.expect(Scene.role("link", { name: "Permanent" })).toHaveClass(
+      "bg-emerald-500",
+    ),
+    Scene.expect(Scene.role("link", { name: "All" })).not.toHaveClass(
+      "bg-emerald-500",
+    ),
+  )
+})
+
+test("an unfiltered search page offers no type filter row until there is a query", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(baseModel(AppRoute.Search({ q: Option.none(), type: Option.none() }))),
+    Scene.expect(Scene.role("link", { name: "All" })).toBeAbsent(),
+    Scene.expect(Scene.text("Enter a query to search the local index.")).toExist(),
   )
 })
 
@@ -842,6 +968,72 @@ test("the new-note form offers a type selector with the route type selected", ()
     Scene.expect(Scene.selector("#note-title")).toHaveAccessibleName("Title"),
     Scene.expect(Scene.selector("#note-content")).toHaveAccessibleName("Content"),
   )
+})
+
+test("the new-note type selector keeps the draft the reader already typed", () => {
+  const typed = baseModel(AppRoute.NewNote({ type: Option.some("fleeting") }), {
+    editor: EditorState.Open({
+      type: "fleeting",
+      maybeId: Option.none(),
+      form: {
+        title: "Draft title",
+        content: "Draft body",
+        reference: "Draft source",
+        tags: "agent-memory",
+      },
+    }),
+  })
+
+  const switched = update(
+    typed,
+    Message.ChangedUrl({ url: url("/new?type=literature") }),
+  )
+
+  expect(switched.model.route).toMatchObject({ _tag: "NewNote" })
+  expect(switched.model.editor).toMatchObject({
+    _tag: "Open",
+    type: "literature",
+    maybeId: Option.none(),
+    form: {
+      title: "Draft title",
+      content: "Draft body",
+      reference: "Draft source",
+      tags: "agent-memory",
+    },
+  })
+  expect(switched.commands ?? []).toHaveLength(0)
+
+  // Leaving the page still closes the editor; only the same-page type switch
+  // preserves the draft.
+  const left = update(switched.model, Message.ChangedUrl({ url: url("/") }))
+  expect(left.model.editor._tag).toBe("Closed")
+})
+
+test("an existing note's edit draft never follows the reader to /new", () => {
+  const editing = baseModel(AppRoute.EditNote({ noteId: permanent.id }), {
+    editor: EditorState.Open({
+      type: "permanent",
+      maybeId: Option.some(permanent.id),
+      form: {
+        title: "Existing title",
+        content: "Existing body",
+        reference: "",
+        tags: "agent-memory",
+      },
+    }),
+  })
+
+  const created = update(
+    editing,
+    Message.ChangedUrl({ url: url("/new?type=permanent") }),
+  )
+
+  expect(created.model.editor).toMatchObject({
+    _tag: "Open",
+    type: "permanent",
+    maybeId: Option.none(),
+    form: { title: "", content: "", reference: "", tags: "" },
+  })
 })
 
 test("proposal actions are guarded, correlated, and finish by reloading the queue", () => {
