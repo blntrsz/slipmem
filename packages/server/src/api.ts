@@ -3,7 +3,6 @@ import { Note as NoteSchema } from "@slipmem/schemas/note"
 import {
   ApprovalError,
   ApprovalService,
-  DEFAULT_LIST_LIMIT,
   MarkdownError,
   MarkdownNoteRepository,
   MarkdownSearchIndex,
@@ -14,7 +13,7 @@ import {
   type MarkdownNoteRepositoryShape,
   type ParsedMarkdownNote,
 } from "@slipmem/core"
-import { Data, Effect, Layer, Match, Option, Schema } from "effect"
+import { Data, Effect, Layer, Match, Option, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http"
 
 import { toApiNote } from "./markdown"
@@ -216,9 +215,6 @@ const parseType = (
     ),
   )
 
-const isNoteType = (value: string): value is Markdown.NoteType =>
-  (Markdown.NOTE_TYPES as ReadonlyArray<string>).includes(value)
-
 const parseNoteId = (
   value: string | undefined,
 ): Effect.Effect<string, ApiError> => {
@@ -296,6 +292,55 @@ const rejectLegacyTagsField = (
 
 const MAX_JSON_BODY_BYTES = Markdown.MAX_NOTE_FILE_BYTES + 64 * 1024
 
+const bodyTooLarge = () =>
+  new ApiError({
+    status: 413,
+    code: "body-too-large",
+    message: "Request body is too large.",
+  })
+
+/**
+ * Reads the body with the byte cap enforced on the actual stream, not just on
+ * the caller-supplied Content-Length. A missing or understated header must not
+ * let an unbounded body reach the JSON parser.
+ */
+const readBodyText = (
+  request: HttpServerRequest.HttpServerRequest,
+): Effect.Effect<string, ApiError> =>
+  Effect.gen(function* () {
+    const decoder = new TextDecoder()
+    const parts: string[] = []
+    let bytes = 0
+    let tooLarge = false
+
+    yield* Stream.runForEachWhile(request.stream, (chunk) =>
+      Effect.sync(() => {
+        bytes += chunk.byteLength
+        if (bytes > MAX_JSON_BODY_BYTES) {
+          tooLarge = true
+          return false
+        }
+        parts.push(decoder.decode(chunk, { stream: true }))
+        return true
+      }),
+    ).pipe(
+      Effect.mapError(
+        () =>
+          new ApiError({
+            status: 400,
+            code: "invalid-body",
+            message: "Could not read the request body.",
+          }),
+      ),
+    )
+
+    if (tooLarge) {
+      return yield* Effect.fail(bodyTooLarge())
+    }
+
+    return parts.join("") + decoder.decode()
+  })
+
 /**
  * Mutations are same-origin only. A missing Origin header is allowed for
  * command-line clients such as curl; a present Origin must exactly match the
@@ -364,18 +409,17 @@ const readJsonBody = (
 
     const declaredLength = Number(request.headers["content-length"] ?? "0")
     if (Number.isFinite(declaredLength) && declaredLength > MAX_JSON_BODY_BYTES) {
-      return yield* fail(413, "body-too-large", "Request body is too large.")
+      return yield* Effect.fail(bodyTooLarge())
     }
 
-    const body = yield* request.json.pipe(
-      Effect.mapError(() =>
-        new ApiError({
-          status: 400,
-          code: "invalid-body",
-          message: "Invalid JSON body.",
-        }),
-      ),
-    )
+    const text = yield* readBodyText(request)
+
+    let body: unknown
+    try {
+      body = JSON.parse(text)
+    } catch {
+      return yield* fail(400, "invalid-body", "Invalid JSON body.")
+    }
 
     if (typeof body !== "object" || body === null || Array.isArray(body)) {
       return yield* fail(400, "invalid-body", "Expected a JSON object.")
@@ -565,15 +609,7 @@ export const MarkdownApiRoutes = Layer.unwrap(
         Effect.gen(function* () {
           void request
           const params = yield* HttpRouter.params
-          const segment = params.id
-          if (segment !== undefined && isNoteType(segment)) {
-            const notes = yield* listNotes(repository, {
-              type: segment,
-              limit: DEFAULT_LIST_LIMIT,
-            })
-            return json({ notes })
-          }
-          const id = yield* parseNoteId(segment)
+          const id = yield* parseNoteId(params.id)
           const note = yield* getNote(repository, id)
           return json({ note: toApiNote(note) })
         }),

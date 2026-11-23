@@ -24,6 +24,7 @@ import {
 import { openRepository, resolveRoot, type CliContext } from "./context.js"
 import { CliUsageError, usageError } from "./errors.js"
 import { writeErrorLine, writeJson, writeLine } from "./output.js"
+import { signalExitCode } from "./signals.js"
 
 type CliError = InitiativeError | MarkdownError | CliUsageError
 
@@ -689,6 +690,7 @@ const help = (): string => {
 export const runInitiativeCli = async (
   argv: ReadonlyArray<string>,
   context: CliContext,
+  signal?: AbortSignal,
 ): Promise<number> => {
   const json = jsonHint(argv)
   try {
@@ -727,9 +729,13 @@ export const runInitiativeCli = async (
         onFailure: (error) => failure(context, error, parsed.options.json === true),
         onSuccess: (code) => code,
       }),
+      signal === undefined ? undefined : { signal },
     )
     return exit
   } catch (error) {
+    if (signal?.aborted === true) {
+      return signalExitCode(signal)
+    }
     return failure(context, error, json)
   }
 }

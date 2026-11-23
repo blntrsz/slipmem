@@ -1024,11 +1024,7 @@ export const makeGitIngressHandler = (
  */
 export const makeGitIngressLayer = (
   options: GitIngressOptions,
-): Layer.Layer<never, never, never> => {
+): Layer.Layer<never, never, HttpRouter.HttpRouter> => {
   const handler = makeGitIngressHandler(options)
-  return HttpRouter.add("POST", options.config.path, handler) as unknown as Layer.Layer<
-    never,
-    never,
-    never
-  >
+  return HttpRouter.add("POST", options.config.path, handler)
 }

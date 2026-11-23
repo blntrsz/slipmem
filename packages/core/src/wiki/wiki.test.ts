@@ -100,6 +100,7 @@ const wiki = (
         }>
       }) => Effect.Effect<unknown, WikiError>
     }>
+    readonly maxOutputChars?: number
   } = {},
 ): Promise<WikiServiceShape> =>
   Effect.runPromise(
@@ -116,6 +117,9 @@ const wiki = (
       ...(options.modelAdapters === undefined
         ? {}
         : { modelAdapters: options.modelAdapters }),
+      ...(options.maxOutputChars === undefined
+        ? {}
+        : { maxOutputChars: options.maxOutputChars }),
     }),
   )
 
@@ -133,6 +137,26 @@ const failure = async <A>(effect: Effect.Effect<A, WikiError>) => {
 
 const rootEntries = (root: string): ReadonlyArray<string> =>
   readdirSync(root).sort()
+
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** SIGKILL is asynchronous; wait briefly for the child to be reaped. */
+const waitForProcessExit = async (
+  pid: number,
+  timeoutMs = 2_000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline && isProcessAlive(pid)) {
+    await Bun.sleep(25)
+  }
+}
 
 describe("extractive tag wiki", () => {
   test("selects tag-first, excludes fleeting by default, and cites every section", async () => {
@@ -356,6 +380,49 @@ describe("extractive tag wiki", () => {
     }
   })
 
+  test("never clips markdown independently of the structured sections", async () => {
+    const fixture = await createFixture()
+    try {
+      const title = (index: number): string =>
+        `${String(index).padStart(2, "0")} ${"W".repeat(180)}`
+      const body = (index: number): string =>
+        `Section ${index}. ${"b".repeat(560)}`
+      for (let index = 0; index < 12; index++) {
+        await createNote(fixture, {
+          title: title(index),
+          content: body(index),
+          tags: ["wide"],
+        })
+      }
+
+      const service = await wiki(fixture, { maxOutputChars: 10_000 })
+      const page = await Effect.runPromise(
+        service.build({ tag: "wide", limit: 12 }),
+      )
+
+      // The page must exceed the bound under the old line-slicing rule, or this
+      // test would not exercise truncation at all.
+      expect(page.markdown.length).toBeLessThanOrEqual(10_000)
+      expect(page.markdown).toContain("_Output was truncated at the wiki bound._")
+      expect(page.sections.length).toBeGreaterThan(0)
+      expect(page.sections.length).toBeLessThan(12)
+
+      // The invariant: every retained structured section, its complete excerpt,
+      // and every source line must appear in the Markdown. The old
+      // line-slicing fallback kept all sections but clipped the Markdown.
+      for (const section of page.sections) {
+        expect(page.markdown).toContain(`## ${section.heading}`)
+        expect(page.markdown).toContain(section.markdown)
+      }
+      for (const source of page.sources) {
+        expect(page.markdown).toContain(`- [[${source.id}]] - ${source.title}`)
+      }
+      expect(page.markdown).not.toContain("_Output truncated at the wiki bound._")
+    } finally {
+      cleanup(fixture)
+    }
+  })
+
   test("bounds every structured field and never leaves a partial citation", async () => {
     const fixture = await createFixture()
     try {
@@ -478,6 +545,47 @@ describe("synthesized tag wiki", () => {
       expect(page.markdown.length).toBeLessThanOrEqual(20_000)
       expect(page.markdown).toContain("synthesized sentences did not pass citation validation")
     } finally {
+      cleanup(fixture)
+    }
+  })
+
+  test("interrupting synthesis kills the configured child process", async () => {
+    const fixture = await createFixture()
+    let pid: number | undefined
+    try {
+      await createNote(fixture, {
+        title: "Hung synthesis",
+        content: "A note whose synthesizer never returns.",
+        tags: ["hung"],
+      })
+      const recordPath = join(fixture.base, "hung.json")
+      const service = await wiki(fixture, {
+        allowUnsandboxedAgent: true,
+        synthesis: {
+          kind: "agent",
+          command: process.execPath,
+          args: [AGENT_FIXTURE, recordPath, "hang"],
+        },
+      })
+
+      const exit = await Effect.runPromiseExit(
+        Effect.timeout(
+          service.build({ tag: "hung", mode: "synthesized" }),
+          "300 millis",
+        ),
+      )
+      expect(Exit.isFailure(exit)).toBe(true)
+
+      const record = JSON.parse(await Bun.file(recordPath).text()) as {
+        pid: number
+      }
+      pid = record.pid
+      await waitForProcessExit(record.pid)
+      expect(isProcessAlive(record.pid)).toBe(false)
+    } finally {
+      if (pid !== undefined && isProcessAlive(pid)) {
+        process.kill(pid, "SIGKILL")
+      }
       cleanup(fixture)
     }
   })

@@ -1,4 +1,9 @@
-import { makeOpenAiCompatibleTransport, type ModelTransport } from "@slipmem/core/model"
+import {
+  MAX_MODEL_RESPONSE_BYTES,
+  MAX_MODEL_TIMEOUT_MS,
+  makeOpenAiCompatibleTransport,
+  type ModelTransport,
+} from "@slipmem/core/model"
 import { GitCaptureError, gitCaptureError } from "./errors.js"
 import type { GitDiffLimits } from "./git.js"
 
@@ -23,6 +28,39 @@ export const DEFAULT_CAPTURE_LIMITS: CaptureLimits = {
   maxSourceTags: 16,
 }
 
+type ParsedInteger =
+  | { readonly value: number }
+  | { readonly error: GitCaptureError }
+
+/**
+ * Parses an optional bounded integer environment value. An absent or blank
+ * value means "use the fallback"; anything else must be a safe integer inside
+ * the documented range. Invalid values are typed configuration failures, never
+ * `NaN` passed through to the model transport.
+ */
+const parseInteger = (
+  raw: string | undefined,
+  name: string,
+  minimum: number,
+  maximum: number,
+): ParsedInteger | undefined => {
+  const value = raw?.trim()
+  if (value === undefined || value === "") {
+    return undefined
+  }
+  const parsed = Number(value)
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    return {
+      error: gitCaptureError({
+        code: "invalid-config",
+        field: name,
+        message: `${name} must be an integer from ${minimum} to ${maximum}; received '${value}'.`,
+      }),
+    }
+  }
+  return { value: parsed }
+}
+
 const integerFromEnv = (
   raw: string | undefined,
   name: string,
@@ -30,19 +68,14 @@ const integerFromEnv = (
   minimum: number,
   maximum: number,
 ): number => {
-  const value = raw?.trim()
-  if (value === undefined || value === "") {
+  const parsed = parseInteger(raw, name, minimum, maximum)
+  if (parsed === undefined) {
     return fallback
   }
-  const parsed = Number(value)
-  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
-    throw gitCaptureError({
-      code: "invalid-config",
-      field: name,
-      message: `${name} must be an integer from ${minimum} to ${maximum}; received '${value}'.`,
-    })
+  if ("error" in parsed) {
+    throw parsed.error
   }
-  return parsed
+  return parsed.value
 }
 
 const envLimits = (
@@ -248,8 +281,24 @@ export const resolveCaptureModel = (
     }
   }
 
-  const timeoutMs = env.SLIPMEM_CAPTURE_TIMEOUT_MS?.trim()
-  const maxResponseBytes = env.SLIPMEM_CAPTURE_MAX_RESPONSE_BYTES?.trim()
+  const timeout = parseInteger(
+    env.SLIPMEM_CAPTURE_TIMEOUT_MS,
+    "SLIPMEM_CAPTURE_TIMEOUT_MS",
+    1,
+    MAX_MODEL_TIMEOUT_MS,
+  )
+  if (timeout !== undefined && "error" in timeout) {
+    return { error: timeout.error }
+  }
+  const maxResponseBytes = parseInteger(
+    env.SLIPMEM_CAPTURE_MAX_RESPONSE_BYTES,
+    "SLIPMEM_CAPTURE_MAX_RESPONSE_BYTES",
+    1,
+    MAX_MODEL_RESPONSE_BYTES,
+  )
+  if (maxResponseBytes !== undefined && "error" in maxResponseBytes) {
+    return { error: maxResponseBytes.error }
+  }
   const apiKey = firstValue(
     env.SLIPMEM_CAPTURE_API_KEY,
     env.SLIPMEM_CHAT_API_KEY,
@@ -260,12 +309,10 @@ export const resolveCaptureModel = (
     baseUrl,
     model,
     ...(apiKey === undefined || apiKey === "" ? {} : { apiKey }),
-    ...(timeoutMs === undefined || timeoutMs === ""
+    ...(timeout === undefined ? {} : { timeoutMs: timeout.value }),
+    ...(maxResponseBytes === undefined
       ? {}
-      : { timeoutMs: Number(timeoutMs) }),
-    ...(maxResponseBytes === undefined || maxResponseBytes === ""
-      ? {}
-      : { maxResponseBytes: Number(maxResponseBytes) }),
+      : { maxResponseBytes: maxResponseBytes.value }),
   })
 
   return {

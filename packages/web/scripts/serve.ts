@@ -3,6 +3,8 @@ import { pathToFileURL } from "node:url"
 
 import { nonLoopbackWarning, resolveBindConfig } from "@slipmem/server"
 
+import { staticAssetPath } from "./static"
+
 interface BuildManifest {
   readonly client: string
   readonly server: string
@@ -39,13 +41,8 @@ const staticResponse = async (request: Request): Promise<Response | undefined> =
     return undefined
   }
 
-  const pathname = decodeURIComponent(new URL(request.url).pathname)
-  if (pathname === "/" || pathname.endsWith("/index.html")) {
-    return undefined
-  }
-
-  const filePath = resolve(clientDirectory, `.${pathname}`)
-  if (!filePath.startsWith(`${clientDirectory}/`)) {
+  const filePath = staticAssetPath(clientDirectory, request.url)
+  if (filePath === undefined) {
     return undefined
   }
 

@@ -38,6 +38,7 @@ import {
   renderHelp,
 } from "./help.js"
 import { writeErrorLine } from "./output.js"
+import { signalExitCode } from "./signals.js"
 
 export const COMMANDS: ReadonlyArray<CommandDefinition> = [
   initCommand,
@@ -212,15 +213,25 @@ const runEffect = async (
   effect: ReturnType<CommandDefinition["run"]>,
   context: CliContext,
   json: boolean,
-): Promise<number> =>
-  Effect.runPromise(
-    effect.pipe(
-      Effect.match({
-        onFailure: (error) => reportFailure(error, context, json),
-        onSuccess: (code) => code,
-      }),
-    ),
-  )
+  signal: AbortSignal | undefined,
+): Promise<number> => {
+  try {
+    return await Effect.runPromise(
+      effect.pipe(
+        Effect.match({
+          onFailure: (error) => reportFailure(error, context, json),
+          onSuccess: (code) => code,
+        }),
+      ),
+      signal === undefined ? undefined : { signal },
+    )
+  } catch (error) {
+    if (signal?.aborted === true) {
+      return signalExitCode(signal)
+    }
+    throw error
+  }
+}
 
 const handleHelp = (
   argv: ReadonlyArray<string>,
@@ -272,6 +283,7 @@ export const runCli = async (
   argv: ReadonlyArray<string>,
   context: CliContext,
   commands: ReadonlyArray<CommandDefinition> = COMMANDS,
+  signal?: AbortSignal,
 ): Promise<number> => {
   const jsonHint = wantsJson(argv)
 
@@ -302,7 +314,7 @@ export const runCli = async (
     // have option sets that differ per action. Route the raw argv through it
     // instead of pre-parsing against one flat option table.
     if (command.name === "initiative") {
-      return await runInitiativeCli(argv.slice(1), context)
+      return await runInitiativeCli(argv.slice(1), context, signal)
     }
 
     const parsed = parseCommandArguments(command, argv.slice(1))
@@ -312,7 +324,7 @@ export const runCli = async (
     }
 
     const json = parsed.options.json === true
-    return await runEffect(command.run(parsed, context), context, json)
+    return await runEffect(command.run(parsed, context), context, json, signal)
   } catch (error) {
     return reportFailure(error, context, jsonHint)
   }

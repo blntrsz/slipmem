@@ -625,7 +625,7 @@ test("recall_prompt fails closed when no evaluator is configured", async () => {
   }
 })
 
-test("get tools return null for missing, cross-kind, and cross-root IDs", async () => {
+test("get tools return null only for a genuinely missing or cross-kind note", async () => {
   const disposable = await makeDisposableRoot()
   const clock = makeTestClock()
 
@@ -661,7 +661,12 @@ test("get tools return null for missing, cross-kind, and cross-root IDs", async 
 
     expect(crossKind.structuredContent).toEqual({ note: null })
     expect(missing.structuredContent).toEqual({ note: null })
-    expect(traversal.structuredContent).toEqual({ note: null })
+    // A path-escaping ID is not a missing note. Surfacing the repository error
+    // keeps clients from learning a misleading "not found" contract.
+    expect(traversal.isError).toBe(true)
+    expect((traversal.content[0] as { text: string }).text).toContain(
+      "path-outside-root",
+    )
   } finally {
     await removeDisposableRoot(disposable)
   }

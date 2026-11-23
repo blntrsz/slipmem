@@ -74,6 +74,34 @@ test("per-kind create inputs enforce the documented content limits", () => {
   ).toBe(false)
 })
 
+test("list inputs accept only an optional integer bound", () => {
+  expect(decodes(Note.ListInput, {})).toBe(true)
+  expect(decodes(Note.ListInput, { limit: 5 })).toBe(true)
+  expect(decodes(Note.ListInput, { limit: "5" })).toBe(false)
+  expect(decodes(Note.ListInput, { limit: 1.5 })).toBe(false)
+  expect(decodes(Note.ListTitlesInput, {})).toBe(true)
+  expect(decodes(Note.ListTitlesInput, { limit: 5 })).toBe(true)
+  expect(decodes(Note.ListTitlesInput, { limit: "5" })).toBe(false)
+  expect(Note.DEFAULT_LIST_LIMIT).toBe(10)
+  expect(Note.MAX_LIST_LIMIT).toBe(50)
+})
+
+test("the shared default search fields are the common backend capability", () => {
+  expect(Note.DEFAULT_SEARCH_FIELDS).toEqual([
+    "title",
+    "content",
+    "reference",
+  ])
+  // Tags stay selectable but are not part of the default: a backend without
+  // tag storage cannot match them.
+  expect(
+    Schema.decodeUnknownSync(Note.SearchInput)({
+      query: "retrieval",
+      fields: ["tags"],
+    }).fields,
+  ).toEqual(["tags"])
+})
+
 test("Note.Info decodes each kind as its own tagged variant", () => {
   const base = { id: "note-1", title: "Title", content: "Body", createdAt: 1, updatedAt: 2 }
 

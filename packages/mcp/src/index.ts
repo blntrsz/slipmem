@@ -31,6 +31,10 @@ export {
   type RawWriteSignalShape,
   type RecallProviderRuntime,
 } from "./automatic-memory"
-export { makeMarkdownServicesLayer, makeMcpRegistrationsLayer } from "./layer"
+export {
+  makeMarkdownServicesLayer,
+  makeMcpRegistrationsLayer,
+  makeMcpSharedRegistrationsLayer,
+} from "./layer"
 export { McpNoteRegistrations, McpNoteTools } from "./tools"
 export { makeServerLayer } from "./server"

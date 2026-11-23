@@ -1,12 +1,15 @@
 import {
-  makeMcpRegistrationsLayer,
+  makeMcpSharedRegistrationsLayer,
   mcpInstructions,
   mcpServerName,
   mcpServerVersion,
   type McpServerOptions,
 } from "@slipmem/mcp"
-import { Layer } from "effect"
+import type { MarkdownNoteRepository, MarkdownSearchIndex } from "@slipmem/core"
+import type { WikiError } from "@slipmem/core/wiki"
+import type { Cause, Layer } from "effect"
 import { McpProtocol, McpServer } from "effect/ai"
+import type { HttpRouter } from "effect/http"
 
 export { mcpInstructions, mcpServerName, mcpServerVersion }
 
@@ -22,13 +25,22 @@ export { mcpInstructions, mcpServerName, mcpServerVersion }
  * `AutomaticMemoryRuntime` (including `{ enabled: false }`) and a recall
  * evaluator instead.
  *
+ * Unlike stdio, this layer does not build its own repository or index. It
+ * requires the host's `MarkdownNoteRepository` and `MarkdownSearchIndex`, so
+ * `makeAppLayer` shares one Markdown service graph with the JSON API. The
+ * declared `HttpRouter` requirement is discharged when the app is built.
+ *
  * Pass the returned layer through `makeAppLayer`/`makeApiHandler`'s
  * `extraRoutes` option to serve it beside the JSON API.
  */
-export const makeMcpHttp = (
-  options: McpServerOptions,
-): Layer.Layer<never, never, never> => {
-  const { registrations } = makeMcpRegistrationsLayer(options)
+export type McpHttpRoutes = Layer.Layer<
+  McpServer.McpServer,
+  Cause.IllegalArgumentError | WikiError,
+  HttpRouter.HttpRouter | MarkdownNoteRepository | MarkdownSearchIndex
+>
+
+export const makeMcpHttp = (options: McpServerOptions): McpHttpRoutes => {
+  const { registrations } = makeMcpSharedRegistrationsLayer(options)
 
   return McpServer.layerHttp({
     name: mcpServerName,
@@ -41,8 +53,5 @@ export const makeMcpHttp = (
       McpProtocol.v2024_11_05,
     ],
     registrations,
-    // The router requirements are discharged by `makeAppLayer`'s
-    // `HttpRouter.toWebHandler`, exactly as they were for the previous MCP
-    // endpoint. `extraRoutes` only accepts a fully provided route layer.
-  }) as unknown as Layer.Layer<never, never, never>
+  })
 }

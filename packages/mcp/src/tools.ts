@@ -259,10 +259,17 @@ const getInfoOfKind = (
   repository: MarkdownNoteRepository["Service"],
   id: string,
   type: Markdown.NoteType,
-): Effect.Effect<Option.Option<Note.Info>> =>
+): Effect.Effect<Option.Option<Note.Info>, ToolFailure> =>
   repository.getInfo(id).pipe(
     Effect.map(Option.filter((info) => info.type === type)),
-    Effect.catch(() => Effect.succeed(Option.none<Note.Info>())),
+    // A missing note is a successful "not found" read. Any other repository
+    // failure (root missing, invalid/path-escaping ID, unreadable file) is a
+    // real tool error and must not be disguised as a null detail.
+    Effect.catchIf(
+      (error) => error.code === "not-found",
+      () => Effect.succeed(Option.none<Note.Info>()),
+    ),
+    Effect.mapError(toolFailure),
   )
 
 /** Keeps the single-note body but projects bounded display metadata. */

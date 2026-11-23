@@ -160,6 +160,13 @@ describe("disposable FTS search index", () => {
       )
       expect(tagsField.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
 
+      // The index keeps tags in its default field set; only the NoteService
+      // adapter narrows the default to the cross-backend common fields.
+      const tagsDefault = await Effect.runPromise(
+        seeded.index.search({ query: "retrieval" }),
+      )
+      expect(tagsDefault.map((hit) => hit.id)).toEqual([seeded.ids.permanent])
+
       const titleDoesNotSearchTags = await Effect.runPromise(
         seeded.index.search({ query: "retrieval", fields: ["title"] }),
       )
@@ -760,6 +767,29 @@ describe("disposable FTS search index", () => {
       expect(withExtra.warnings.map((issue) => issue.code)).toContain("index-extra")
     } finally {
       await Effect.runPromise(seeded.index.close())
+      cleanup(fixture)
+    }
+  })
+
+  test("refuses a symlinked note root", async () => {
+    const fixture = setup()
+    try {
+      const real = join(fixture.base, "real-notes")
+      mkdirSync(real, { recursive: true })
+      const linked = join(fixture.base, "linked-notes")
+      symlinkSync(real, linked)
+
+      const error = await failure(
+        makeMarkdownSearchIndex({
+          root: linked,
+          cacheDir: fixture.cache,
+        }),
+      )
+      expect(error.area).toBe("repository")
+      expect(error.code).toBe("symlink")
+      expect(error.path).toBe(linked)
+      expect(existsSync(fixture.cache)).toBe(false)
+    } finally {
       cleanup(fixture)
     }
   })

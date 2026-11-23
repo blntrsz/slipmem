@@ -76,11 +76,25 @@ usage or an explicitly unavailable feature.
 
 `edit` always writes the current note to a temporary directory outside the note
 root, opens that full note in the editor, and parses it with the real contract on
-save. Invalid YAML, a mismatched ID, an invalid type or reference, conflict
-markers, or an oversized body fail with the note path and field; the original
-file is untouched. `createdAt`, `updatedAt`, `id`, unknown frontmatter keys,
-`legacyId`, and `aliases` are managed metadata and cannot be changed through the
-editor draft.
+save. The temporary directory is removed on success, validation failure, and
+interruption. Invalid YAML, a mismatched ID, an invalid type or reference,
+conflict markers, or an oversized body fail with the note path and field; the
+original file is untouched. `createdAt`, `updatedAt`, `id`, unknown frontmatter
+keys, `legacyId`, and `aliases` are managed metadata and cannot be changed
+through the editor draft.
+
+Editor values run through `$SHELL -c`. Simple commands (`vim -f`,
+`code --wait`) and leading `NAME=value` assignments (`VIMINIT='set spell' vim`)
+are exec'd, so signal forwarding and forced termination reach the editor
+itself. Compound shell snippets (pipes, `;`, substitutions) still run in a
+shell; forced termination then targets the shell, so a snippet cannot
+guarantee that the editor it started is also killed. Prefer a single command or
+an assignment prefix.
+
+The first `SIGINT`, `SIGTERM`, or `SIGHUP` interrupts the active command: an
+editor or `mcp`/`web` child gets a short grace period and is then killed with
+`SIGKILL`, editor drafts are removed, and the CLI exits with the conventional
+status (`130`, `143`, or `129`). A second signal uses the platform default.
 
 Literature notes require `--reference`. Content limits are 1000 characters for
 fleeting notes, 2000 for permanent notes, and 5000 for literature notes.
@@ -174,6 +188,10 @@ directory, then `$XDG_DATA_HOME/slipmem/slipmem.db` (falling back to
 `~/.local/share/slipmem/slipmem.db`). An explicit `--db` always wins. It never
 creates the source directory or database, and `:memory:` is rejected because it
 is not a file-backed migratable source.
+
+The target root follows the normal rule: `--dir`, then `SLIPMEM_DIR`, then an
+existing ancestor `.slipmem/`. `migrate` never falls back to `<cwd>/.slipmem`;
+run `slipmem init` or name a target explicitly before importing.
 
 The source database is opened read-only and hashed before and after the run. A
 real import copies the source to `.slipmem/.state/migrations/<run>/source-backup.db`,

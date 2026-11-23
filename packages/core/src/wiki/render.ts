@@ -173,8 +173,13 @@ const looksLikeIncompleteCitation = (line: string): boolean => {
 
 /**
  * Last-resort bound for rendered Markdown. It cuts only at a line boundary and
- * drops a trailing partial citation line, so a truncated page never contains a
- * citation that is cut off midway and no longer addressable.
+ * drops a trailing partial citation line, so a standalone truncated page never
+ * contains a citation that is cut off midway and no longer addressable.
+ *
+ * Do not use this on a page that also returns structured `sections`: the string
+ * would no longer be a rendering of those sections. The wiki assembler instead
+ * drops whole trailing sections so the Markdown and structured results always
+ * agree.
  */
 export const truncateWikiMarkdownSafely = (
   markdown: string,

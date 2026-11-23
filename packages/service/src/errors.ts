@@ -3,6 +3,7 @@ export type ServiceErrorCode =
   | "invalid-port"
   | "config"
   | "already-running"
+  | "not-ready"
   | "start-timeout"
   | "service-exited"
   | "identity-mismatch"

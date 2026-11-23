@@ -143,10 +143,11 @@ Root resolution, in order:
    when there is no Git root.
 
 Every global command also accepts `--dir <path>`, which behaves like
-`SLIPMEM_DIR` for that invocation. Commands other than `init` require an
-existing note root, except `migrate`, which falls back to `.slipmem` in the
-current directory as its target and creates it on a real import. They never
-create a root implicitly otherwise.
+`SLIPMEM_DIR` for that invocation. Commands other than `init` resolve their
+note root from `--dir`, `SLIPMEM_DIR`, or an existing ancestor `.slipmem/`.
+`migrate` follows the same rule and never falls back to `.slipmem` in the
+current directory; run `slipmem init` or name a target explicitly before
+importing. No command creates `<cwd>/.slipmem` implicitly.
 
 Examples:
 

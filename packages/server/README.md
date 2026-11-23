@@ -10,6 +10,13 @@ process as the pages.
 `extraRoutes: makeMcpHttp({ root })` to serve `/mcp` beside `/api`; the web entry
 does this with the same registrations as the stdio server.
 
+`/api` and `/mcp` share one Markdown repository and one disposable search
+index. The MCP approval capability is a projection of the same core policy and
+proposal store, but it exposes only `submitMcp`: the human core service owns
+`review`/`apply`/`reject` and its index-refresh hook. MCP direct writes behave
+like canonical API writes; the derived index refreshes on the next search or
+health read.
+
 `makeMcpHttp` resolves the serving memory runtime when `automaticMemory` is
 omitted. A primary OpenAI-compatible chat model is required
 (`SLIPMEM_CHAT_PROVIDER`, `SLIPMEM_CHAT_MODEL`, `SLIPMEM_CHAT_BASE_URL`, optional
@@ -62,7 +69,7 @@ Canonical routes are ID-based. A note ID is the Markdown filename stem:
 | `GET` | `/api/health` | Service status, refreshed index mode/count, wiki synthesis capability |
 | `GET` | `/api/notes` | Bounded list; `type`, `tag`, `limit` filters |
 | `POST` | `/api/notes` | Create with `type` in the JSON body |
-| `GET` | `/api/notes/:id` | One note or 404 |
+| `GET` | `/api/notes/:id` | One note or 404; `:id` is always a note ID, even when it equals a type name |
 | `PUT` | `/api/notes/:id` | Partial update; human web write |
 | `DELETE` | `/api/notes/:id` | Move the note to the local backup directory |
 | `GET` | `/api/search` | Bounded ranked search; requires `q` |
@@ -92,14 +99,15 @@ same ID repository and never create type folders or a second store:
 
 | Method | Path |
 | --- | --- |
-| `GET` | `/api/notes/:type` |
 | `GET` | `/api/notes/:type/:id` |
 | `POST` | `/api/notes/:type` |
 | `PUT` | `/api/notes/:type/:id` |
 | `DELETE` | `/api/notes/:type/:id` |
 
 `:type` must be `fleeting`, `literature`, or `permanent`. A type mismatch returns
-404 rather than mutating the note through the wrong route.
+404 rather than mutating the note through the wrong route. The old singular
+`GET /api/notes/:type` list route is gone because it collided with a valid note
+ID; use `GET /api/notes?type=...` instead.
 
 ## Wiki and review
 

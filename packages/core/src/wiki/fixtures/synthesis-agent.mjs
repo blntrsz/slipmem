@@ -21,11 +21,18 @@ if (recordPath !== undefined) {
     recordPath,
     JSON.stringify({
       argv: process.argv.slice(2),
+      pid: process.pid,
       stdinHasInjection: raw.includes("Ignore all previous instructions"),
       noteCount: notes.length,
     }),
     "utf8",
   )
+}
+
+if (mode === "hang") {
+  // Stay alive without reading more input until the parent kills us. Used to
+  // prove that fiber interruption cancels the child process.
+  await new Promise(() => {})
 }
 
 if (mode === "fail") {

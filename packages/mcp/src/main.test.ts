@@ -231,6 +231,30 @@ test("stdio server initializes, lists bounded tools, and exits cleanly on SIGTER
   }
 }, 30000)
 
+test("stdio server exits cleanly when its input closes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "slipmem-mcp-main-"))
+  const root = join(directory, ".slipmem")
+  let server: ReturnType<typeof start> | undefined
+
+  try {
+    await Effect.runPromise(initializeNoteRoot(root))
+    server = start(root, join(directory, "cache"))
+
+    const reader = server.stdout!.getReader()
+    initialize(server)
+    await readLine(reader)
+    send(server, { jsonrpc: "2.0", method: "notifications/initialized" })
+
+    // Closing stdin is the normal stdio client shutdown. It must not surface as
+    // the generic 130 interruption code reserved for external signals.
+    server.stdin!.end()
+    expect(await server.exited).toBe(0)
+  } finally {
+    server?.kill("SIGKILL")
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 30000)
+
 test("stdio tool calls read the same disposable Markdown root", async () => {
   const directory = await mkdtemp(join(tmpdir(), "slipmem-mcp-main-"))
   const root = join(directory, ".slipmem")

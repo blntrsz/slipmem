@@ -32,7 +32,11 @@ export const ensureEditor = (context: CliContext): Effect.Effect<void, CliFailur
 
 /**
  * Creates a temporary draft outside the note root, opens it, and always removes
- * it. Validation and the repository write happen in `run`, never in the draft.
+ * it. The draft directory is a scoped resource, so cleanup runs on success,
+ * typed failure, defects, and interruption; yielding in a generator `finally`
+ * would skip every typed failure and interruption. The editor also receives
+ * the effect's abort signal so interrupting the command terminates the child.
+ * Validation and the repository write happen in `run`, never in the draft.
  */
 export const withTempDraft = <A>(
   filename: string,
@@ -40,18 +44,23 @@ export const withTempDraft = <A>(
   context: CliContext,
   run: (path: string) => Effect.Effect<A, MarkdownError | CliFailure>,
 ): Effect.Effect<A, MarkdownError | CliFailure> =>
-  Effect.gen(function* () {
-    const directory = yield* Effect.sync(() =>
-      mkdtempSync(join(temporaryBase(), "slipmem-draft-")),
-    )
-    const path = join(directory, filename)
-    try {
+  Effect.scoped(
+    Effect.gen(function* () {
+      const directory = yield* Effect.acquireRelease(
+        Effect.sync(() => mkdtempSync(join(temporaryBase(), "slipmem-draft-"))),
+        (created) =>
+          Effect.sync(() => {
+            rmSync(created, { recursive: true, force: true })
+          }),
+      )
+      const path = join(directory, filename)
+
       yield* Effect.sync(() => {
         writeFileSync(path, initial, { encoding: "utf8", mode: 0o600 })
       })
 
       const status = yield* Effect.tryPromise({
-        try: () => context.openEditor(path),
+        try: (signal) => context.openEditor(path, signal),
         catch: (cause) =>
           usageError(
             `Could not start the editor: ${cause instanceof Error ? cause.message : String(cause)}`,
@@ -68,12 +77,8 @@ export const withTempDraft = <A>(
       }
 
       return yield* run(path)
-    } finally {
-      yield* Effect.sync(() => {
-        rmSync(directory, { recursive: true, force: true })
-      })
-    }
-  })
+    }),
+  )
 
 export const readDraft = (path: string): Effect.Effect<string, MarkdownError> =>
   Effect.try({

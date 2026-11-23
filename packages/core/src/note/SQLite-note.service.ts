@@ -70,12 +70,11 @@ const byNewest = (
   compareText(left.type, right.type) ||
   compareText(left.id, right.id)
 
-// Search bounds keep a caller-supplied query and limit from growing the work
-// or response without bound.
-const DEFAULT_SEARCH_LIMIT = 10
-const MAX_SEARCH_LIMIT = 50
+// Search and list bounds keep a caller-supplied query or limit from growing the
+// work or response without bound. They come from the shared Note contract so
+// the SQLite and Markdown implementations cannot drift.
 const MAX_SEARCH_TOKENS = 16
-const SEARCH_FIELDS: ReadonlyArray<Note.SearchField> = ["title", "content", "reference"]
+const SEARCH_FIELDS: ReadonlyArray<Note.SearchField> = Note.DEFAULT_SEARCH_FIELDS
 const NOTE_KINDS: ReadonlyArray<Note.Kind> = ["fleeting", "literature", "permanent"]
 
 // Title hits are the strongest signal, references next, and body text is the
@@ -98,12 +97,12 @@ const tokenize = (query: string): ReadonlyArray<string> => {
   return [...new Set(tokens)].slice(0, MAX_SEARCH_TOKENS)
 }
 
-const effectiveSearchLimit = (limit: number | undefined): number => {
+const effectiveLimit = (limit: number | undefined): number => {
   if (limit === undefined || !Number.isFinite(limit)) {
-    return DEFAULT_SEARCH_LIMIT
+    return Note.DEFAULT_LIST_LIMIT
   }
 
-  return Math.max(1, Math.min(MAX_SEARCH_LIMIT, Math.trunc(limit)))
+  return Math.max(1, Math.min(Note.MAX_LIST_LIMIT, Math.trunc(limit)))
 }
 
 const matches = (value: string, token: string): boolean =>
@@ -216,7 +215,7 @@ const titleRows = (db: Db) =>
 const searchRows = (db: Db, input: Note.SearchInput) =>
   Effect.gen(function* () {
     const tokens = tokenize(input.query)
-    const limit = effectiveSearchLimit(input.limit)
+    const limit = effectiveLimit(input.limit)
     const fields = new Set<Note.SearchField>(input.fields ?? SEARCH_FIELDS)
     const kinds = new Set<Note.Kind>(input.kinds ?? NOTE_KINDS)
 
@@ -253,16 +252,20 @@ export const SQLiteNoteService = Layer.effect(
     const db = yield* NoteDatabaseService
 
     return NoteService.of({
-      list: (_input) =>
+      list: (input) =>
         listRows(db).pipe(
           Effect.catchTag("EffectDrizzleQueryError", Effect.die),
-          Effect.map((rows) => rows.map(toInfo)),
+          Effect.map((rows) =>
+            rows.slice(0, effectiveLimit(input.limit)).map(toInfo),
+          ),
         ),
-      listTitles: (_input) =>
+      listTitles: (input) =>
         titleRows(db).pipe(
           Effect.catchTag("EffectDrizzleQueryError", Effect.die),
           Effect.map((rows) =>
-            rows.map(({ id, type, title }) => ({ id, type, title })),
+            rows
+              .slice(0, effectiveLimit(input.limit))
+              .map(({ id, type, title }) => ({ id, type, title })),
           ),
         ),
       search: (input) =>

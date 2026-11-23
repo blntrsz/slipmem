@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { rmSync } from "node:fs"
+import { readFileSync, rmSync } from "node:fs"
 import { join } from "node:path"
 import { cliEntry, makeTempBase, parseJson, runCliProcess } from "./test-support.js"
 
@@ -129,6 +129,53 @@ const freePort = (): number => {
   return port
 }
 
+const childPids = (pid: number): ReadonlyArray<number> => {
+  try {
+    const raw = readFileSync(`/proc/${pid}/task/${pid}/children`, "utf8").trim()
+    return raw === "" ? [] : raw.split(/\s+/).map((value) => Number(value))
+  } catch {
+    return []
+  }
+}
+
+const isAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const waitFor = async <A>(
+  read: () => A | undefined,
+  timeoutMs = 10000,
+): Promise<A> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const value = read()
+    if (value !== undefined) {
+      return value
+    }
+    await Bun.sleep(25)
+  }
+  throw new Error("Timed out waiting for the wrapper child process.")
+}
+
+const waitUntil = async (
+  predicate: () => boolean,
+  timeoutMs = 10000,
+): Promise<void> => {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) {
+      return
+    }
+    await Bun.sleep(25)
+  }
+  throw new Error("Timed out waiting for the wrapper to stop its child.")
+}
+
 describe("slipmem wrappers launched from outside the repository", () => {
   test("mcp starts the real stdio server and completes a handshake", async () => {
     const setupValue = await setup()
@@ -164,6 +211,34 @@ describe("slipmem wrappers launched from outside the repository", () => {
       result?: { serverInfo?: { name?: string } }
     }>(await readLine(reader))
     expect(handshake.result?.serverInfo?.name).toBe("slipmem")
+  }, 30000)
+
+  test("forwards SIGTERM to the wrapped child instead of orphaning it", async () => {
+    const setupValue = await setup()
+    const wrapper = Bun.spawn(
+      [process.execPath, cliEntry, "mcp", "--dir", setupValue.root],
+      {
+        cwd: setupValue.base,
+        env: inertEnv(setupValue.env),
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+        detached: true,
+      },
+    )
+    children.push(wrapper)
+
+    const childPid = await waitFor(() => childPids(wrapper.pid!)[0])
+    process.kill(wrapper.pid!, "SIGTERM")
+
+    const code = await Promise.race([
+      wrapper.exited,
+      Bun.sleep(15000).then(() => {
+        throw new Error("The wrapper did not exit after SIGTERM.")
+      }),
+    ])
+    expect(code).toBe(143)
+    await waitUntil(() => !isAlive(childPid))
   }, 30000)
 
   test("web starts the real Vite entry point with argv forwarding", async () => {

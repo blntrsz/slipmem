@@ -1,12 +1,14 @@
 import { initializeNoteRoot } from "@slipmem/core"
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
-import { existsSync } from "node:fs"
+import { existsSync, mkdirSync, writeFileSync } from "node:fs"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 
 import { inspectService, startService, stopService } from "./lifecycle"
 import {
+  acquireServiceOwner,
+  serviceDirectory,
   serviceOwnerPath,
   serviceStartLockPath,
   serviceStatePath,
@@ -288,6 +290,59 @@ test(
   },
   20_000,
 )
+
+test(
+  "a broken application layer fails startup instead of reporting ready",
+  async () => {
+    // The note root and serving config are valid, so root resolution and
+    // config validation pass. The layered application then fails while it
+    // builds the disposable index, after the loopback listener is bound.
+    const { directory, root } = await makeRoot()
+    const cacheFile = join(directory, "cache-is-a-file")
+    writeFileSync(cacheFile, "")
+    const provider = startFakeProvider()
+    try {
+      await expect(
+        startService({
+          root,
+          env: {
+            ...modelEnv(root, provider.baseUrl),
+            XDG_CACHE_HOME: cacheFile,
+          },
+          timeoutMs: 15_000,
+        }),
+      ).rejects.toThrow(/application layer was not ready/i)
+
+      const status = await inspectService(root)
+      expect(status.running).toBe(false)
+      expect(status.ready).toBe(false)
+      expect(existsSync(serviceStatePath(root))).toBe(false)
+      expect(existsSync(serviceOwnerPath(root))).toBe(false)
+      expect(existsSync(serviceStartLockPath(root))).toBe(false)
+    } finally {
+      provider.server.stop(true)
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  20_000,
+)
+
+test("an unremovable stale owner lock fails fast instead of spinning", async () => {
+  const directory = await mkdtemp(rootPrefix)
+  const root = join(directory, ".slipmem")
+  try {
+    mkdirSync(serviceDirectory(root), { recursive: true })
+    // A directory cannot be read as an owner record and cannot be unlinked.
+    // The old loop swallowed every unlink error and retried forever.
+    mkdirSync(serviceOwnerPath(root), { recursive: true })
+
+    expect(() => acquireServiceOwner(root)).toThrow(
+      "Could not remove the stale service owner lock",
+    )
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})
 
 test(
   "separate canonical roots get separate services",

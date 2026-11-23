@@ -502,6 +502,29 @@ describe("slipmem migrate sqlite", () => {
     expect(existsSync(root)).toBe(false)
   }, 30000)
 
+  test("refuses to create an implicit note root in the current directory", async () => {
+    const { base, dbPath } = makeDatabase("current.sql")
+
+    const result = await run(base, [
+      "migrate",
+      "sqlite",
+      "--db",
+      dbPath,
+      "--dry-run",
+      "--json",
+    ])
+
+    expect(result.code).toBe(1)
+    const envelope = parseJson<{ error: { kind: string; code: string } }>(
+      result.stderr,
+    )
+    expect(envelope.error).toMatchObject({
+      kind: "validation",
+      code: "repository-root-missing",
+    })
+    expect(existsSync(join(base, ".slipmem"))).toBe(false)
+  }, 30000)
+
   test("reports a missing source and rejects an unknown migration kind", async () => {
     const base = makeTempBase()
     cleanup.push(base)

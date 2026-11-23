@@ -30,8 +30,12 @@ slipmem service stop   [--dir <path>] [--json]
 - No idle timer evicts the service. It stays until `stop` or process death.
 
 Readiness is `GET /service/health` on the loopback listener; it returns the
-canonical root, PID, instance ID, and start time. `GET /api/health` is also
-available through the reused server.
+canonical root, PID, instance ID, and start time. The listener answers
+`not-ready` while the shared application layer is still building and only
+writes `state.json` after that layer is usable. A build failure is reported as
+`startup-failed` and exits with an actionable readiness error instead of
+advertising a healthy service. `GET /api/health` is also available through the
+reused server.
 
 ## Composition
 

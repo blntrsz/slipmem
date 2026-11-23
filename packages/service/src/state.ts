@@ -316,11 +316,23 @@ export const writeServiceState = (root: string, state: ServiceState): void => {
   writeJsonAtomic(serviceStatePath(root), state)
 }
 
+const MAX_OWNER_ACQUIRE_ATTEMPTS = 100
+
+const isMissingFile = (cause: unknown): boolean =>
+  typeof cause === "object" &&
+  cause !== null &&
+  "code" in cause &&
+  (cause as { code?: unknown }).code === "ENOENT"
+
 /**
  * Atomically claim the per-root lifetime lock. A live matching owner is an
  * honest "already running" result; a dead or PID-reused owner is stale and is
  * replaced. The record is written after the exclusive create so no contender
  * can observe an empty lock file and mistake it for an owner.
+ *
+ * A stale record is removed before retrying. If that removal fails for any
+ * reason other than another contender winning the race (`ENOENT`), the lock
+ * cannot be replaced: fail instead of spinning forever on the same path.
  */
 export const acquireServiceOwner = (root: string): ServiceOwnerHandle => {
   ensureServiceDirectory(root)
@@ -335,7 +347,7 @@ export const acquireServiceOwner = (root: string): ServiceOwnerHandle => {
     startedAt,
   }
 
-  for (;;) {
+  for (let attempt = 0; ; attempt += 1) {
     let descriptor: number | null = null
     try {
       descriptor = openSync(path, "wx", 0o600)
@@ -394,10 +406,25 @@ export const acquireServiceOwner = (root: string): ServiceOwnerHandle => {
           `A slipmem service is already running for ${root} at PID ${current.pid}.`,
         )
       }
+      if (attempt >= MAX_OWNER_ACQUIRE_ATTEMPTS) {
+        throw new ServiceError(
+          "io",
+          `Could not replace the stale service owner lock at ${path} after ${MAX_OWNER_ACQUIRE_ATTEMPTS} attempts; another process keeps recreating it.`,
+        )
+      }
       try {
         unlinkSync(path)
-      } catch {
-        // Another contender may have removed it first.
+      } catch (cause) {
+        if (!isMissingFile(cause)) {
+          throw new ServiceError(
+            "io",
+            `Could not remove the stale service owner lock at ${path}: ${
+              cause instanceof Error ? cause.message : String(cause)
+            }`,
+            { cause },
+          )
+        }
+        // Another contender removed it first; retry the exclusive create.
       }
     }
   }

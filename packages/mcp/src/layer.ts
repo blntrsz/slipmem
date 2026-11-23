@@ -1,11 +1,13 @@
 import {
   MarkdownNoteRepositoryLive,
+  MarkdownSearchIndex,
   MarkdownSearchIndexFromRepository,
   PermanentMaintenanceWorkerLive,
   PromptRecallServiceLive,
+  type MarkdownError,
 } from "@slipmem/core"
 import { WikiServiceLive } from "@slipmem/core/wiki"
-import { Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { McpApprovalServiceLive } from "./approval"
 import {
   makeAutomaticMemoryLayer,
@@ -18,32 +20,33 @@ import type { McpServerOptions } from "./config"
 import { McpNoteRegistrations } from "./tools"
 
 /**
- * Repository, disposable search index, and approval service for one note root.
+ * MCP-specific services over a caller-provided Markdown repository.
  *
- * Both the stdio server and any HTTP registration share this layer shape, so
- * the same tools see the same files and the same pending proposals. The
- * repository is wrapped to emit a scoped raw-write signal after successful
- * fleeting/literature mutations; the worker and every tool receive that same
- * wrapped repository, so maintenance observes the same graph as writers.
+ * This layer requires the base `MarkdownNoteRepository` but deliberately does
+ * not construct one. The HTTP host can therefore provide its own repository
+ * and search index once, and both the JSON API and `/mcp` observe the same
+ * files and the same disposable index. The repository is wrapped to emit a
+ * scoped raw-write signal after successful fleeting/literature mutations; the
+ * worker and every tool receive that same wrapped repository, so maintenance
+ * observes the same graph as writers.
  */
-export const makeMarkdownServicesLayer = (options: McpServerOptions) => {
-  const baseRepository = MarkdownNoteRepositoryLive({
-    root: options.root,
-    ...(options.now === undefined ? {} : { now: options.now }),
-  })
-
+const makeMcpRepositoryServicesLayer = (
+  options: McpServerOptions,
+  refreshIndex?: () => Effect.Effect<void, MarkdownError>,
+) => {
   const rawWriteSignal = makeRawWriteSignalLayer()
 
   const repository = makeRawWriteRepositoryLayer().pipe(
-    Layer.provide(baseRepository),
     Layer.provideMerge(rawWriteSignal),
   )
 
-  const index = MarkdownSearchIndexFromRepository(
-    options.cacheDir === undefined ? {} : { cacheDir: options.cacheDir },
-  ).pipe(Layer.provide(repository))
-
-  const approval = McpApprovalServiceLive(options).pipe(Layer.provide(repository))
+  // Intentionally a separate capability from the human core ApprovalService:
+  // it exposes only submitMcp, while the host service owns review/apply/reject.
+  // The HTTP build still gives it the host's refreshIndex hook so any future
+  // direct path stays consistent with human applies.
+  const approval = McpApprovalServiceLive(options, refreshIndex).pipe(
+    Layer.provide(repository),
+  )
 
   const wiki = WikiServiceLive({
     ...(options.now === undefined ? {} : { now: options.now }),
@@ -64,7 +67,79 @@ export const makeMarkdownServicesLayer = (options: McpServerOptions) => {
       : { concurrency: options.recallConcurrency }),
   }).pipe(Layer.provide(repository))
 
-  return Layer.mergeAll(repository, index, approval, wiki, recall)
+  return Layer.mergeAll(repository, approval, wiki, recall)
+}
+
+/**
+ * Self-contained MCP services for stdio, where no host repository exists yet.
+ *
+ * The repository is created here exactly once; the disposable index and every
+ * MCP service are built over that same wrapped repository.
+ */
+export const makeMarkdownServicesLayer = (options: McpServerOptions) => {
+  const baseRepository = MarkdownNoteRepositoryLive({
+    root: options.root,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  })
+
+  const services = makeMcpRepositoryServicesLayer(options).pipe(
+    Layer.provide(baseRepository),
+  )
+
+  const index = MarkdownSearchIndexFromRepository(
+    options.cacheDir === undefined ? {} : { cacheDir: options.cacheDir },
+  ).pipe(Layer.provide(services))
+
+  return Layer.merge(services, index)
+}
+
+/**
+ * HTTP registrations that reuse the host's repository and disposable index.
+ *
+ * The returned layer still requires `MarkdownNoteRepository` and
+ * `MarkdownSearchIndex`; `makeAppLayer` provides both from one Markdown layer.
+ * Only the MCP-specific approval, wiki, recall, wrapped-write signal, and
+ * optional maintenance worker are added here.
+ */
+export const makeMcpSharedRegistrationsLayer = (options: McpServerOptions) => {
+  const automaticMemory =
+    options.automaticMemory ??
+    resolveAutomaticMemoryRuntime(options.env ?? process.env)
+  const services = Layer.unwrap(
+    Effect.gen(function* () {
+      const index = yield* MarkdownSearchIndex
+      return makeMcpRepositoryServicesLayer(options, () =>
+        index.refresh().pipe(Effect.asVoid),
+      )
+    }),
+  )
+
+  if (!automaticMemory.enabled) {
+    return {
+      automaticMemory,
+      registrations: McpNoteRegistrations.pipe(Layer.provide(services)),
+    }
+  }
+
+  const provider = automaticMemory.provider
+  if (provider === undefined) {
+    throw new Error(
+      "Automatic memory is enabled but no maintenance provider was resolved.",
+    )
+  }
+
+  const worker = PermanentMaintenanceWorkerLive({
+    provider: provider.maintenance,
+    ...(options.now === undefined ? {} : { now: options.now }),
+  }).pipe(Layer.provide(services), Layer.orDie)
+
+  return {
+    automaticMemory,
+    registrations: Layer.merge(
+      McpNoteRegistrations,
+      makeAutomaticMemoryLayer(automaticMemory),
+    ).pipe(Layer.provide(Layer.merge(services, worker))),
+  }
 }
 
 /**

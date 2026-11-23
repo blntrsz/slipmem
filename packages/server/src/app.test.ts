@@ -6,9 +6,10 @@ import {
   makeMarkdownNoteRepository,
   makeMarkdownSearchIndex,
 } from "@slipmem/core"
+import { Markdown } from "@slipmem/schemas/markdown"
 import { Effect } from "effect"
 import { existsSync } from "node:fs"
-import { mkdtemp, readdir, rm } from "node:fs/promises"
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -252,10 +253,19 @@ test("legacy type routes are thin adapters over the same ID repository", async (
     const created = await readNote(createdResponse)
     expect(created.type).toBe("permanent")
 
-    const listResponse = await api.handler(request("/api/notes/permanent"))
+    // The former GET /api/notes/:type compatibility list is gone because its
+    // one path collided with a note whose ID is the type name. Listing by type
+    // remains available through the canonical query parameter.
+    const listResponse = await api.handler(
+      request("/api/notes?type=permanent"),
+    )
     expect(await readNotes(listResponse)).toEqual([
       expect.objectContaining({ id: created.id }),
     ])
+    const removedTypeList = await api.handler(
+      request("/api/notes/permanent"),
+    )
+    expect(removedTypeList.status).toBe(404)
 
     const getResponse = await api.handler(
       request(`/api/notes/permanent/${created.id}`),
@@ -289,6 +299,52 @@ test("legacy type routes are thin adapters over the same ID repository", async (
       request(`/api/notes/${created.id}`),
     )
     expect(canonicalStillGone.status).toBe(404)
+  })
+})
+
+test("canonical note IDs win over note-type filenames and keep compatibility paths usable", async () => {
+  await withApi(async (api) => {
+    // A title that slugifies to a note type is a legal filename. The canonical
+    // ID route must read it instead of treating the segment as a type list.
+    const created = await readNote(
+      await api.handler(
+        request("/api/notes", "POST", {
+          type: "literature",
+          title: "Permanent",
+          content: "A note whose ID happens to be a type name.",
+          reference: "Notebook, page 9",
+        }),
+      ),
+    )
+    expect(created.id).toBe("permanent")
+    expect(created.type).toBe("literature")
+
+    const canonical = await api.handler(request("/api/notes/permanent"))
+    expect(canonical.status).toBe(200)
+    expect(await readNote(canonical)).toMatchObject({
+      id: "permanent",
+      type: "literature",
+    })
+
+    const typed = await api.handler(
+      request("/api/notes/literature/permanent"),
+    )
+    expect(await readNote(typed)).toMatchObject({
+      id: "permanent",
+      type: "literature",
+    })
+
+    const wrongType = await api.handler(
+      request("/api/notes/permanent/permanent"),
+    )
+    expect(wrongType.status).toBe(404)
+
+    const byType = await api.handler(
+      request("/api/notes?type=literature"),
+    )
+    expect(await readNotes(byType)).toEqual([
+      expect.objectContaining({ id: "permanent" }),
+    ])
   })
 })
 
@@ -344,6 +400,182 @@ test("canonical writes enforce type, content, reference, id, and limit rules", a
     expect(emptySearch.status).toBe(400)
   })
 })
+
+test("streamed bodies are rejected at the actual byte cap even without a truthful Content-Length", async () => {
+  await withApi(async (api) => {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder()
+        controller.enqueue(
+          encoder.encode(
+            '{"type":"fleeting","title":"Too large","content":"',
+          ),
+        )
+        controller.enqueue(
+          new Uint8Array(Markdown.MAX_NOTE_FILE_BYTES + 128 * 1024),
+        )
+        controller.close()
+      },
+    })
+    const response = await api.handler(
+      new Request(`${ORIGIN}/api/notes`, {
+        method: "POST",
+        headers: {
+          host: "127.0.0.1:3000",
+          "content-type": "application/json",
+          // Deliberately understated: the handler must enforce the cap on the
+          // stream it actually reads, not trust this header.
+          "content-length": "1",
+        },
+        body: stream,
+        duplex: "half",
+      } as RequestInit & { duplex: "half" }),
+    )
+    expect(response.status).toBe(413)
+    expect(((await response.json()) as { code: string }).code).toBe(
+      "body-too-large",
+    )
+    expect(await readNotes(await api.handler(request("/api/notes")))).toEqual([])
+  })
+})
+
+test("ready resolves after the app layer builds and rejects when it cannot", async () => {
+  const root = await makeRoot()
+  const api = makeApiHandler(root.root, {
+    cacheDir: root.cacheDir,
+    disableLogger: true,
+  })
+  try {
+    await api.ready
+    const response = await api.handler(request("/api/health"))
+    expect(response.status).toBe(200)
+  } finally {
+    await api.dispose()
+    await rm(root.directory, { recursive: true, force: true })
+  }
+
+  const missingRoot = await mkdtemp(join(tmpdir(), "slipmem-api-missing-"))
+  const broken = makeApiHandler(join(missingRoot, ".slipmem"), {
+    cacheDir: join(missingRoot, "cache"),
+    disableLogger: true,
+  })
+  try {
+    await expect(broken.ready).rejects.toThrow(/does not exist|slipmem init/)
+    // The same build failure still reaches a request; readiness did not consume
+    // or replace the handler's error.
+    await expect(broken.handler(request("/api/notes"))).rejects.toThrow(
+      /does not exist|slipmem init/,
+    )
+  } finally {
+    await broken.dispose()
+    await rm(missingRoot, { recursive: true, force: true })
+  }
+})
+
+test("a client disconnect interrupts an in-flight synthesized wiki request", async () => {
+  const wikiEnvKeys = [
+    "SLIPMEM_WIKI_SYNTHESIS",
+    "SLIPMEM_WIKI_AGENT",
+    "SLIPMEM_WIKI_AGENT_ARGS",
+    "SLIPMEM_WIKI_AGENT_UNSAFE",
+  ] as const
+  const previousEnv = new Map(
+    wikiEnvKeys.map((key) => [key, process.env[key]] as const),
+  )
+  const directory = await mkdtemp(join(tmpdir(), "slipmem-wiki-abort-"))
+  const root = join(directory, ".slipmem")
+  const recordPath = join(directory, "agent.json")
+  let api: ReturnType<typeof makeApiHandler> | undefined
+  let agentPid: number | undefined
+
+  try {
+    process.env.SLIPMEM_WIKI_SYNTHESIS = "agent"
+    process.env.SLIPMEM_WIKI_AGENT = process.execPath
+    process.env.SLIPMEM_WIKI_AGENT_ARGS = JSON.stringify([
+      join(import.meta.dir, "../../core/src/wiki/fixtures/synthesis-agent.mjs"),
+      recordPath,
+      "hang",
+    ])
+    process.env.SLIPMEM_WIKI_AGENT_UNSAFE = "1"
+
+    await Effect.runPromise(initializeNoteRoot(root))
+    const repository = await Effect.runPromise(
+      makeMarkdownNoteRepository({ root }),
+    )
+    await Effect.runPromise(
+      repository.create({
+        type: "permanent",
+        title: "Disconnected synthesis",
+        content: "A permanent note long enough to select for synthesis.",
+        tags: ["abort-wiki"],
+      }),
+    )
+
+    api = makeApiHandler(root, {
+      cacheDir: join(directory, "cache"),
+      disableLogger: true,
+    })
+    await api.ready
+
+    const controller = new AbortController()
+    const requestPromise = api.handler(
+      new Request(`${ORIGIN}/api/wiki/abort-wiki?mode=synthesized`, {
+        headers: { host: "127.0.0.1:3000" },
+        signal: controller.signal,
+      }),
+    )
+
+    const startedDeadline = Date.now() + 5_000
+    while (!existsSync(recordPath) && Date.now() < startedDeadline) {
+      await Bun.sleep(25)
+    }
+    expect(existsSync(recordPath)).toBe(true)
+    agentPid = (
+      JSON.parse(await readFile(recordPath, "utf8")) as { readonly pid: number }
+    ).pid
+
+    const startedAt = Date.now()
+    controller.abort()
+    const response = await Promise.race([
+      requestPromise,
+      Bun.sleep(3_000).then(() => null),
+    ])
+    expect(response?.status).toBe(499)
+    expect(Date.now() - startedAt).toBeLessThan(3_000)
+
+    // The canceled synthesis request must also stop its child process instead
+    // of leaving it running until the configured timeout.
+    const cleanupDeadline = Date.now() + 3_000
+    let childAlive = true
+    while (childAlive && Date.now() < cleanupDeadline) {
+      try {
+        process.kill(agentPid, 0)
+        await Bun.sleep(25)
+      } catch {
+        childAlive = false
+      }
+    }
+    expect(childAlive).toBe(false)
+  } finally {
+    if (agentPid !== undefined) {
+      try {
+        process.kill(agentPid, "SIGKILL")
+      } catch {
+        // Already exited.
+      }
+    }
+    await api?.dispose()
+    for (const key of wikiEnvKeys) {
+      const value = previousEnv.get(key)
+      if (value === undefined) {
+        delete process.env[key]
+      } else {
+        process.env[key] = value
+      }
+    }
+    await rm(directory, { recursive: true, force: true })
+  }
+}, 20_000)
 
 test("writes reject the legacy topics field instead of silently dropping tags", async () => {
   await withApi(async (api) => {

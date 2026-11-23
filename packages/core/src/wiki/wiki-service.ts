@@ -10,7 +10,6 @@ import {
   boundWikiText,
   extractiveSections,
   renderWikiMarkdown,
-  truncateWikiMarkdownSafely,
   wikiSourceFromNote,
   MAX_WIKI_CITATION_PATH_CHARS,
   MAX_WIKI_OUTPUT_CHARS,
@@ -277,9 +276,11 @@ export const makeWikiService = (
 
     /**
      * Assembles a page while enforcing both the Markdown and structured-output
-     * bounds. It never slices a section or a citation: when the page is too
-     * large it drops whole trailing sections and drops sources that no longer
-     * have a citing section.
+     * bounds. It never slices a section, a paragraph, or a citation: when the
+     * page is too large it drops whole trailing sections and drops sources that
+     * no longer have a citing section. `markdown` is always exactly the
+     * rendering of the retained `sections`, so a truncated page cannot show a
+     * clipped excerpt that the structured result still claims in full.
      */
     const assemblePage = (input: {
       readonly tag: string
@@ -323,20 +324,17 @@ export const makeWikiService = (
           const sources = input.notes
             .filter((note) => usedIds.has(note.id))
             .map((note) => pair(repository.root, note))
-          const markdown = truncateWikiMarkdownSafely(
-            renderWikiMarkdown({
-              tag: input.tag,
-              generatedAt: input.generatedAt,
-              mode: input.mode,
-              sources,
-              sections,
-              ...(input.omittedSentences === undefined
-                ? {}
-                : { omittedSentences: input.omittedSentences }),
-              truncated: truncated || sections.length < input.sections.length,
-            }),
-            maxOutputChars,
-          )
+          const markdown = renderWikiMarkdown({
+            tag: input.tag,
+            generatedAt: input.generatedAt,
+            mode: input.mode,
+            sources,
+            sections,
+            ...(input.omittedSentences === undefined
+              ? {}
+              : { omittedSentences: input.omittedSentences }),
+            truncated: truncated || sections.length < input.sections.length,
+          })
           const page: Markdown.WikiPage = {
             tag: input.tag,
             generatedAt: input.generatedAt,

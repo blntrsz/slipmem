@@ -1,4 +1,4 @@
-import { MarkdownNoteRepository } from "@slipmem/core"
+import { MarkdownNoteRepository, type MarkdownError } from "@slipmem/core"
 import {
   makeApprovalService,
   type ApprovalError,
@@ -34,6 +34,7 @@ export class McpApprovalService extends Context.Service<
 
 export const McpApprovalServiceLive = (
   options: McpServerOptions,
+  refreshIndex?: () => Effect.Effect<void, MarkdownError>,
 ): Layer.Layer<McpApprovalService, never, MarkdownNoteRepository> =>
   Layer.effect(
     McpApprovalService,
@@ -47,6 +48,7 @@ export const McpApprovalServiceLive = (
           env,
           ...(options.now === undefined ? {} : { now: options.now }),
           ...(actor === undefined ? {} : { actor }),
+          ...(refreshIndex === undefined ? {} : { refreshIndex }),
         },
       )
       return { submitMcp: service.submitMcp }

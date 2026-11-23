@@ -8,6 +8,7 @@ import {
 } from "@slipmem/server"
 
 import { ServiceError } from "./errors"
+import { serviceHealthResponse } from "./health"
 import {
   acquireServiceOwner,
   canonicalServiceRoot,
@@ -34,11 +35,68 @@ const parsePort = (raw: string | undefined): number => {
   return port
 }
 
+type ApiHandler = ReturnType<typeof makeApiHandler>
+
+const DISPOSE_TIMEOUT_MS = 5_000
+
 let server: ReturnType<typeof Bun.serve> | undefined
-let api: ReturnType<typeof makeApiHandler> | undefined
+let api: ApiHandler | undefined
 let owner: ServiceOwnerHandle | undefined
 let instanceId: string | undefined
 let shuttingDown = false
+let readinessError: string | undefined
+
+const messageOf = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause)
+
+const settle = async (
+  operation: Promise<unknown>,
+  milliseconds: number,
+): Promise<void> => {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      operation.then(
+        () => undefined,
+        () => undefined,
+      ),
+      new Promise<void>((resolveTimeout) => {
+        timer = setTimeout(resolveTimeout, milliseconds)
+        ;(timer as { unref?: () => void }).unref?.()
+      }),
+    ])
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer)
+    }
+  }
+}
+
+/**
+ * `makeApiHandler` builds its layer immediately and exposes `ready` for the
+ * build outcome, so the service can wait for the real application graph rather
+ * than binding a listener and declaring itself healthy optimistically.
+ */
+const awaitApplicationReadiness = async (
+  handler: ApiHandler,
+): Promise<void> => {
+  await handler.ready
+}
+
+const exitAfterReadinessFailure = async (message: string): Promise<never> => {
+  readinessError = message
+  process.stderr.write(`slipmem service readiness: ${message}\n`)
+  try {
+    server?.stop(true)
+  } catch {
+    // The listener may already be closed.
+  }
+  if (api !== undefined) {
+    await settle(api.dispose(), DISPOSE_TIMEOUT_MS)
+  }
+  cleanupRegistration()
+  process.exit(1)
+}
 
 const cleanupRegistration = (): void => {
   if (instanceId !== undefined) {
@@ -59,14 +117,13 @@ const shutdown = async (code: number): Promise<void> => {
   }
   shuttingDown = true
   try {
-    server?.stop()
+    server?.stop(true)
   } catch {
     // The server may already be closed.
   }
-  try {
-    await api?.dispose()
-  } catch {
-    // Cleanup must not turn a signal into a crash report.
+  if (api !== undefined) {
+    // A hung layer disposal must not keep a signal shutdown alive forever.
+    await settle(api.dispose(), DISPOSE_TIMEOUT_MS)
   }
   cleanupRegistration()
   process.exit(code)
@@ -117,31 +174,16 @@ const main = async (): Promise<void> => {
   })
   api = makeApiHandler(root, { extraRoutes })
 
+  // Bind before readiness so a concurrent health probe sees an honest
+  // "not-ready" instead of guessing from a connection refused. Readiness (and
+  // the ready registration) still waits for the application layer to build.
   const bound = Bun.serve({
     hostname: "127.0.0.1",
     port,
     async fetch(request) {
       const pathname = new URL(request.url).pathname
       if (pathname === "/service/health") {
-        const state = currentState
-        if (state === undefined) {
-          return Response.json(
-            { ok: false, service: "slipmem", error: "not-ready" },
-            { status: 503, headers: { "cache-control": "no-store" } },
-          )
-        }
-        return Response.json(
-          {
-            ok: true,
-            service: "slipmem",
-            root: state.root,
-            pid: state.pid,
-            instanceId: state.instanceId,
-            startedAt: state.startedAt,
-            url: state.url,
-          },
-          { headers: { "cache-control": "no-store" } },
-        )
+        return serviceHealthResponse(currentState, readinessError)
       }
       return api!.handler(request)
     },
@@ -152,6 +194,17 @@ const main = async (): Promise<void> => {
     throw new ServiceError(
       "io",
       "The loopback service did not report a bound port.",
+    )
+  }
+
+  // The ready registration and the "listening" message are written only after
+  // the layered application is actually usable. A broken layer exits here with
+  // an actionable readiness error instead of advertising a healthy service.
+  try {
+    await awaitApplicationReadiness(api)
+  } catch (cause) {
+    await exitAfterReadinessFailure(
+      `The application layer was not ready: ${messageOf(cause)}`,
     )
   }
 

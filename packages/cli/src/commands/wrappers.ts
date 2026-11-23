@@ -4,6 +4,7 @@ import { join, resolve } from "node:path"
 import { stringOption, type ParsedArguments } from "../args.js"
 import { resolveRoot, type CliContext } from "../context.js"
 import { usageError, type CliFailure } from "../errors.js"
+import { INTERRUPT_SIGNALS, terminateChild } from "../signals.js"
 import type { CommandDefinition } from "./command.js"
 
 // This file lives at packages/cli/src/commands, so the checkout root is four
@@ -21,6 +22,41 @@ const requireEntrypoint = (path: string, label: string): void => {
   }
 }
 
+const forwardSignal = (
+  child: ReturnType<typeof Bun.spawn>,
+  signal: (typeof INTERRUPT_SIGNALS)[number],
+): void => {
+  try {
+    child.kill(signal)
+  } catch {
+    // The child already exited; there is nothing left to forward.
+  }
+}
+
+const installForwarders = (
+  child: ReturnType<typeof Bun.spawn>,
+): (() => void) => {
+  const removers = INTERRUPT_SIGNALS.map((signal) => {
+    const handler = (): void => forwardSignal(child, signal)
+    // `once` keeps a second identical signal on the platform default path, so
+    // a child that ignores the first signal cannot trap the wrapper forever.
+    process.once(signal, handler)
+    return () => process.off(signal, handler)
+  })
+  return () => {
+    for (const remove of removers) {
+      remove()
+    }
+  }
+}
+
+/**
+ * Runs the real child entry point as a scoped resource. Signals received by the
+ * wrapper are forwarded to the child, and interruption stops the child with a
+ * bounded SIGTERM-then-SIGKILL escalation before the scoped release completes.
+ * That keeps `slipmem mcp` and `slipmem web` from leaving an orphaned server
+ * behind when only the wrapper process is signalled.
+ */
 const runChild = (
   command: ReadonlyArray<string>,
   options: {
@@ -28,21 +64,33 @@ const runChild = (
     readonly env: Readonly<Record<string, string | undefined>>
   },
 ): Effect.Effect<number, CliFailure> =>
-  Effect.tryPromise({
-    try: async () => {
-      const child = Bun.spawn({
-        cmd: [...command],
-        cwd: options.cwd,
-        env: options.env,
-        stdio: ["inherit", "inherit", "inherit"],
-      })
-      return await child.exited
-    },
-    catch: (cause) =>
-      usageError(
-        `Could not start the child entry point: ${cause instanceof Error ? cause.message : String(cause)}`,
-      ),
-  })
+  Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* Effect.acquireRelease(
+        Effect.try({
+          try: () =>
+            Bun.spawn({
+              cmd: [...command],
+              cwd: options.cwd,
+              env: options.env,
+              stdio: ["inherit", "inherit", "inherit"],
+            }),
+          catch: (cause) =>
+            usageError(
+              `Could not start the child entry point: ${cause instanceof Error ? cause.message : String(cause)}`,
+            ),
+        }),
+        (running) => Effect.promise(() => terminateChild(running)),
+      )
+
+      yield* Effect.acquireRelease(
+        Effect.sync(() => installForwarders(child)),
+        (remove) => Effect.sync(remove),
+      )
+
+      return yield* Effect.promise(() => child.exited)
+    }),
+  )
 
 /**
  * Resolves the note root in the caller's context, then passes the absolute

@@ -5,7 +5,6 @@ import {
   type MigrationImportReport,
 } from "@slipmem/core"
 import { Effect } from "effect"
-import { join } from "node:path"
 import { booleanOption, stringOption } from "../args.js"
 import { resolveRoot } from "../context.js"
 import { resolveSourceDatabasePath } from "../database-path.js"
@@ -188,6 +187,8 @@ export const migrateCommand: CommandDefinition = {
     "Without --db, the source is SLIPMEM_DB_PATH, then",
     "$XDG_DATA_HOME/slipmem/slipmem.db (~/.local/share by default).",
     "The source database is opened read-only and hashed before and after.",
+    "The target root is resolved with --dir, SLIPMEM_DIR, or an existing",
+    "ancestor .slipmem/; migrate never creates an implicit root in the cwd.",
     "A real import refuses a non-empty target root unless --merge is given,",
     "backs up the source under .slipmem/.state/migrations/, writes through the",
     "shared atomic serializer, re-reads every note, and writes a manifest.",
@@ -220,18 +221,7 @@ export const migrateCommand: CommandDefinition = {
       const dryRun = booleanOption(parsed, "dry-run")
       const merge = booleanOption(parsed, "merge")
 
-      const resolved = yield* resolveRoot(
-        context,
-        stringOption(parsed, "dir"),
-      ).pipe(
-        Effect.match({
-          onFailure: () => ({
-            root: join(context.cwd, ".slipmem"),
-            source: "cwd" as const,
-          }),
-          onSuccess: (resolution) => resolution,
-        }),
-      )
+      const resolved = yield* resolveRoot(context, stringOption(parsed, "dir"))
 
       const outcome = yield* Effect.sync(() => {
         try {

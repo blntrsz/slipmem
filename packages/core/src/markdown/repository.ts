@@ -547,6 +547,10 @@ export const makeMarkdownNoteRepository = (
               tag === undefined ||
               (note.metadata.tags ?? []).includes(tag),
           )
+          // Newest first, matching the SQLite NoteService ordering. Sorting
+          // before the bound is what makes `limit` select the newest notes
+          // rather than the first filenames on disk.
+          .sort((left, right) => byNewest(left.info, right.info))
           .slice(0, asListLimit(input.limit))
       })
 

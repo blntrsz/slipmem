@@ -25,6 +25,7 @@ import {
   isPathInside,
   isRealPathInside,
   isSymbolicLinkPath,
+  rootSymlinkError,
 } from "./root.js"
 
 // Bumped from 2 for the topics -> tags column rename. The index is disposable:
@@ -642,6 +643,12 @@ export const makeMarkdownSearchIndex = (
 ): Effect.Effect<MarkdownSearchIndexShape, MarkdownError> =>
   Effect.gen(function* () {
     const root = resolve(config.root)
+    // The repository rejects a linked note root, but the index can be
+    // constructed directly. Indexing through a link would bind the cache to the
+    // link path while reading a different real directory, so reject it here too.
+    if (isSymbolicLinkPath(root)) {
+      return yield* Effect.fail(rootSymlinkError(root))
+    }
     const path = indexPath(config)
     const locationError = validateLocation(root, cacheDirectory(config))
     if (locationError !== null) {

@@ -362,6 +362,45 @@ describe("capture model configuration", () => {
       expect(resolved.error.message).toContain("SLIPMEM_CHAT_PROVIDER")
     }
   })
+
+  test("rejects invalid numeric timeout and response bounds as invalid-config", () => {
+    const configured = (extra: Readonly<Record<string, string>>) => ({
+      SLIPMEM_CAPTURE_PROVIDER: "openai-compatible",
+      SLIPMEM_CAPTURE_MODEL: "capture-model",
+      SLIPMEM_CAPTURE_BASE_URL: "https://provider.example/v1",
+      ...extra,
+    })
+    const cases = [
+      ["SLIPMEM_CAPTURE_TIMEOUT_MS", "soon"],
+      ["SLIPMEM_CAPTURE_TIMEOUT_MS", "0"],
+      ["SLIPMEM_CAPTURE_TIMEOUT_MS", "1.5"],
+      ["SLIPMEM_CAPTURE_TIMEOUT_MS", "600001"],
+      ["SLIPMEM_CAPTURE_MAX_RESPONSE_BYTES", "many"],
+      ["SLIPMEM_CAPTURE_MAX_RESPONSE_BYTES", "-1"],
+      ["SLIPMEM_CAPTURE_MAX_RESPONSE_BYTES", "16777217"],
+    ] as const
+
+    for (const [name, value] of cases) {
+      const resolved = resolveCaptureModel(configured({ [name]: value }))
+      expect("error" in resolved).toBe(true)
+      if ("error" in resolved) {
+        expect(resolved.error.code).toBe("invalid-config")
+        expect(resolved.error.field).toBe(name)
+        expect(resolved.error.message).toContain(name)
+      }
+    }
+  })
+
+  test("accepts bounded integer timeout and response settings", () => {
+    const resolved = resolveCaptureModel({
+      SLIPMEM_CAPTURE_PROVIDER: "openai-compatible",
+      SLIPMEM_CAPTURE_MODEL: "capture-model",
+      SLIPMEM_CAPTURE_BASE_URL: "https://provider.example/v1",
+      SLIPMEM_CAPTURE_TIMEOUT_MS: "1500",
+      SLIPMEM_CAPTURE_MAX_RESPONSE_BYTES: "2048",
+    })
+    expect("error" in resolved).toBe(false)
+  })
 })
 
 describe("slipmem capture git", () => {

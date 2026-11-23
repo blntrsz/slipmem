@@ -1,4 +1,4 @@
-import { Cause, Effect, Exit, Layer, Runtime } from "effect"
+import { Cause, Context, Effect, Exit, Layer, Runtime } from "effect"
 import {
   formatAutomaticMemoryNotice,
   resolveAutomaticMemoryRuntime,
@@ -51,44 +51,46 @@ if (recallProvider.notice !== undefined) {
   process.stderr.write(`${recallProvider.notice}\n`)
 }
 
-// Interrupt the main fiber on a signal so `Layer.launch` can close the
-// disposable search index and flush the MCP transport before the process
+// Interrupt the main fiber on a signal or stdin EOF so `Layer.launch` can close
+// the disposable search index and flush the MCP transport before the process
 // exits. This is the same runner pattern Effect's platform packages install for
 // `runMain`; using it here keeps shutdown behavior without adding a platform
 // dependency.
 const runMain = Runtime.makeRunMain(({ fiber, teardown }) => {
-  let receivedSignal = false
-
-  const interrupt = () => {
-    receivedSignal = true
-    fiber.interruptUnsafe(fiber.id)
-  }
+  // A signal or stdin close is an intentional shutdown, not the generic `130`
+  // interruption exit code. Real layer failures still keep their own code.
+  const interrupt = () =>
+    fiber.interruptUnsafe(
+      fiber.id,
+      Context.make(Runtime.InterruptExitCode, 0),
+    )
 
   fiber.addObserver((exit) => {
     process.removeListener("SIGINT", interrupt)
     process.removeListener("SIGTERM", interrupt)
+    process.stdin.removeListener("end", interrupt)
+    process.stdin.removeListener("close", interrupt)
 
     // `makeRunMain`'s default reporter runs outside the server layer and would
-    // write to stdout. Report failures here, on stderr, and only for failures
-    // that have not already been reported.
+    // write to stdout. With error reporting disabled, print every non-interrupt
+    // startup/shutdown failure here, on stderr, where it cannot corrupt the
+    // protocol stream.
     if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) {
-      const error = Cause.squash(exit.cause)
-      if (Runtime.getErrorReported(error)) {
-        process.stderr.write(`${Cause.pretty(exit.cause)}\n`)
-      }
+      process.stderr.write(`${Cause.pretty(exit.cause)}\n`)
     }
 
     teardown(exit, (code) => {
-      if (receivedSignal) {
-        process.exit(0)
-      } else if (code !== 0) {
-        process.exit(code)
-      }
+      process.exit(code)
     })
   })
 
   process.on("SIGINT", interrupt)
   process.on("SIGTERM", interrupt)
+  // The transport is finished when its input closes. Interrupt explicitly so
+  // shutdown does not depend on whichever read the protocol scheduler reaches
+  // first.
+  process.stdin.once("end", interrupt)
+  process.stdin.once("close", interrupt)
 })
 
 runMain(

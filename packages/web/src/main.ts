@@ -130,6 +130,19 @@ export const EditorState = defineTaggedUnion({
 })
 export type EditorState = typeof EditorState.Type
 
+export const DeleteRequest = Schema.Struct({
+  requestId: Schema.Int,
+  noteId: Schema.String,
+})
+export type DeleteRequest = typeof DeleteRequest.Type
+
+export const ProposalAction = Schema.Struct({
+  requestId: Schema.Int,
+  proposalId: Schema.String,
+  action: Schema.Literals(["approve", "reject"]),
+})
+export type ProposalAction = typeof ProposalAction.Type
+
 export const Model = Schema.Struct({
   route: AppRoute,
   notes: NotesData.schema,
@@ -140,6 +153,8 @@ export const Model = Schema.Struct({
   pending: PendingData.schema,
   health: HealthData.schema,
   editor: EditorState,
+  deleteRequest: Schema.Option(DeleteRequest),
+  proposalAction: Schema.Option(ProposalAction),
   searchInput: Schema.String,
   lastError: Schema.Option(Schema.String),
   notesRequestId: Schema.Int,
@@ -151,6 +166,7 @@ export const Model = Schema.Struct({
   healthRequestId: Schema.Int,
   saveRequestId: Schema.Int,
   deleteRequestId: Schema.Int,
+  proposalRequestId: Schema.Int,
 })
 export type Model = typeof Model.Type
 
@@ -213,9 +229,18 @@ export const Message = defineMessageUnion({
   SucceededHealth: { requestId: Schema.Int, health: ApiHealth },
   FailedHealth: { requestId: Schema.Int, message: Schema.String },
   SucceededApprove: { requestId: Schema.Int, proposalId: Schema.String },
-  FailedApprove: { message: Schema.String },
+  FailedApprove: {
+    requestId: Schema.Int,
+    proposalId: Schema.String,
+    message: Schema.String,
+  },
   SucceededReject: { requestId: Schema.Int, proposalId: Schema.String },
-  FailedReject: { message: Schema.String },
+  FailedReject: {
+    requestId: Schema.Int,
+    proposalId: Schema.String,
+    message: Schema.String,
+  },
+  CancelledRouteRead: {},
 })
 export type Message = typeof Message.Type
 
@@ -245,6 +270,10 @@ export const LoadNotes = Command.define("LoadNotes", {
     tag: Schema.Option(Schema.String),
   },
   messages: [Message.SucceededLoadNotes, Message.FailedLoadNotes],
+  interrupt: {
+    keyFields: ["requestId"],
+    toKey: ({ requestId }) => String(requestId),
+  },
   execute: ({ requestId, type, tag }) =>
     listNotes({
       ...(Option.isSome(type) ? { type: type.value } : {}),
@@ -266,6 +295,10 @@ export const LoadNotes = Command.define("LoadNotes", {
 export const LoadNote = Command.define("LoadNote", {
   args: { requestId: Schema.Int, noteId: Schema.String },
   messages: [Message.SucceededLoadNote, Message.FailedLoadNote],
+  interrupt: {
+    keyFields: ["requestId"],
+    toKey: ({ requestId }) => String(requestId),
+  },
   execute: ({ requestId, noteId }) =>
     getNote(noteId).pipe(
       Effect.map((note) =>
@@ -344,6 +377,10 @@ export const LoadSearch = Command.define("LoadSearch", {
     type: Schema.Option(Markdown.NoteType),
   },
   messages: [Message.SucceededSearch, Message.FailedSearch],
+  interrupt: {
+    keyFields: ["requestId"],
+    toKey: ({ requestId }) => String(requestId),
+  },
   execute: ({ requestId, query, type }) =>
     searchNotes({
       query,
@@ -365,6 +402,10 @@ export const LoadSearch = Command.define("LoadSearch", {
 export const LoadTags = Command.define("LoadTags", {
   args: { requestId: Schema.Int },
   messages: [Message.SucceededTags, Message.FailedTags],
+  interrupt: {
+    keyFields: ["requestId"],
+    toKey: ({ requestId }) => String(requestId),
+  },
   execute: ({ requestId }) =>
     listTags().pipe(
       Effect.map((tags) => Message.SucceededTags({ requestId, tags })),
@@ -388,6 +429,10 @@ export const LoadWiki = Command.define("LoadWiki", {
     includeFleeting: Schema.Boolean,
   },
   messages: [Message.SucceededWiki, Message.FailedWiki],
+  interrupt: {
+    keyFields: ["requestId"],
+    toKey: ({ requestId }) => String(requestId),
+  },
   execute: ({ requestId, tag, mode, includeFleeting }) =>
     getWiki(tag, {
       ...(Option.isSome(mode) ? { mode: mode.value } : {}),
@@ -409,6 +454,10 @@ export const LoadWiki = Command.define("LoadWiki", {
 export const LoadPending = Command.define("LoadPending", {
   args: { requestId: Schema.Int },
   messages: [Message.SucceededPending, Message.FailedPending],
+  interrupt: {
+    keyFields: ["requestId"],
+    toKey: ({ requestId }) => String(requestId),
+  },
   execute: ({ requestId }) =>
     listPending().pipe(
       Effect.map(({ proposals, invalid }) =>
@@ -429,6 +478,10 @@ export const LoadPending = Command.define("LoadPending", {
 export const LoadHealth = Command.define("LoadHealth", {
   args: { requestId: Schema.Int },
   messages: [Message.SucceededHealth, Message.FailedHealth],
+  interrupt: {
+    keyFields: ["requestId"],
+    toKey: ({ requestId }) => String(requestId),
+  },
   execute: ({ requestId }) =>
     getHealth().pipe(
       Effect.map((health) => Message.SucceededHealth({ requestId, health })),
@@ -453,6 +506,8 @@ export const ApproveProposal = Command.define("ApproveProposal", {
       Effect.catch((error) =>
         Effect.succeed(
           Message.FailedApprove({
+            requestId,
+            proposalId,
             message: failureMessage(error, "Could not approve the proposal."),
           }),
         ),
@@ -470,6 +525,8 @@ export const RejectProposal = Command.define("RejectProposal", {
       Effect.catch((error) =>
         Effect.succeed(
           Message.FailedReject({
+            requestId,
+            proposalId,
             message: failureMessage(error, "Could not reject the proposal."),
           }),
         ),
@@ -477,6 +534,39 @@ export const RejectProposal = Command.define("RejectProposal", {
       Effect.provide(Http.layer),
     ),
 })
+
+/**
+ * Stops any route read that is still in flight. Each read is keyed by its
+ * request id, so the replacement command in the same batch has a fresh key and
+ * cannot be interrupted by the cancellation. Request-id checks in update remain
+ * the backstop for a response that was already dispatched.
+ */
+const cancelRouteReads = (model: Model) => {
+  const cancelled = () => Message.CancelledRouteRead()
+  return [
+    ...(AsyncData.isPending(model.notes)
+      ? [LoadNotes.Interrupt({ requestId: model.notesRequestId }, cancelled)]
+      : []),
+    ...(AsyncData.isPending(model.note)
+      ? [LoadNote.Interrupt({ requestId: model.noteRequestId }, cancelled)]
+      : []),
+    ...(AsyncData.isPending(model.search)
+      ? [LoadSearch.Interrupt({ requestId: model.searchRequestId }, cancelled)]
+      : []),
+    ...(AsyncData.isPending(model.tags)
+      ? [LoadTags.Interrupt({ requestId: model.tagsRequestId }, cancelled)]
+      : []),
+    ...(AsyncData.isPending(model.wiki)
+      ? [LoadWiki.Interrupt({ requestId: model.wikiRequestId }, cancelled)]
+      : []),
+    ...(AsyncData.isPending(model.pending)
+      ? [LoadPending.Interrupt({ requestId: model.pendingRequestId }, cancelled)]
+      : []),
+    ...(AsyncData.isPending(model.health)
+      ? [LoadHealth.Interrupt({ requestId: model.healthRequestId }, cancelled)]
+      : []),
+  ]
+}
 
 // INIT
 
@@ -490,6 +580,8 @@ const emptyModel = (route: AppRoute): Model => ({
   pending: AsyncData.Idle(),
   health: AsyncData.Idle(),
   editor: EditorState.Closed(),
+  deleteRequest: Option.none(),
+  proposalAction: Option.none(),
   searchInput: "",
   lastError: Option.none(),
   notesRequestId: 0,
@@ -501,6 +593,7 @@ const emptyModel = (route: AppRoute): Model => ({
   healthRequestId: 0,
   saveRequestId: 0,
   deleteRequestId: 0,
+  proposalRequestId: 0,
 })
 
 const typeFromQuery = (value: Option.Option<string>): Markdown.NoteType =>
@@ -554,14 +647,14 @@ const editorForRoute = (route: AppRoute): EditorState =>
 
 type UpdateReturn = Update.Return<Model, Message>
 
-const enterRoute = (model: Model, route: AppRoute): UpdateReturn => {
+const enterRoute = (model: Model, route: AppRoute, options: { readonly cancelPrevious?: boolean } = {}): UpdateReturn => {
   const base = modifyFields(model, {
     route: () => route,
     editor: () => editorForRoute(route),
     lastError: () => Option.none(),
   })
 
-  return AppRoute.match(route, {
+  const result = AppRoute.match<UpdateReturn>(route, {
     Home: ({ type, tag }) => {
       const requestId = model.notesRequestId + 1
       const kind = Option.flatMap(type, (candidate) =>
@@ -621,15 +714,19 @@ const enterRoute = (model: Model, route: AppRoute): UpdateReturn => {
           Match.orElse(() => Option.none<Markdown.NoteType>()),
         ),
       )
+      // Invalidate any previous search even when the new URL has no query.
+      // Otherwise a late response for the previous query can repopulate the
+      // empty search page with results the reader no longer asked for.
+      const requestId = model.searchRequestId + 1
       if (query.trim() === "") {
         return {
           model: modifyFields(base, {
             search: () => AsyncData.Idle(),
             searchInput: () => "",
+            searchRequestId: () => requestId,
           }),
         }
       }
-      const requestId = model.searchRequestId + 1
       return {
         model: modifyFields(base, {
           search: () => AsyncData.Loading(),
@@ -688,6 +785,15 @@ const enterRoute = (model: Model, route: AppRoute): UpdateReturn => {
     },
     NotFound: () => ({ model: base }),
   })
+
+  const commands = [
+    ...(options.cancelPrevious === true ? cancelRouteReads(model) : []),
+    ...(result.commands ?? []),
+  ]
+
+  return commands.length === 0
+    ? { model: result.model }
+    : { model: result.model, commands }
 }
 
 export const init: Runtime.RoutingApplicationInit<Model, Message> = (url) => {
@@ -796,9 +902,38 @@ const noteTypeOption = (
     ),
   )
 
+const isDeleteRouteFor = (route: AppRoute, noteId: string): boolean =>
+  AppRoute.match(route, {
+    DeleteNote: (current) => current.noteId === noteId,
+    Home: () => false,
+    NewNote: () => false,
+    NoteDetail: () => false,
+    EditNote: () => false,
+    Search: () => false,
+    Tags: () => false,
+    Wiki: () => false,
+    Review: () => false,
+    Health: () => false,
+    NotFound: () => false,
+  })
+
+const matchesProposalAction = (
+  model: Model,
+  action: ProposalAction["action"],
+  requestId: number,
+  proposalId: string,
+): boolean =>
+  Option.match(model.proposalAction, {
+    onNone: () => false,
+    onSome: (current) =>
+      current.action === action &&
+      current.requestId === requestId &&
+      current.proposalId === proposalId,
+  })
+
 /** Reloads the current route without changing its URL or filters. */
-const refreshRoute = (model: Model): UpdateReturn =>
-  AppRoute.match(model.route, {
+const refreshRoute = (model: Model): UpdateReturn => {
+  const result = AppRoute.match<UpdateReturn>(model.route, {
     Home: ({ type, tag }) => {
       const requestId = model.notesRequestId + 1
       return {
@@ -906,6 +1041,12 @@ const refreshRoute = (model: Model): UpdateReturn =>
     NotFound: () => ({ model }),
   })
 
+  return {
+    model: result.model,
+    commands: [...cancelRouteReads(model), ...(result.commands ?? [])],
+  }
+}
+
 export const update = (model: Model, message: Message) =>
   Message.match<UpdateReturn>(message, {
     ClickedLink: ({ request }) =>
@@ -922,7 +1063,7 @@ export const update = (model: Model, message: Message) =>
 
     ChangedUrl: ({ url }) => {
       const nextRoute = urlToAppRoute(url)
-      return enterRoute(model, nextRoute)
+      return enterRoute(model, nextRoute, { cancelPrevious: true })
     },
 
     CompletedNavigateInternal: () => ({ model }),
@@ -1015,9 +1156,19 @@ export const update = (model: Model, message: Message) =>
     ConfirmedDelete: () =>
       AppRoute.match<UpdateReturn>(model.route, {
         DeleteNote: ({ noteId }) => {
+          // A second click must not send a second delete for the same note.
+          // The first request owns the completion until it resolves.
+          if (Option.isSome(model.deleteRequest)) {
+            return { model }
+          }
           const requestId = model.deleteRequestId + 1
           return {
-            model: modifyFields(model, { deleteRequestId: () => requestId }),
+            model: modifyFields(model, {
+              deleteRequestId: () => requestId,
+              deleteRequest: () =>
+                Option.some({ requestId, noteId }),
+              lastError: () => Option.none(),
+            }),
             commands: [DeleteNote({ requestId, noteId })],
           }
         },
@@ -1034,17 +1185,33 @@ export const update = (model: Model, message: Message) =>
       }),
 
     ClickedApprove: ({ proposalId }) => {
-      const requestId = model.pendingRequestId + 1
+      if (Option.isSome(model.proposalAction)) {
+        return { model }
+      }
+      const requestId = model.proposalRequestId + 1
       return {
-        model,
+        model: modifyFields(model, {
+          proposalRequestId: () => requestId,
+          proposalAction: () =>
+            Option.some({ requestId, proposalId, action: "approve" as const }),
+          lastError: () => Option.none(),
+        }),
         commands: [ApproveProposal({ requestId, proposalId })],
       }
     },
 
     ClickedReject: ({ proposalId }) => {
-      const requestId = model.pendingRequestId + 1
+      if (Option.isSome(model.proposalAction)) {
+        return { model }
+      }
+      const requestId = model.proposalRequestId + 1
       return {
-        model,
+        model: modifyFields(model, {
+          proposalRequestId: () => requestId,
+          proposalAction: () =>
+            Option.some({ requestId, proposalId, action: "reject" as const }),
+          lastError: () => Option.none(),
+        }),
         commands: [RejectProposal({ requestId, proposalId })],
       }
     },
@@ -1179,31 +1346,53 @@ export const update = (model: Model, message: Message) =>
     },
 
     SucceededDeleteNote: ({ requestId, noteId }) => {
-      if (requestId !== model.deleteRequestId) {
+      const current = Option.match(model.deleteRequest, {
+        onNone: () => false,
+        onSome: (request) =>
+          request.requestId === requestId && request.noteId === noteId,
+      })
+      if (!current) {
         return { model }
       }
       const nextNotes = refreshNotes(model, (notes) =>
         Array.filter(notes, (note) => note.id !== noteId),
       )
-      return {
-        model: modifyFields(model, {
-          notes: () => nextNotes,
-          note: () => AsyncData.Success({ data: Option.none() }),
-          lastError: () => Option.none(),
-        }),
-        commands: [
-          NavigateInternal({ url: homeRouter({ type: Option.none(), tag: Option.none() }) }),
-        ],
-      }
+      const stillConfirming = isDeleteRouteFor(model.route, noteId)
+      const next = modifyFields(model, {
+        notes: () => nextNotes,
+        ...(stillConfirming
+          ? { note: () => AsyncData.Success({ data: Option.none() }) }
+          : {}),
+        deleteRequest: () => Option.none(),
+        lastError: () => Option.none(),
+      })
+      return stillConfirming
+        ? {
+            model: next,
+            commands: [
+              NavigateInternal({
+                url: homeRouter({ type: Option.none(), tag: Option.none() }),
+              }),
+            ],
+          }
+        : { model: next }
     },
 
     FailedDeleteNote: ({ requestId, message }) => {
-      if (requestId !== model.deleteRequestId) {
+      const request = Option.getOrNull(model.deleteRequest)
+      if (request === null || request.requestId !== requestId) {
         return { model }
       }
-      return {
-        model: modifyFields(model, { lastError: () => Option.some(message) }),
-      }
+      const next = modifyFields(model, {
+        deleteRequest: () => Option.none(),
+      })
+      return isDeleteRouteFor(next.route, request.noteId)
+        ? {
+            model: modifyFields(next, {
+              lastError: () => Option.some(message),
+            }),
+          }
+        : { model: next }
     },
 
     SucceededSearch: ({ requestId, results }) => {
@@ -1318,37 +1507,85 @@ export const update = (model: Model, message: Message) =>
       }
     },
 
-    SucceededApprove: () => {
-      const requestId = model.pendingRequestId + 1
+    SucceededApprove: ({ requestId, proposalId }) => {
+      if (
+        !matchesProposalAction(model, "approve", requestId, proposalId)
+      ) {
+        return { model }
+      }
+      const next = modifyFields(model, {
+        proposalAction: () => Option.none(),
+        lastError: () => Option.none(),
+      })
+      if (!isRoute(next.route, "Review")) {
+        return { model: next }
+      }
+      const loadRequestId = model.pendingRequestId + 1
       return {
-        model: modifyFields(model, {
-          lastError: () => Option.none(),
+        model: modifyFields(next, {
           pending: () => AsyncData.Loading(),
-          pendingRequestId: () => requestId,
+          pendingRequestId: () => loadRequestId,
         }),
-        commands: [LoadPending({ requestId })],
+        commands: [LoadPending({ requestId: loadRequestId })],
       }
     },
 
-    FailedApprove: ({ message }) => ({
-      model: modifyFields(model, { lastError: () => Option.some(message) }),
-    }),
+    FailedApprove: ({ requestId, proposalId, message }) => {
+      if (
+        !matchesProposalAction(model, "approve", requestId, proposalId)
+      ) {
+        return { model }
+      }
+      const next = modifyFields(model, {
+        proposalAction: () => Option.none(),
+      })
+      return isRoute(next.route, "Review")
+        ? {
+            model: modifyFields(next, {
+              lastError: () => Option.some(message),
+            }),
+          }
+        : { model: next }
+    },
 
-    SucceededReject: () => {
-      const requestId = model.pendingRequestId + 1
+    SucceededReject: ({ requestId, proposalId }) => {
+      if (!matchesProposalAction(model, "reject", requestId, proposalId)) {
+        return { model }
+      }
+      const next = modifyFields(model, {
+        proposalAction: () => Option.none(),
+        lastError: () => Option.none(),
+      })
+      if (!isRoute(next.route, "Review")) {
+        return { model: next }
+      }
+      const loadRequestId = model.pendingRequestId + 1
       return {
-        model: modifyFields(model, {
-          lastError: () => Option.none(),
+        model: modifyFields(next, {
           pending: () => AsyncData.Loading(),
-          pendingRequestId: () => requestId,
+          pendingRequestId: () => loadRequestId,
         }),
-        commands: [LoadPending({ requestId })],
+        commands: [LoadPending({ requestId: loadRequestId })],
       }
     },
 
-    FailedReject: ({ message }) => ({
-      model: modifyFields(model, { lastError: () => Option.some(message) }),
-    }),
+    FailedReject: ({ requestId, proposalId, message }) => {
+      if (!matchesProposalAction(model, "reject", requestId, proposalId)) {
+        return { model }
+      }
+      const next = modifyFields(model, {
+        proposalAction: () => Option.none(),
+      })
+      return isRoute(next.route, "Review")
+        ? {
+            model: modifyFields(next, {
+              lastError: () => Option.some(message),
+            }),
+          }
+        : { model: next }
+    },
+
+    CancelledRouteRead: () => ({ model }),
   })
 
 // SUBSCRIPTION
@@ -1726,18 +1963,19 @@ const field = (
 
 const editorView = (model: Model, h: HtmlBuilder<Message>): Html =>
   EditorState.match(model.editor, {
-    Closed: () => {
-      const maybeNote = AsyncData.getData(model.note)
-      return Option.match(maybeNote, {
-        onNone: () => status("Loading note...", h),
-        onSome: (note) =>
-          Option.match(note, {
-            onNone: () =>
-              h.p([h.Class(mutedClass)], ["That note does not exist."]),
+    Closed: () =>
+      AsyncData.match(model.note, {
+        onIdle: () => status("Loading note...", h),
+        onLoading: () => status("Loading note...", h),
+        onRefreshing: () => status("Preparing the editor...", h),
+        onStale: ({ error }) => failureView(error, h),
+        onFailure: (error) => failureView(error, h),
+        onSuccess: (maybeNote) =>
+          Option.match(maybeNote, {
+            onNone: () => noteMissing(h),
             onSome: () => status("Preparing the editor...", h),
           }),
-      })
-    },
+      }),
     Saving: ({ type, form }) =>
       h.form(
         [h.Class(panelClass), h.OnSubmit(Message.SubmittedEditor())],
@@ -1992,6 +2230,9 @@ const deleteView = (model: Model, h: HtmlBuilder<Message>): Html =>
                     [excerptOf(note.content, 800)],
                   ),
                   h.p([h.Class(mutedClass)], [`File: ${note.path}`]),
+                  Option.isSome(model.deleteRequest)
+                    ? status("Deleting the note...", h)
+                    : h.empty,
                   h.div(
                     [h.Class("flex gap-2")],
                     [
@@ -2001,7 +2242,9 @@ const deleteView = (model: Model, h: HtmlBuilder<Message>): Html =>
                           h.Class(
                             "rounded-lg bg-red-500 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-red-400",
                           ),
-                          h.OnClick(Message.ConfirmedDelete()),
+                          Option.isSome(model.deleteRequest)
+                            ? h.Disabled(true)
+                            : h.OnClick(Message.ConfirmedDelete()),
                         ],
                         ["Delete note"],
                       ),
@@ -2474,9 +2717,22 @@ const diffView = (diff: string, h: HtmlBuilder<Message>): Html =>
 
 const proposalView = (
   proposal: ApiPendingProposal,
+  action: Option.Option<ProposalAction>,
   h: HtmlBuilder<Message>,
-): Html =>
-  h.keyed("li")(
+): Html => {
+  const actionForProposal = Option.match(action, {
+    onNone: () => Option.none<ProposalAction["action"]>(),
+    onSome: (current) =>
+      current.proposalId === proposal.id
+        ? Option.some(current.action)
+        : Option.none<ProposalAction["action"]>(),
+  })
+  const busy = Option.isSome(action)
+  const approving = Option.getOrNull(actionForProposal) === "approve"
+  const rejecting = Option.getOrNull(actionForProposal) === "reject"
+  const approveDisabled = proposal.stale || proposal.expired || busy
+
+  return h.keyed("li")(
     proposal.id,
     [h.Class("flex flex-col gap-3 rounded-xl border border-slate-800 bg-slate-950/60 p-4")],
     [
@@ -2496,6 +2752,9 @@ const proposalView = (
                 }`,
               ]),
               h.p([h.Class("break-all text-xs text-slate-500")], [proposal.path]),
+              Option.isNone(actionForProposal)
+                ? h.empty
+                : status(approving ? "Approving..." : "Rejecting...", h),
             ],
           ),
           h.div(
@@ -2511,19 +2770,21 @@ const proposalView = (
                 [
                   h.Type("button"),
                   h.Class(primaryButtonClass),
-                  proposal.stale || proposal.expired
+                  approveDisabled
                     ? h.Disabled(true)
                     : h.OnClick(Message.ClickedApprove({ proposalId: proposal.id })),
                 ],
-                ["Approve"],
+                [approving ? "Approving..." : "Approve"],
               ),
               h.button(
                 [
                   h.Type("button"),
                   h.Class(dangerButtonClass),
-                  h.OnClick(Message.ClickedReject({ proposalId: proposal.id })),
+                  busy
+                    ? h.Disabled(true)
+                    : h.OnClick(Message.ClickedReject({ proposalId: proposal.id })),
                 ],
-                ["Reject"],
+                [rejecting ? "Rejecting..." : "Reject"],
               ),
             ],
           ),
@@ -2540,12 +2801,14 @@ const proposalView = (
       ),
     ],
   )
+}
 
 const pendingBody = (
   data: {
     readonly proposals: ReadonlyArray<ApiPendingProposal>
     readonly invalid: ReadonlyArray<{ code: string; message: string }>
   },
+  action: Option.Option<ProposalAction>,
   h: HtmlBuilder<Message>,
 ): Html =>
   h.div(
@@ -2559,7 +2822,9 @@ const pendingBody = (
         onNonEmpty: (proposals) =>
           h.ul(
             [h.Class("flex flex-col gap-3")],
-            Array.map(proposals, (proposal) => proposalView(proposal, h)),
+            Array.map(proposals, (proposal) =>
+              proposalView(proposal, action, h),
+            ),
           ),
       }),
       data.invalid.length === 0
@@ -2613,11 +2878,11 @@ const reviewView = (model: Model, h: HtmlBuilder<Message>): Html =>
         onRefreshing: (data) =>
           h.div(
             [h.Class("flex flex-col gap-3")],
-            [status("Refreshing...", h), pendingBody(data, h)],
+            [status("Refreshing...", h), pendingBody(data, model.proposalAction, h)],
           ),
         onStale: ({ error }) => failureView(error, h),
         onFailure: (error) => failureView(error, h),
-        onSuccess: (data) => pendingBody(data, h),
+        onSuccess: (data) => pendingBody(data, model.proposalAction, h),
       }),
     ],
   )

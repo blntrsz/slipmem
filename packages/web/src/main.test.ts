@@ -8,8 +8,13 @@ import { ApiNote } from "./api"
 import {
   DeleteNote,
   EditorState,
+  LoadHealth,
   LoadNote,
   LoadNotes,
+  LoadPending,
+  LoadSearch,
+  LoadTags,
+  LoadWiki,
   Message,
   Model,
   NavigateInternal,
@@ -89,6 +94,8 @@ const baseModel = (
     pending: AsyncData.Idle(),
     health: AsyncData.Idle(),
     editor: EditorState.Closed(),
+    deleteRequest: Option.none(),
+    proposalAction: Option.none(),
     searchInput: "",
     lastError: Option.none(),
     notesRequestId: 0,
@@ -100,6 +107,7 @@ const baseModel = (
     healthRequestId: 0,
     saveRequestId: 0,
     deleteRequestId: 0,
+    proposalRequestId: 0,
     ...overrides,
   })
 
@@ -111,6 +119,38 @@ const url = (value: string) =>
     fromString(`http://localhost${value}`),
     () => new Error(`Invalid URL ${value}`),
   )
+
+const cancelled = Message.CancelledRouteRead()
+const resolveRouteReads = (
+  ids: {
+    readonly notes?: number
+    readonly note?: number
+    readonly search?: number
+    readonly tags?: number
+    readonly wiki?: number
+    readonly pending?: number
+    readonly health?: number
+  } = {},
+) => {
+  const toMessage = () => cancelled
+  return Story.Command.resolveAll(
+    [LoadNotes.Interrupt({ requestId: ids.notes ?? 0 }, toMessage), cancelled],
+    [LoadNote.Interrupt({ requestId: ids.note ?? 0 }, toMessage), cancelled],
+    [LoadSearch.Interrupt({ requestId: ids.search ?? 0 }, toMessage), cancelled],
+    [LoadTags.Interrupt({ requestId: ids.tags ?? 0 }, toMessage), cancelled],
+    [LoadWiki.Interrupt({ requestId: ids.wiki ?? 0 }, toMessage), cancelled],
+    [LoadPending.Interrupt({ requestId: ids.pending ?? 0 }, toMessage), cancelled],
+    [LoadHealth.Interrupt({ requestId: ids.health ?? 0 }, toMessage), cancelled],
+  )
+}
+
+const interruptKey = (command: unknown): string | undefined => {
+  if (typeof command !== "object" || command === null) {
+    return undefined
+  }
+  const key = (command as { readonly interruptsKey?: unknown }).interruptsKey
+  return typeof key === "string" ? key : undefined
+}
 
 test("init enters the requested route and issues one bounded load command", () => {
   const home = init(url("/?type=permanent"))
@@ -171,6 +211,7 @@ test("changing routes closes stale editors and starts the new load", () => {
       expect(model.editor._tag).toBe("Closed")
       expect(model.note._tag).toBe("Loading")
     }),
+    resolveRouteReads(),
     Story.Command.expectHas(LoadNote),
     Story.Command.resolve(
       LoadNote,
@@ -205,6 +246,20 @@ test("a loaded note opens the edit form with note metadata as text", () => {
       expect(editor.form.tags).toBe("agent-memory")
     }),
     Story.Command.expectNone(),
+  )
+})
+
+test("a failed edit load shows the error and a retry action", () => {
+  Scene.scene(
+    { update, view },
+    Scene.given(
+      baseModel(AppRoute.EditNote({ noteId: permanent.id }), {
+        note: AsyncData.Failure({ error: "Could not load the note." }),
+      }),
+    ),
+    Scene.expect(Scene.text("Could not load the note.")).toExist(),
+    Scene.expect(Scene.role("button", { name: "Retry" })).toExist(),
+    Scene.expect(Scene.text("Loading note...")).toBeAbsent(),
   )
 })
 
@@ -350,6 +405,9 @@ test("delete requires the confirmation route, then removes the note from the lis
     Story.message(Message.ConfirmedDelete()),
     Story.model((model) => {
       expect(model.deleteRequestId).toBe(1)
+      expect(model.deleteRequest).toEqual(
+        Option.some({ requestId: 1, noteId: fleeting.id }),
+      )
     }),
     Story.Command.expectHas(DeleteNote),
     Story.Command.resolve(
@@ -359,6 +417,7 @@ test("delete requires the confirmation route, then removes the note from the lis
     Story.model((model) => {
       expect(notesOf(model).map((item) => item.id)).toEqual([permanent.id])
       expect(Option.isNone(AsyncData.getOrElse(model.note, () => Option.some(fleeting)))).toBe(true)
+      expect(model.deleteRequest).toEqual(Option.none())
     }),
     Story.Command.expectHas(NavigateInternal),
     Story.Command.resolve(
@@ -366,6 +425,49 @@ test("delete requires the confirmation route, then removes the note from the lis
       Message.CompletedNavigateInternal(),
     ),
   )
+})
+
+test("delete completion is correlated and does not navigate a changed route", () => {
+  const start = baseModel(AppRoute.DeleteNote({ noteId: fleeting.id }), {
+    note: AsyncData.Success({ data: Option.some(fleeting) }),
+    notes: AsyncData.Success({ data: [fleeting, permanent] }),
+  })
+  const confirmed = update(start, Message.ConfirmedDelete())
+  const duplicate = update(confirmed.model, Message.ConfirmedDelete())
+  expect(duplicate.commands ?? []).toHaveLength(0)
+  expect(duplicate.model.deleteRequestId).toBe(1)
+  expect(duplicate.model.deleteRequest).toEqual(
+    Option.some({ requestId: 1, noteId: fleeting.id }),
+  )
+
+  const wrongRequest = update(
+    confirmed.model,
+    Message.SucceededDeleteNote({ requestId: 99, noteId: fleeting.id }),
+  )
+  expect(wrongRequest.model.deleteRequest).toEqual(
+    Option.some({ requestId: 1, noteId: fleeting.id }),
+  )
+
+  const failed = update(
+    confirmed.model,
+    Message.FailedDeleteNote({ requestId: 1, message: "Delete failed." }),
+  )
+  expect(failed.model.deleteRequest).toEqual(Option.none())
+  expect(failed.model.lastError).toEqual(Option.some("Delete failed."))
+
+  const navigated = update(
+    confirmed.model,
+    Message.ChangedUrl({ url: url("/") }),
+  )
+  const completed = update(
+    navigated.model,
+    Message.SucceededDeleteNote({ requestId: 1, noteId: fleeting.id }),
+  )
+  expect(completed.model.deleteRequest).toEqual(Option.none())
+  expect(completed.commands ?? []).toHaveLength(0)
+  expect(
+    AsyncData.getOrElse(completed.model.note, () => Option.none()),
+  ).toEqual(Option.some(fleeting))
 })
 
 test("refresh reloads the current route without dropping filters", () => {
@@ -393,6 +495,7 @@ test("refresh reloads the current route without dropping filters", () => {
         tag: Option.some("agent-memory"),
       })
     }),
+    resolveRouteReads({ notes: 3 }),
     Story.Command.expectHas(LoadNotes),
     Story.Command.resolve(
       LoadNotes,
@@ -478,6 +581,96 @@ test("search results render the note ID, path, and excerpt", () => {
     Scene.expect(Scene.role("link", { name: "Bounded recall" })).toExist(),
     Scene.expect(Scene.text(`ID ${permanent.id}`)).toExist(),
     Scene.expect(Scene.text(permanent.path)).toExist(),
+  )
+})
+
+test("an empty search invalidates a late response from the previous query", () => {
+  const hit = {
+    note: permanent,
+    id: permanent.id,
+    path: permanent.path,
+    score: 5,
+  }
+  const searching = baseModel(
+    AppRoute.Search({ q: Option.some("recall"), type: Option.none() }),
+    {
+      search: AsyncData.Loading(),
+      searchInput: "recall",
+      searchRequestId: 1,
+    },
+  )
+
+  const emptied = update(
+    searching,
+    Message.ChangedUrl({ url: url("/search") }),
+  )
+
+  expect(emptied.model.search._tag).toBe("Idle")
+  expect(emptied.model.searchInput).toBe("")
+  expect(emptied.model.searchRequestId).toBe(2)
+  expect(Array.map(emptied.commands ?? [], (command) => command.name)).toContain(
+    "LoadSearch.Interrupt",
+  )
+
+  const late = update(
+    emptied.model,
+    Message.SucceededSearch({ requestId: 1, results: [hit] }),
+  )
+  expect(late.model.search._tag).toBe("Idle")
+
+  const firstQuery = update(
+    emptied.model,
+    Message.ChangedUrl({ url: url("/search?q=first") }),
+  )
+  const secondQuery = update(
+    firstQuery.model,
+    Message.ChangedUrl({ url: url("/search?q=second") }),
+  )
+  const stale = update(
+    secondQuery.model,
+    Message.SucceededSearch({ requestId: secondQuery.model.searchRequestId - 1, results: [hit] }),
+  )
+  expect(stale.model.search._tag).toBe("Loading")
+})
+
+test("navigation cancels superseded route reads before starting the next load", () => {
+  const result = update(
+    baseModel(homeRoute, {
+      notes: AsyncData.Loading(),
+      notesRequestId: 7,
+      note: AsyncData.Loading(),
+      noteRequestId: 3,
+    }),
+    Message.ChangedUrl({ url: url("/review") }),
+  )
+  const commands = result.commands ?? []
+  const names = Array.map(commands, (command) => command.name)
+  expect(names).toContain("LoadNotes.Interrupt")
+  expect(names).toContain("LoadNote.Interrupt")
+  expect(names).toContain("LoadPending")
+  expect(names.indexOf("LoadNotes.Interrupt")).toBeLessThan(
+    names.indexOf("LoadPending"),
+  )
+  expect(result.model.notesRequestId).toBe(7)
+
+  // The interrupt must target the key held by the read the model is actually
+  // waiting on, not a neighbouring request id. A wrong key would silently
+  // leave the superseded read running.
+  const notesInterrupt = commands.find(
+    (command) => command.name === "LoadNotes.Interrupt",
+  )
+  expect(interruptKey(notesInterrupt)).toBe(
+    LoadNotes({ requestId: 7, type: Option.none(), tag: Option.none() }).key,
+  )
+  expect(interruptKey(notesInterrupt)).not.toBe(
+    LoadNotes({ requestId: 8, type: Option.none(), tag: Option.none() }).key,
+  )
+
+  const noteInterrupt = commands.find(
+    (command) => command.name === "LoadNote.Interrupt",
+  )
+  expect(interruptKey(noteInterrupt)).toBe(
+    LoadNote({ requestId: 3, noteId: permanent.id }).key,
   )
 })
 
@@ -649,6 +842,97 @@ test("the new-note form offers a type selector with the route type selected", ()
     Scene.expect(Scene.selector("#note-title")).toHaveAccessibleName("Title"),
     Scene.expect(Scene.selector("#note-content")).toHaveAccessibleName("Content"),
   )
+})
+
+test("proposal actions are guarded, correlated, and finish by reloading the queue", () => {
+  const proposalId = "proposal-20261117210000-deadbeef"
+  const review = baseModel(AppRoute.Review(), {
+    pending: AsyncData.Success({
+      data: {
+        proposals: [
+          {
+            id: proposalId,
+            operation: "create" as const,
+            noteId: permanent.id,
+            path: `/notes/${permanent.id}.md`,
+            summary: "Create a permanent note",
+            createdAt: "2026-11-17T21:00:00Z",
+            expiresAt: "2026-11-24T21:00:00Z",
+            stale: false,
+            expired: false,
+            diff: "+title: Bounded recall",
+          },
+        ],
+        invalid: [],
+      },
+    }),
+    pendingRequestId: 4,
+  })
+
+  const approving = update(review, Message.ClickedApprove({ proposalId }))
+  expect(approving.model.proposalAction).toEqual(
+    Option.some({ requestId: 1, proposalId, action: "approve" }),
+  )
+  expect(Array.map(approving.commands ?? [], (command) => command.name)).toEqual([
+    "ApproveProposal",
+  ])
+
+  const duplicate = update(
+    approving.model,
+    Message.ClickedApprove({ proposalId }),
+  )
+  expect(duplicate.commands ?? []).toHaveLength(0)
+  const competingReject = update(
+    approving.model,
+    Message.ClickedReject({ proposalId }),
+  )
+  expect(competingReject.commands ?? []).toHaveLength(0)
+
+  const uncorrelated = update(
+    approving.model,
+    Message.FailedApprove({
+      requestId: 99,
+      proposalId,
+      message: "Wrong request.",
+    }),
+  )
+  expect(uncorrelated.model.proposalAction).toEqual(
+    Option.some({ requestId: 1, proposalId, action: "approve" }),
+  )
+  expect(uncorrelated.model.lastError).toEqual(Option.none())
+
+  const failed = update(
+    approving.model,
+    Message.FailedApprove({
+      requestId: 1,
+      proposalId,
+      message: "Approval failed.",
+    }),
+  )
+  expect(failed.model.proposalAction).toEqual(Option.none())
+  expect(failed.model.lastError).toEqual(Option.some("Approval failed."))
+
+  const approved = update(
+    approving.model,
+    Message.SucceededApprove({ requestId: 1, proposalId }),
+  )
+  expect(approved.model.proposalAction).toEqual(Option.none())
+  expect(approved.model.pending._tag).toBe("Loading")
+  expect(approved.model.pendingRequestId).toBe(5)
+  expect(Array.map(approved.commands ?? [], (command) => command.name)).toEqual([
+    "LoadPending",
+  ])
+
+  const navigated = update(
+    approving.model,
+    Message.ChangedUrl({ url: url("/") }),
+  )
+  const completedAway = update(
+    navigated.model,
+    Message.SucceededApprove({ requestId: 1, proposalId }),
+  )
+  expect(completedAway.model.proposalAction).toEqual(Option.none())
+  expect(completedAway.commands ?? []).toHaveLength(0)
 })
 
 test("the review queue shows an inspectable diff and approve/reject controls", () => {

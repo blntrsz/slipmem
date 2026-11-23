@@ -196,7 +196,9 @@ const processError = (
  * Runs an explicitly configured local agent with an argv array and JSON on
  * stdin (`shell: false`). Output and runtime are bounded, the child receives a
  * small allowlist of environment variables, and note text never enters argv,
- * the environment, paths, or shell syntax.
+ * the environment, paths, or shell syntax. If the calling Effect is interrupted
+ * (for example by a request timeout), the child is killed instead of being
+ * orphaned.
  *
  * By default the process must run inside a working bubblewrap sandbox: no
  * network, a read-only root, a fresh writable /tmp, a cleared environment, and
@@ -260,7 +262,7 @@ export const runSynthesisAgent: SynthesisAgentRunner = (request, config) =>
           }
 
     return yield* Effect.tryPromise({
-      try: () =>
+      try: (signal) =>
         new Promise<string>((resolve, reject) => {
           const timeoutMs = config.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS
           const maxOutputBytes = config.maxOutputBytes ?? MAX_AGENT_OUTPUT_BYTES
@@ -282,6 +284,11 @@ export const runSynthesisAgent: SynthesisAgentRunner = (request, config) =>
               shell: false,
               stdio: ["pipe", "pipe", "pipe"],
               windowsHide: true,
+              // Effect aborts this signal when the fiber is interrupted. Node
+              // then kills the child, so a cancelled wiki request cannot leave
+              // the synthesizer (or bubblewrap and its payload) running.
+              signal,
+              killSignal: "SIGKILL",
               ...(config.cwd === undefined ? {} : { cwd: config.cwd }),
               env: agentEnvironment(),
             })

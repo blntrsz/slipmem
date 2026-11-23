@@ -128,6 +128,19 @@ const PendingResponse = Schema.Struct({
     Schema.Struct({ code: Schema.String, message: Schema.String }),
   ),
 })
+const DeleteResponse = Schema.Struct({
+  deleted: Schema.Literal(true),
+  id: Schema.String,
+})
+const ApproveResponse = Schema.Struct({
+  status: Schema.Literal("applied"),
+  proposalId: Schema.String,
+  noteId: Schema.String,
+})
+const RejectResponse = Schema.Struct({
+  status: Schema.Literal("rejected"),
+  proposalId: Schema.String,
+})
 const ErrorResponse = Schema.Struct({
   error: Schema.String,
   code: Schema.optional(Schema.String),
@@ -161,6 +174,38 @@ const ensureOk = (response: HttpClientResponse.HttpClientResponse) =>
 export const apiErrorMessage = (error: unknown, fallback: string): string =>
   error instanceof ApiError ? error.message : fallback
 
+const unexpectedResponse = (status: number): ApiError =>
+  new ApiError({
+    message: "The server returned an unexpected response.",
+    status,
+  })
+
+/**
+ * A mutation holds an in-flight guard in the UI model until its command
+ * settles, so a request that never answers must not hold that guard forever.
+ * The bound fails the command with an ordinary `ApiError`, which releases the
+ * guard through the normal failure path. It never retries: a write that timed
+ * out may already have been applied.
+ */
+const MUTATION_TIMEOUT_MS = 30_000
+const MUTATION_TIMEOUT_SECONDS = MUTATION_TIMEOUT_MS / 1_000
+
+const mutationTimeout = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | ApiError, R> =>
+  Effect.flatMap(Effect.timeoutOption(effect, MUTATION_TIMEOUT_MS), (result) =>
+    Option.match(result, {
+      onNone: () =>
+        Effect.fail(
+          new ApiError({
+            message: `The server did not respond within ${MUTATION_TIMEOUT_SECONDS} seconds. The change may not have been applied.`,
+            status: 408,
+          }),
+        ),
+      onSome: (value) => Effect.succeed(value),
+    }),
+  )
+
 const decodeResponse = <S extends Schema.ConstraintDecoder<unknown>>(
   schema: S,
   response: HttpClientResponse.HttpClientResponse,
@@ -169,13 +214,7 @@ const decodeResponse = <S extends Schema.ConstraintDecoder<unknown>>(
     yield* ensureOk(response)
     const body = yield* response.json
     return yield* Schema.decodeUnknownEffect(schema)(body).pipe(
-      Effect.mapError(
-        () =>
-          new ApiError({
-            message: "The server returned an unexpected response.",
-            status: response.status,
-          }),
-      ),
+      Effect.mapError(() => unexpectedResponse(response.status)),
     )
   })
 
@@ -232,36 +271,44 @@ export const getNote = (id: string) =>
   })
 
 export const createNote = (type: NoteType, draft: NoteDraft) =>
-  Effect.gen(function* () {
-    const request = yield* HttpClientRequest.bodyJson(
-      HttpClientRequest.post("/api/notes"),
-      { type, ...draft },
-    )
-    const body = yield* sendJson(request, NoteResponse)
-    return body.note
-  })
+  mutationTimeout(
+    Effect.gen(function* () {
+      const request = yield* HttpClientRequest.bodyJson(
+        HttpClientRequest.post("/api/notes"),
+        { type, ...draft },
+      )
+      const body = yield* sendJson(request, NoteResponse)
+      return body.note
+    }),
+  )
 
 export const updateNote = (id: string, draft: NoteDraft) =>
-  Effect.gen(function* () {
-    const request = yield* HttpClientRequest.bodyJson(
-      HttpClientRequest.put(`/api/notes/${encodeURIComponent(id)}`),
-      draft,
-    )
-    const body = yield* sendJson(request, NoteResponse)
-    return body.note
-  })
+  mutationTimeout(
+    Effect.gen(function* () {
+      const request = yield* HttpClientRequest.bodyJson(
+        HttpClientRequest.put(`/api/notes/${encodeURIComponent(id)}`),
+        draft,
+      )
+      const body = yield* sendJson(request, NoteResponse)
+      return body.note
+    }),
+  )
 
 export const deleteNote = (id: string) =>
-  Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient
-    const request = HttpClientRequest.make("DELETE")(
-      `/api/notes/${encodeURIComponent(id)}`,
-    )
-    const response = yield* client.execute(request)
-    yield* ensureOk(response)
-    const body = (yield* response.json) as { readonly deleted?: boolean }
-    return body.deleted === true
-  })
+  mutationTimeout(
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient
+      const request = HttpClientRequest.make("DELETE")(
+        `/api/notes/${encodeURIComponent(id)}`,
+      )
+      const response = yield* client.execute(request)
+      const body = yield* decodeResponse(DeleteResponse, response)
+      if (body.id !== id) {
+        return yield* Effect.fail(unexpectedResponse(response.status))
+      }
+      return body.deleted
+    }),
+  )
 
 export interface SearchNotesInput {
   readonly query: string
@@ -321,28 +368,38 @@ export const listPending = () =>
   })
 
 export const approveProposal = (proposalId: string) =>
-  Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient
-    const response = yield* client.execute(
-      HttpClientRequest.post(
-        `/api/pending/${encodeURIComponent(proposalId)}/approve`,
-      ),
-    )
-    yield* ensureOk(response)
-    return yield* response.json
-  })
+  mutationTimeout(
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient
+      const response = yield* client.execute(
+        HttpClientRequest.post(
+          `/api/pending/${encodeURIComponent(proposalId)}/approve`,
+        ),
+      )
+      const body = yield* decodeResponse(ApproveResponse, response)
+      if (body.proposalId !== proposalId) {
+        return yield* Effect.fail(unexpectedResponse(response.status))
+      }
+      return body
+    }),
+  )
 
 export const rejectProposal = (proposalId: string) =>
-  Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient
-    const response = yield* client.execute(
-      HttpClientRequest.post(
-        `/api/pending/${encodeURIComponent(proposalId)}/reject`,
-      ),
-    )
-    yield* ensureOk(response)
-    return yield* response.json
-  })
+  mutationTimeout(
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient
+      const response = yield* client.execute(
+        HttpClientRequest.post(
+          `/api/pending/${encodeURIComponent(proposalId)}/reject`,
+        ),
+      )
+      const body = yield* decodeResponse(RejectResponse, response)
+      if (body.proposalId !== proposalId) {
+        return yield* Effect.fail(unexpectedResponse(response.status))
+      }
+      return body
+    }),
+  )
 
 export const getHealth = () =>
   Effect.gen(function* () {
